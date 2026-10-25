@@ -1,24 +1,26 @@
-# Engineer review: a change merges only after a person who may merge to the
-# repository has recorded a review of its head commit (engineer-review/README.md).
-# Required on the gated repositories through the organisation ruleset; the
-# repository and organisation come from the run's own context, never from this file.
+# Engineer review (D83, D86): sets the commit status "Engineer review" on a pull
+# request's head commit, pending until a person who may merge has recorded a review
+# of that commit, then success with who, when and the commit (engineer-review/README.md).
+#
+# Reusable: each gated repository calls it from its copy of engineer-review/caller.yml,
+# and the organisation ruleset requires the status. Its own pull_request, issue_comment
+# and pull_request_review triggers serve this repository, which needs no caller.
+# A missing review is a pending status, never a failed job. The repository and
+# organisation come from the run's own context, never from this file.
 name: Engineer review
 
 on:
+  workflow_call:
   pull_request:
     types: [opened, synchronize, reopened]
-  pull_request_review:
-    types: [submitted]
   issue_comment:
     types: [created]
-  merge_group:
-    types: [checks_requested]
+  pull_request_review:
+    types: [submitted]
 
 permissions:
-  contents: read
+  statuses: write
   pull-requests: read
-  issues: read
-  actions: write # only to re-run the pull request's own check after a review arrives by comment or review
 
 jobs:
   engineer-review:
@@ -26,21 +28,24 @@ jobs:
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # One run at a time per pull request, so a slower run cannot overwrite a newer answer;
+    # each run reads the pull request afresh, so a superseded waiting run loses nothing.
+    concurrency:
+      group: engineer-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+      cancel-in-progress: false
     steps:
-      - name: Find this workflow's repository
-        id: source
-        run: echo "repo=${GITHUB_WORKFLOW_REF%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+      - name: Fetch the decision script at this workflow's own commit
+        env:
+          SOURCE_REPO: ${{ job.workflow_repository }}
+          SOURCE_SHA: ${{ job.workflow_sha }}
+        run: |
+          case "$SOURCE_SHA" in
+            *[!0-9a-f]* | "") echo "no commit id for this workflow's source: '$SOURCE_SHA'"; exit 1 ;;
+          esac
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/decide.mjs" \
+            "https://raw.githubusercontent.com/${SOURCE_REPO}/${SOURCE_SHA}/engineer-review/decide.mjs"
 
-      - name: Fetch the decision script at this workflow's commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ steps.source.outputs.repo }}
-          ref: ${{ github.workflow_sha }}
-          path: .engineer-review
-          sparse-checkout: engineer-review
-          persist-credentials: false
-
-      - name: Settle the engineer review
+      - name: Settle the review and set the status
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node .engineer-review/engineer-review/decide.mjs
+        run: node "$RUNNER_TEMP/decide.mjs"

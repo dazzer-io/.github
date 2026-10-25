@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Engineer review: settles whether a person who may merge to the repository has
-// recorded a review of a pull request's head commit, and writes the evidence.
+// recorded a review of a pull request's head commit, and sets the commit status
+// "Engineer review" on that commit: pending with the reason, or success with who,
+// when and the commit (D83, D86).
 //
 // A review counts when it is either
 //   - a pull-request conversation comment whose first line is exactly "reviewed"
@@ -8,11 +10,11 @@
 //     was last pushed, or
 //   - an approving review submitted on the head commit itself;
 // by a person (never a bot) whose permission on the repository is write or admin.
-// A push after the review moves the head and the check is pending again.
+// A push after the review moves the head and its status is pending again.
 //
-// The pure part (decide, summary, ...) is exported for the tests; the command at
-// the bottom reads GitHub and is what the workflow runs. Nothing here names an
-// organisation or repository: they come from the run's own context.
+// The pure part is exported for the tests; run() takes a client so the tests feed it
+// recorded GitHub answers. Nothing here names an organisation or repository: they
+// come from the run's own context.
 
 import { pathToFileURL } from 'node:url';
 
@@ -165,121 +167,178 @@ export function prNumberFromMergeGroup(headRef) {
   return m ? Number(m[1]) : null;
 }
 
-// After a review arrives through a comment or a review event, the pull_request run
-// of this workflow on the head commit is the check on the pull request; re-run it if
-// it failed so it reads the review. Picks the latest such failed run, or null.
-export function rerunTarget(runs, { headSha, workflowFile }) {
-  const list = (Array.isArray(runs) ? runs : []).filter((r) =>
-    r && r.head_sha === headSha &&
-    (r.event === 'pull_request' || r.event === 'pull_request_target') &&
-    r.status === 'completed' && r.conclusion === 'failure' &&
-    typeof r.path === 'string' && r.path.split('@')[0].endsWith(workflowFile));
-  list.sort((a, b) => ms(b.created_at) - ms(a.created_at));
-  return list[0] || null;
-}
+// ---------- the status (D86) ----------
 
-// ---------- the command (reads GitHub; not used by the tests) ----------
+export const CONTEXT = 'Engineer review';
 
-async function api(path, { method = 'GET', allow404 = false } = {}) {
-  const base = process.env.GITHUB_API_URL || 'https://api.github.com';
-  const res = await fetch(path.startsWith('http') ? path : `${base}${path}`, {
-    method,
-    headers: {
-      authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-      accept: 'application/vnd.github+json',
-      'x-github-api-version': '2022-11-28',
-      'user-agent': 'engineer-review',
-    },
-  });
-  if (allow404 && res.status === 404) return { body: null, next: null };
-  if (!res.ok) throw new Error(`${method} ${path} answered ${res.status}`);
-  const text = await res.text();
-  const link = res.headers.get('link') || '';
-  const next = /<([^>]+)>;\s*rel="next"/.exec(link);
-  return { body: text ? JSON.parse(text) : null, next: next ? next[1] : null };
-}
-
-async function all(path, { maxPages = 20, stop } = {}) {
-  const out = [];
-  let url = path;
-  for (let page = 0; url && page < maxPages; page++) {
-    const { body, next } = await api(url);
-    const items = Array.isArray(body) ? body : (body && Array.isArray(body.workflow_runs) ? body.workflow_runs : []);
-    out.push(...items);
-    if (stop && stop(items)) break;
-    url = next;
+// Which pull request and commit an event is about, or why it sets nothing.
+// returns { skip: '<why>' } or { number, headSha (null: read the live head), statusSha (null: the head) }
+export function targetOf(eventName, event) {
+  const e = event || {};
+  if (eventName === 'pull_request' || eventName === 'pull_request_target') {
+    if (!e.pull_request) return { skip: 'the event carries no pull request' };
+    return { number: e.pull_request.number, headSha: e.pull_request.head.sha, statusSha: null };
   }
-  return out;
+  if (eventName === 'pull_request_review') {
+    if (!e.pull_request) return { skip: 'the event carries no pull request' };
+    return { number: e.pull_request.number, headSha: null, statusSha: null };
+  }
+  if (eventName === 'issue_comment') {
+    if (!e.issue || !e.issue.pull_request) return { skip: 'a comment on an issue, not a pull request' };
+    return { number: e.issue.number, headSha: null, statusSha: null };
+  }
+  if (eventName === 'merge_group') {
+    // A repository using a merge queue adds merge_group to its caller: the status then
+    // goes on the queue's commit, settled on the pull request it carries.
+    const mg = e.merge_group || {};
+    const number = prNumberFromMergeGroup(mg.head_ref);
+    if (!number) return { skip: `no pull request number in ${mg.head_ref}` };
+    return { number, headSha: null, statusSha: mg.head_sha || null };
+  }
+  return { skip: `the event ${eventName} is not one this check reads` };
 }
 
-async function collect(repo, number, headShaFromEvent) {
-  const { body: pull } = await api(`/repos/${repo}/pulls/${number}`);
+// The commit status for a decision. GitHub keeps a status's description to 140 characters.
+export function statusFor(d, { sha, runUrl } = {}) {
+  const short = (d.headSha || '').slice(0, 7);
+  const description = d.result === 'pass'
+    ? `Reviewed by ${d.evidence.who} at ${d.evidence.at} (${d.evidence.how}) on ${short}`
+    : `Waiting: ${d.reason}`;
+  const status = {
+    sha: sha || d.headSha,
+    state: d.result === 'pass' ? 'success' : 'pending',
+    context: CONTEXT,
+    description: description.length > 140 ? `${description.slice(0, 139)}…` : description,
+  };
+  if (runUrl) status.target_url = runUrl;
+  return status;
+}
+
+// The caller template each gated repository copies (engineer-review/caller.yml) names
+// no organisation, repository or commit; the copy is filled with them here.
+const SHA = /^[0-9a-f]{40}$/;
+const NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?$/;
+export const CALLER_USES = '<owner>/<repo>/.github/workflows/engineer-review.yml@<commit>';
+export function renderCaller(template, { owner, repo, commit }) {
+  if (!NAME.test(String(owner || ''))) throw new Error(`owner "${owner}" is not an organisation name`);
+  if (!/^\.?[A-Za-z0-9._-]+$/.test(String(repo || '')) || String(repo).includes('/')) throw new Error(`repo "${repo}" is not a repository name`);
+  if (!SHA.test(String(commit || ''))) throw new Error(`commit "${commit}" is not a full 40-character commit id: the caller pins to a commit, never a branch or tag`);
+  if (!template.includes(CALLER_USES)) throw new Error(`the template has no "uses: ${CALLER_USES}" line`);
+  return template.split(CALLER_USES).join(`${owner}/${repo}/.github/workflows/engineer-review.yml@${commit}`);
+}
+
+// Reads what the decision needs through a client: { all(path, { stop }), get(path) }.
+export async function collect(client, repo, number, headShaFromEvent) {
+  const pull = await client.get(`/repos/${repo}/pulls/${number}`);
+  if (!pull) throw new Error(`pull request #${number} not found in ${repo}`);
   const headSha = headShaFromEvent || pull.head.sha;
   const headRepo = (pull.head.repo && pull.head.repo.full_name) || repo;
   const headRef = pull.head.ref;
-  const activity = await all(
+  const activity = await client.all(
     `/repos/${headRepo}/activity?ref=${encodeURIComponent(`refs/heads/${headRef}`)}&per_page=100`,
     { maxPages: 5, stop: (items) => items.some((e) => e.after === headSha) },
   );
-  const comments = await all(`/repos/${repo}/issues/${number}/comments?per_page=100`);
-  const reviews = await all(`/repos/${repo}/pulls/${number}/reviews?per_page=100`);
+  const comments = await client.all(`/repos/${repo}/issues/${number}/comments?per_page=100`);
+  const reviews = await client.all(`/repos/${repo}/pulls/${number}/reviews?per_page=100`);
   const logins = new Set();
   for (const c of comments) if (c.user && firstLineIsReviewed(c.body) && !isBot(c.user)) logins.add(c.user.login);
   for (const r of reviews) if (r.user && String(r.state).toUpperCase() === 'APPROVED' && !isBot(r.user)) logins.add(r.user.login);
   const permissions = {};
   for (const login of logins) {
     try {
-      const { body } = await api(`/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`, { allow404: true });
+      const body = await client.get(`/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`);
       if (body) permissions[login] = body;
     } catch (err) {
-      process.stderr.write(`could not read ${login}'s permission: ${err.message}\n`);
+      client.warn?.(`could not read ${login}'s permission: ${err.message}`);
     }
   }
   return { pr: { number, headSha, headRef }, activity, comments, reviews, permissions };
 }
 
+// One run: settle the event and set the status. Returns
+// { status: <what was posted> | null, decision | null, skip | null }.
+// A missing review is a pending status, never a failure; only a failed read or write throws.
+export async function run({ eventName, event, repo, client, runUrl }) {
+  const target = targetOf(eventName, event);
+  if (target.skip) return { status: null, decision: null, skip: target.skip };
+  const d = decide(await collect(client, repo, target.number, target.headSha));
+  const status = statusFor(d, { sha: target.statusSha, runUrl });
+  const { sha, ...body } = status;
+  await client.post(`/repos/${repo}/statuses/${sha}`, body);
+  return { status, decision: d, skip: null };
+}
+
+// ---------- the command (reads and writes GitHub; the tests use run() with recorded answers) ----------
+
+function githubClient() {
+  const base = process.env.GITHUB_API_URL || 'https://api.github.com';
+  async function call(path, { method = 'GET', body } = {}) {
+    const res = await fetch(path.startsWith('http') ? path : `${base}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+        accept: 'application/vnd.github+json',
+        'x-github-api-version': '2022-11-28',
+        'user-agent': 'engineer-review',
+        ...(body ? { 'content-type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (method === 'GET' && res.status === 404) return { body: null, next: null };
+    if (!res.ok) throw new Error(`${method} ${path.split('?')[0]} answered ${res.status}`);
+    const text = await res.text();
+    const next = /<([^>]+)>;\s*rel="next"/.exec(res.headers.get('link') || '');
+    return { body: text ? JSON.parse(text) : null, next: next ? next[1] : null };
+  }
+  return {
+    async get(path) { return (await call(path)).body; },
+    async all(path, { maxPages = 20, stop } = {}) {
+      const out = [];
+      let url = path;
+      for (let page = 0; url && page < maxPages; page++) {
+        const { body, next } = await call(url);
+        const items = Array.isArray(body) ? body : [];
+        out.push(...items);
+        if (stop && stop(items)) break;
+        url = next;
+      }
+      return out;
+    },
+    async post(path, body) { return (await call(path, { method: 'POST', body })).body; },
+    warn(text) { process.stderr.write(`${text}\n`); },
+  };
+}
+
+function argValue(argv, name) {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 ? argv[i + 1] : undefined;
+}
+
 async function main() {
   const fs = await import('node:fs');
-  const repo = process.env.GITHUB_REPOSITORY;
-  const eventName = process.env.GITHUB_EVENT_NAME;
-  const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-  let number = null;
-  let headSha = null;
-  if (eventName === 'pull_request' || eventName === 'pull_request_target' || eventName === 'pull_request_review') {
-    number = event.pull_request.number;
-    headSha = eventName === 'pull_request_review' ? null : event.pull_request.head.sha;
-  } else if (eventName === 'issue_comment') {
-    if (!event.issue || !event.issue.pull_request) { console.log('Not a pull request comment; nothing to settle.'); return 0; }
-    number = event.issue.number;
-  } else if (eventName === 'merge_group') {
-    number = prNumberFromMergeGroup(event.merge_group && event.merge_group.head_ref);
-    if (!number) { console.error(`cannot read a pull request number from ${event.merge_group && event.merge_group.head_ref}`); return 1; }
-  } else {
-    console.error(`unsupported event ${eventName}`);
-    return 1;
-  }
-
-  const d = decide(await collect(repo, number, headSha));
-  const text = summary(d);
-  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);
-  process.stdout.write(text);
-  console.log(`::notice title=Engineer review::${evidenceLine(d)}`);
-
-  const messenger = eventName === 'issue_comment' || eventName === 'pull_request_review';
-  if (messenger) {
-    // These runs do not attach to the pull request's head; the pull_request run does.
-    if (d.result === 'pass') {
-      const workflowFile = (process.env.GITHUB_WORKFLOW_REF || '').split('@')[0].split('/.github/workflows/').pop();
-      const runs = await all(`/repos/${repo}/actions/runs?head_sha=${d.headSha}&per_page=100`, { maxPages: 3 });
-      const target = rerunTarget(runs, { headSha: d.headSha, workflowFile: `.github/workflows/${workflowFile}` });
-      if (target) {
-        await api(`/repos/${repo}/actions/runs/${target.id}/rerun-failed-jobs`, { method: 'POST' });
-        console.log(`Re-ran run ${target.id} so the check on ${d.headSha} reads this review.`);
-      }
-    }
+  const argv = process.argv.slice(2);
+  if (argv[0] === 'caller') {
+    // Prints the filled caller file for a gated repository to copy.
+    const template = fs.readFileSync(new URL('./caller.yml', import.meta.url), 'utf8');
+    process.stdout.write(renderCaller(template, {
+      owner: argValue(argv, 'owner'), repo: argValue(argv, 'repo'), commit: argValue(argv, 'commit'),
+    }));
     return 0;
   }
-  return d.result === 'pass' ? 0 : 1;
+  const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+  const server = process.env.GITHUB_SERVER_URL || 'https://github.com';
+  const runUrl = process.env.GITHUB_RUN_ID
+    ? `${server}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}` : undefined;
+  const out = await run({
+    eventName: process.env.GITHUB_EVENT_NAME, event, repo: process.env.GITHUB_REPOSITORY,
+    client: githubClient(), runUrl,
+  });
+  if (out.skip) { console.log(`Nothing to set: ${out.skip}.`); return 0; }
+  const text = `${summary(out.decision)}\nStatus **${CONTEXT}** set to \`${out.status.state}\` on \`${out.status.sha}\`.\n`;
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);
+  process.stdout.write(text);
+  console.log(`::notice title=Engineer review::${evidenceLine(out.decision)}`);
+  return 0;
 }
 
 const invoked = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;

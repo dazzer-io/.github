@@ -1,0 +1,24 @@
+# Engineer review caller: each gated repository keeps a copy of this file as
+# .github/workflows/engineer-review.yml (engineer-review/README.md, "Adopting it").
+# The copy is made with
+#   node engineer-review/decide.mjs caller --owner <organisation> --repo <shared workflow repository> --commit <40-character commit id>
+# which fills the one "uses:" line below, refuses a branch or tag in place of a commit,
+# and refuses a commit that is not on the shared workflow repository's main branch.
+name: Engineer review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  statuses: write
+  pull-requests: read
+
+jobs:
+  engineer-review:
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    uses: <owner>/<repo>/.github/workflows/engineer-review.yml@<commit>

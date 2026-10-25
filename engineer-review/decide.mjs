@@ -1,0 +1,291 @@
+#!/usr/bin/env node
+// Engineer review: settles whether a person who may merge to the repository has
+// recorded a review of a pull request's head commit, and writes the evidence.
+//
+// A review counts when it is either
+//   - a pull-request conversation comment whose first line is exactly "reviewed"
+//     (any letter case, surrounding spaces ignored), made after the head commit
+//     was last pushed, or
+//   - an approving review submitted on the head commit itself;
+// by a person (never a bot) whose permission on the repository is write or admin.
+// A push after the review moves the head and the check is pending again.
+//
+// The pure part (decide, summary, ...) is exported for the tests; the command at
+// the bottom reads GitHub and is what the workflow runs. Nothing here names an
+// organisation or repository: they come from the run's own context.
+
+import { pathToFileURL } from 'node:url';
+
+export const REVIEW_WORD = 'reviewed';
+const PUSH_KINDS = new Set(['push', 'force_push', 'branch_creation']);
+const MERGE_PERMISSIONS = new Set(['admin', 'write']);
+
+export function firstLineIsReviewed(body) {
+  if (typeof body !== 'string') return false;
+  const first = body.split(/\r?\n/, 1)[0];
+  return first.trim().toLowerCase() === REVIEW_WORD;
+}
+
+export function isBot(user) {
+  if (!user || typeof user.login !== 'string') return true; // no known person
+  return user.type === 'Bot' || /\[bot\]$/i.test(user.login);
+}
+
+// permissionAnswer: GitHub's answer to GET /repos/{o}/{r}/collaborators/{u}/permission,
+// or undefined when it could not be read (read as no right).
+export function mayMerge(permissionAnswer) {
+  if (!permissionAnswer) return false;
+  return MERGE_PERMISSIONS.has(String(permissionAnswer.permission || '').toLowerCase());
+}
+
+function ms(iso) {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : NaN;
+}
+
+// The moment the head commit last arrived on the pull request's branch, read from
+// the head repository's activity (GET /repos/{o}/{r}/activity). Returns an ISO
+// string, or null when no push of that commit to that branch is on record.
+export function headPushedAt({ headSha, headRef, activity }) {
+  if (!headSha || !Array.isArray(activity)) return null;
+  const wantRef = headRef ? (headRef.startsWith('refs/') ? headRef : `refs/heads/${headRef}`) : null;
+  let latest = null;
+  for (const entry of activity) {
+    if (!entry || entry.after !== headSha) continue;
+    if (!PUSH_KINDS.has(entry.activity_type)) continue;
+    if (wantRef && entry.ref && entry.ref !== wantRef) continue;
+    const t = ms(entry.timestamp);
+    if (!Number.isFinite(t)) continue;
+    if (latest === null || t > ms(latest)) latest = entry.timestamp;
+  }
+  return latest;
+}
+
+// input: {
+//   pr: { number, headSha, headRef },
+//   activity: [...]  head repository activity entries,
+//   comments: [...]  GET /repos/{o}/{r}/issues/{n}/comments,
+//   reviews:  [...]  GET /repos/{o}/{r}/pulls/{n}/reviews,
+//   permissions: { <login>: GET .../collaborators/{login}/permission answer }
+// }
+// returns { result: 'pass' | 'pending', pr, headSha, pushedAt, evidence, considered, reason }
+export function decide(input) {
+  const { pr, activity = [], comments = [], reviews = [], permissions = {} } = input || {};
+  const headSha = pr && pr.headSha;
+  const base = { pr: pr ? pr.number : null, headSha: headSha || null };
+  if (!headSha) {
+    return { ...base, result: 'pending', pushedAt: null, evidence: null, considered: [], reason: 'the pull request head commit is unknown' };
+  }
+  const pushedAt = headPushedAt({ headSha, headRef: pr.headRef, activity });
+  const considered = [];
+  const candidates = [];
+
+  for (const c of comments) {
+    if (!c || !firstLineIsReviewed(c.body)) continue;
+    const who = c.user && c.user.login;
+    const row = { how: 'comment', who: who || null, at: c.created_at, url: c.html_url || null };
+    if (isBot(c.user)) { considered.push({ ...row, counted: false, why: 'made by a bot' }); continue; }
+    if (!mayMerge(permissions[who])) { considered.push({ ...row, counted: false, why: 'the author may not merge to this repository' }); continue; }
+    if (pushedAt === null) { considered.push({ ...row, counted: false, why: `no record of when ${headSha.slice(0, 7)} was pushed` }); continue; }
+    if (!(ms(c.created_at) > ms(pushedAt))) { considered.push({ ...row, counted: false, why: `made before ${headSha.slice(0, 7)} was pushed at ${pushedAt}` }); continue; }
+    considered.push({ ...row, counted: true });
+    candidates.push({ ...row, commit: headSha });
+  }
+
+  for (const r of reviews) {
+    if (!r || String(r.state || '').toUpperCase() !== 'APPROVED') continue;
+    const who = r.user && r.user.login;
+    const row = { how: 'approving review', who: who || null, at: r.submitted_at, url: r.html_url || null };
+    if (isBot(r.user)) { considered.push({ ...row, counted: false, why: 'made by a bot' }); continue; }
+    if (!mayMerge(permissions[who])) { considered.push({ ...row, counted: false, why: 'the reviewer may not merge to this repository' }); continue; }
+    if (r.commit_id !== headSha) {
+      considered.push({ ...row, counted: false, why: `given on ${String(r.commit_id || 'an unknown commit').slice(0, 7)}, not the head ${headSha.slice(0, 7)}` });
+      continue;
+    }
+    considered.push({ ...row, counted: true });
+    candidates.push({ ...row, commit: headSha });
+  }
+
+  if (candidates.length === 0) {
+    const reason = pushedAt
+      ? `no review by a person who may merge since ${headSha.slice(0, 7)} was pushed at ${pushedAt}`
+      : `no approving review on ${headSha.slice(0, 7)}, and no record of when it was pushed`;
+    return { ...base, result: 'pending', pushedAt, evidence: null, considered, reason };
+  }
+  // The earliest qualifying review is the evidence: the first moment the head was reviewed.
+  candidates.sort((a, b) => ms(a.at) - ms(b.at));
+  return { ...base, result: 'pass', pushedAt, evidence: candidates[0], considered, reason: null };
+}
+
+export function summary(d) {
+  const lines = ['## Engineer review', ''];
+  const sha = d.headSha || 'unknown';
+  if (d.result === 'pass') {
+    const e = d.evidence;
+    lines.push(`**Passed.** ${e.who} recorded a review (${e.how}) at ${e.at} of commit \`${e.commit}\`.`);
+  } else {
+    lines.push(`**Pending.** ${d.reason}.`);
+    lines.push('');
+    lines.push(`To pass: a person who may merge comments \`reviewed\` (first line, nothing else on it) after the last push, or approves commit \`${sha}\`.`);
+  }
+  lines.push('');
+  lines.push('| | |', '|---|---|');
+  lines.push(`| Pull request | #${d.pr ?? 'unknown'} |`);
+  lines.push(`| Head commit | \`${sha}\` |`);
+  lines.push(`| Head pushed at | ${d.pushedAt || 'no record'} |`);
+  if (d.evidence) {
+    lines.push(`| Reviewed by | ${d.evidence.who} |`);
+    lines.push(`| Reviewed at | ${d.evidence.at} |`);
+    lines.push(`| How | ${d.evidence.how}${d.evidence.url ? ` (${d.evidence.url})` : ''} |`);
+  }
+  const passed = d.considered.filter((c) => !c.counted);
+  if (passed.length) {
+    lines.push('', 'Not counted:', '');
+    for (const c of passed) lines.push(`- ${c.how} by ${c.who || 'unknown'} at ${c.at}: ${c.why}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
+// One line a later reading can collect (ids, logins and times only).
+export function evidenceLine(d) {
+  return JSON.stringify({
+    result: d.result,
+    pr: d.pr,
+    headSha: d.headSha,
+    pushedAt: d.pushedAt,
+    by: d.evidence ? d.evidence.who : null,
+    at: d.evidence ? d.evidence.at : null,
+    how: d.evidence ? d.evidence.how : null,
+  });
+}
+
+// merge_group head refs read refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha>.
+export function prNumberFromMergeGroup(headRef) {
+  const m = /\/pr-(\d+)-[0-9a-f]+$/.exec(String(headRef || ''));
+  return m ? Number(m[1]) : null;
+}
+
+// After a review arrives through a comment or a review event, the pull_request run
+// of this workflow on the head commit is the check on the pull request; re-run it if
+// it failed so it reads the review. Picks the latest such failed run, or null.
+export function rerunTarget(runs, { headSha, workflowFile }) {
+  const list = (Array.isArray(runs) ? runs : []).filter((r) =>
+    r && r.head_sha === headSha &&
+    (r.event === 'pull_request' || r.event === 'pull_request_target') &&
+    r.status === 'completed' && r.conclusion === 'failure' &&
+    typeof r.path === 'string' && r.path.split('@')[0].endsWith(workflowFile));
+  list.sort((a, b) => ms(b.created_at) - ms(a.created_at));
+  return list[0] || null;
+}
+
+// ---------- the command (reads GitHub; not used by the tests) ----------
+
+async function api(path, { method = 'GET', allow404 = false } = {}) {
+  const base = process.env.GITHUB_API_URL || 'https://api.github.com';
+  const res = await fetch(path.startsWith('http') ? path : `${base}${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+      accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
+      'user-agent': 'engineer-review',
+    },
+  });
+  if (allow404 && res.status === 404) return { body: null, next: null };
+  if (!res.ok) throw new Error(`${method} ${path} answered ${res.status}`);
+  const text = await res.text();
+  const link = res.headers.get('link') || '';
+  const next = /<([^>]+)>;\s*rel="next"/.exec(link);
+  return { body: text ? JSON.parse(text) : null, next: next ? next[1] : null };
+}
+
+async function all(path, { maxPages = 20, stop } = {}) {
+  const out = [];
+  let url = path;
+  for (let page = 0; url && page < maxPages; page++) {
+    const { body, next } = await api(url);
+    const items = Array.isArray(body) ? body : (body && Array.isArray(body.workflow_runs) ? body.workflow_runs : []);
+    out.push(...items);
+    if (stop && stop(items)) break;
+    url = next;
+  }
+  return out;
+}
+
+async function collect(repo, number, headShaFromEvent) {
+  const { body: pull } = await api(`/repos/${repo}/pulls/${number}`);
+  const headSha = headShaFromEvent || pull.head.sha;
+  const headRepo = (pull.head.repo && pull.head.repo.full_name) || repo;
+  const headRef = pull.head.ref;
+  const activity = await all(
+    `/repos/${headRepo}/activity?ref=${encodeURIComponent(`refs/heads/${headRef}`)}&per_page=100`,
+    { maxPages: 5, stop: (items) => items.some((e) => e.after === headSha) },
+  );
+  const comments = await all(`/repos/${repo}/issues/${number}/comments?per_page=100`);
+  const reviews = await all(`/repos/${repo}/pulls/${number}/reviews?per_page=100`);
+  const logins = new Set();
+  for (const c of comments) if (c.user && firstLineIsReviewed(c.body) && !isBot(c.user)) logins.add(c.user.login);
+  for (const r of reviews) if (r.user && String(r.state).toUpperCase() === 'APPROVED' && !isBot(r.user)) logins.add(r.user.login);
+  const permissions = {};
+  for (const login of logins) {
+    try {
+      const { body } = await api(`/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`, { allow404: true });
+      if (body) permissions[login] = body;
+    } catch (err) {
+      process.stderr.write(`could not read ${login}'s permission: ${err.message}\n`);
+    }
+  }
+  return { pr: { number, headSha, headRef }, activity, comments, reviews, permissions };
+}
+
+async function main() {
+  const fs = await import('node:fs');
+  const repo = process.env.GITHUB_REPOSITORY;
+  const eventName = process.env.GITHUB_EVENT_NAME;
+  const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+  let number = null;
+  let headSha = null;
+  if (eventName === 'pull_request' || eventName === 'pull_request_target' || eventName === 'pull_request_review') {
+    number = event.pull_request.number;
+    headSha = eventName === 'pull_request_review' ? null : event.pull_request.head.sha;
+  } else if (eventName === 'issue_comment') {
+    if (!event.issue || !event.issue.pull_request) { console.log('Not a pull request comment; nothing to settle.'); return 0; }
+    number = event.issue.number;
+  } else if (eventName === 'merge_group') {
+    number = prNumberFromMergeGroup(event.merge_group && event.merge_group.head_ref);
+    if (!number) { console.error(`cannot read a pull request number from ${event.merge_group && event.merge_group.head_ref}`); return 1; }
+  } else {
+    console.error(`unsupported event ${eventName}`);
+    return 1;
+  }
+
+  const d = decide(await collect(repo, number, headSha));
+  const text = summary(d);
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);
+  process.stdout.write(text);
+  console.log(`::notice title=Engineer review::${evidenceLine(d)}`);
+
+  const messenger = eventName === 'issue_comment' || eventName === 'pull_request_review';
+  if (messenger) {
+    // These runs do not attach to the pull request's head; the pull_request run does.
+    if (d.result === 'pass') {
+      const workflowFile = (process.env.GITHUB_WORKFLOW_REF || '').split('@')[0].split('/.github/workflows/').pop();
+      const runs = await all(`/repos/${repo}/actions/runs?head_sha=${d.headSha}&per_page=100`, { maxPages: 3 });
+      const target = rerunTarget(runs, { headSha: d.headSha, workflowFile: `.github/workflows/${workflowFile}` });
+      if (target) {
+        await api(`/repos/${repo}/actions/runs/${target.id}/rerun-failed-jobs`, { method: 'POST' });
+        console.log(`Re-ran run ${target.id} so the check on ${d.headSha} reads this review.`);
+      }
+    }
+    return 0;
+  }
+  return d.result === 'pass' ? 0 : 1;
+}
+
+const invoked = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invoked) {
+  main().then((code) => { process.exitCode = code; }, (err) => {
+    console.error(`Engineer review could not be settled: ${err.message}`);
+    process.exitCode = 1;
+  });
+}

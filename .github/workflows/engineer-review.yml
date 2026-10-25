@@ -5,8 +5,9 @@
 # Reusable: each gated repository calls it from its copy of engineer-review/caller.yml,
 # and the organisation ruleset requires the status. Its own pull_request, issue_comment
 # and pull_request_review triggers serve this repository, which needs no caller.
-# A missing review is a pending status, never a failed job. The repository and
-# organisation come from the run's own context, never from this file.
+# A missing review is a pending status, never a failed job; a run whose token cannot
+# write statuses (a fork's or Dependabot's) skips the write with a notice. The repository
+# and organisation come from the run's own context, never from this file.
 name: Engineer review
 
 on:
@@ -24,7 +25,9 @@ permissions:
 
 jobs:
   engineer-review:
-    name: Engineer review
+    # Named apart from the status it sets, so the ruleset's required "Engineer review"
+    # can only be the status (pinned to GitHub Actions), never this job's check run.
+    name: Settle engineer review
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -34,18 +37,34 @@ jobs:
       group: engineer-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
       cancel-in-progress: false
     steps:
-      - name: Fetch the decision script at this workflow's own commit
+      - name: Name this workflow's own repository and commit
+        id: source
         env:
           SOURCE_REPO: ${{ job.workflow_repository }}
           SOURCE_SHA: ${{ job.workflow_sha }}
         run: |
-          case "$SOURCE_SHA" in
-            *[!0-9a-f]* | "") echo "no commit id for this workflow's source: '$SOURCE_SHA'"; exit 1 ;;
-          esac
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/decide.mjs" \
-            "https://raw.githubusercontent.com/${SOURCE_REPO}/${SOURCE_SHA}/engineer-review/decide.mjs"
+          if [ -z "$SOURCE_REPO" ]; then
+            echo "::error title=Engineer review::the context job.workflow_repository is empty, so the decision script's source is unknown; nothing was set"
+            exit 1
+          fi
+          if [ -z "$SOURCE_SHA" ]; then
+            echo "::error title=Engineer review::the context job.workflow_sha is empty, so the decision script's commit is unknown; nothing was set"
+            exit 1
+          fi
+          echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the decision script at that commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.source.outputs.repo }}
+          ref: ${{ steps.source.outputs.sha }}
+          token: ${{ github.token }}
+          path: .engineer-review
+          sparse-checkout: engineer-review
+          persist-credentials: false
 
       - name: Settle the review and set the status
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node "$RUNNER_TEMP/decide.mjs"
+        run: node .engineer-review/engineer-review/decide.mjs

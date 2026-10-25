@@ -63,6 +63,14 @@ export function headPushedAt({ headSha, headRef, activity }) {
   return latest;
 }
 
+// A comment whose text changed after it was posted (updated_at later than created_at).
+export function wasEdited(c) {
+  if (!c || !c.updated_at || !c.created_at) return false;
+  const u = ms(c.updated_at);
+  const k = ms(c.created_at);
+  return !Number.isFinite(u) || !Number.isFinite(k) || u !== k;
+}
+
 // input: {
 //   pr: { number, headSha, headRef },
 //   activity: [...]  head repository activity entries,
@@ -87,6 +95,17 @@ export function decide(input) {
     const who = c.user && c.user.login;
     const row = { how: 'comment', who: who || null, at: c.created_at, url: c.html_url || null };
     if (isBot(c.user)) { considered.push({ ...row, counted: false, why: 'made by a bot' }); continue; }
+    if (c.performed_via_github_app) {
+      const app = c.performed_via_github_app.slug || c.performed_via_github_app.name || 'an App';
+      considered.push({ ...row, counted: false, why: `posted through ${app}, not by the person's own hand` });
+      continue;
+    }
+    if (wasEdited(c)) {
+      // GitHub does not say who made an edit, and D89 counts no comment edited after the
+      // last push; one edited before it is already too early. Either way: post a new one.
+      considered.push({ ...row, counted: false, why: `edited at ${c.updated_at}; an edited comment does not count, post a new one` });
+      continue;
+    }
     if (!mayMerge(permissions[who])) { considered.push({ ...row, counted: false, why: 'the author may not merge to this repository' }); continue; }
     if (pushedAt === null) { considered.push({ ...row, counted: false, why: `no record of when ${headSha.slice(0, 7)} was pushed` }); continue; }
     if (!(ms(c.created_at) > ms(pushedAt))) { considered.push({ ...row, counted: false, why: `made before ${headSha.slice(0, 7)} was pushed at ${pushedAt}` }); continue; }
@@ -227,6 +246,41 @@ export function renderCaller(template, { owner, repo, commit }) {
   return template.split(CALLER_USES).join(`${owner}/${repo}/.github/workflows/engineer-review.yml@${commit}`);
 }
 
+// The pin must be a commit already on the shared workflow repository's main branch, never
+// one that only a fork carries (GitHub serves a fork's commit under the parent's name, so a
+// 40-character id alone proves nothing). compare main...<commit> reads "behind" or "identical"
+// exactly when the commit is in main's history.
+export const PIN_BRANCH = 'main';
+export async function confirmOnMain(client, { owner, repo, commit }) {
+  const path = `/repos/${owner}/${repo}/compare/${PIN_BRANCH}...${commit}`;
+  const answer = await client.get(path);
+  if (!answer) throw new Error(`commit ${commit} is not in ${owner}/${repo}: GitHub has no comparison of it with ${PIN_BRANCH}`);
+  if (answer.status !== 'behind' && answer.status !== 'identical') {
+    throw new Error(`commit ${commit} is not on ${owner}/${repo} ${PIN_BRANCH} (compare ${PIN_BRANCH}...${commit.slice(0, 7)} reads "${answer.status}"): pin a commit of ${PIN_BRANCH}`);
+  }
+  return answer.status;
+}
+
+// The caller file for a gated repository, refused unless its commit is on main.
+export async function callerFor(client, template, { owner, repo, commit }) {
+  const text = renderCaller(template, { owner, repo, commit });
+  await confirmOnMain(client, { owner, repo, commit });
+  return text;
+}
+
+// Why this run's token cannot write statuses, or null when it can. GitHub gives a read-only
+// token to pull_request and pull_request_review runs of a pull request from a fork, and to
+// runs Dependabot starts; comment runs always have the base repository's token.
+export function readOnlyReason(eventName, event, actor) {
+  if (eventName !== 'pull_request' && eventName !== 'pull_request_review') return null;
+  const pr = (event && event.pull_request) || {};
+  const base = (pr.base && pr.base.repo && pr.base.repo.full_name) || (event && event.repository && event.repository.full_name);
+  const head = pr.head && pr.head.repo ? pr.head.repo.full_name : null;
+  if (!head || (base && head !== base)) return 'a pull request from a fork, whose token is read-only';
+  if (actor === 'dependabot[bot]') return 'a run started by Dependabot, whose token is read-only';
+  return null;
+}
+
 // Reads what the decision needs through a client: { all(path, { stop }), get(path) }.
 export async function collect(client, repo, number, headShaFromEvent) {
   const pull = await client.get(`/repos/${repo}/pulls/${number}`);
@@ -256,27 +310,35 @@ export async function collect(client, repo, number, headShaFromEvent) {
 }
 
 // One run: settle the event and set the status. Returns
-// { status: <what was posted> | null, decision | null, skip | null }.
-// A missing review is a pending status, never a failure; only a failed read or write throws.
-export async function run({ eventName, event, repo, client, runUrl }) {
+// { status: <what was posted> | null, decision | null, skip | null, readOnly }.
+// A missing review is a pending status, never a failure; a token that cannot write
+// statuses is a skip with its reason; only a failed read or write throws.
+export async function run({ eventName, event, repo, client, runUrl, actor }) {
   const target = targetOf(eventName, event);
-  if (target.skip) return { status: null, decision: null, skip: target.skip };
+  if (target.skip) return { status: null, decision: null, skip: target.skip, readOnly: false };
+  const readOnly = readOnlyReason(eventName, event, actor);
+  if (readOnly) {
+    return {
+      status: null, decision: null, readOnly: true,
+      skip: `${readOnly}; the status is set when a reviewed comment arrives, which runs with the repository's own token`,
+    };
+  }
   const d = decide(await collect(client, repo, target.number, target.headSha));
   const status = statusFor(d, { sha: target.statusSha, runUrl });
   const { sha, ...body } = status;
   await client.post(`/repos/${repo}/statuses/${sha}`, body);
-  return { status, decision: d, skip: null };
+  return { status, decision: d, skip: null, readOnly: false };
 }
 
 // ---------- the command (reads and writes GitHub; the tests use run() with recorded answers) ----------
 
-function githubClient() {
+function githubClient(token = process.env.GITHUB_TOKEN) {
   const base = process.env.GITHUB_API_URL || 'https://api.github.com';
   async function call(path, { method = 'GET', body } = {}) {
     const res = await fetch(path.startsWith('http') ? path : `${base}${path}`, {
       method,
       headers: {
-        authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
         accept: 'application/vnd.github+json',
         'x-github-api-version': '2022-11-28',
         'user-agent': 'engineer-review',
@@ -319,8 +381,9 @@ async function main() {
   const argv = process.argv.slice(2);
   if (argv[0] === 'caller') {
     // Prints the filled caller file for a gated repository to copy.
+    // Reads GitHub (GITHUB_TOKEN or GH_TOKEN if set; the shared repository is public).
     const template = fs.readFileSync(new URL('./caller.yml', import.meta.url), 'utf8');
-    process.stdout.write(renderCaller(template, {
+    process.stdout.write(await callerFor(githubClient(process.env.GITHUB_TOKEN || process.env.GH_TOKEN), template, {
       owner: argValue(argv, 'owner'), repo: argValue(argv, 'repo'), commit: argValue(argv, 'commit'),
     }));
     return 0;
@@ -331,9 +394,12 @@ async function main() {
     ? `${server}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}` : undefined;
   const out = await run({
     eventName: process.env.GITHUB_EVENT_NAME, event, repo: process.env.GITHUB_REPOSITORY,
-    client: githubClient(), runUrl,
+    client: githubClient(), runUrl, actor: process.env.GITHUB_ACTOR,
   });
-  if (out.skip) { console.log(`Nothing to set: ${out.skip}.`); return 0; }
+  if (out.skip) {
+    console.log(out.readOnly ? `::notice title=Engineer review not set::${out.skip}.` : `Nothing to set: ${out.skip}.`);
+    return 0;
+  }
   const text = `${summary(out.decision)}\nStatus **${CONTEXT}** set to \`${out.status.state}\` on \`${out.status.sha}\`.\n`;
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);
   process.stdout.write(text);

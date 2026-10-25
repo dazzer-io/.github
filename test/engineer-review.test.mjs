@@ -7,10 +7,13 @@ import { fileURLToPath } from 'node:url';
 import {
   decide, summary, evidenceLine, firstLineIsReviewed, headPushedAt,
   prNumberFromMergeGroup, run, targetOf, statusFor, renderCaller, CALLER_USES, CONTEXT,
+  callerFor, confirmOnMain, readOnlyReason, wasEdited,
 } from '../engineer-review/decide.mjs';
 
 const fixture = JSON.parse(fs.readFileSync(
   fileURLToPath(new URL('./fixtures/engineer-review-events.json', import.meta.url)), 'utf8'));
+// Said only when a check goes red on a review counted that never should be.
+const SHOULD_NOT = 'a review that should not count set the Engineer review status';
 // Said only when a check goes red on a review the status missed.
 const MISSED = 'a review comment did not set the Engineer review status';
 // Said only when a check goes red on a change that would merge unreviewed.
@@ -25,7 +28,7 @@ function check(name) {
   const s = scenario(name);
   const d = decide(s);
   assert.equal(d.result, s.expect.result, s.expect.result === 'pending'
-    ? `${UNREVIEWED}: "${name}" passed on ${JSON.stringify(d.evidence)}`
+    ? `${SHOULD_NOT}: "${name}" passed on ${JSON.stringify(d.evidence)}`
     : `"${name}" settled ${d.result}, expected pass: ${d.reason}`);
   if (s.expect.result === 'pass') {
     assert.equal(d.evidence.who, s.expect.by);
@@ -139,7 +142,7 @@ async function runEvent(name) {
   assert.ok(e, `the fixture has no event named "${name}"`);
   const client = recordedClient(e.answers);
   const out = await run({
-    eventName: e.eventName, event: e.event, repo: fixture.repository, client,
+    eventName: e.eventName, event: e.event, repo: fixture.repository, client, actor: e.actor,
     runUrl: `https://github.com/${fixture.repository}/actions/runs/123`,
   });
   return { e, out, client };
@@ -228,13 +231,99 @@ test('the caller file pins its reusable workflow to a commit and names nothing o
   assert.throws(() => renderCaller(caller, { owner: 'harbor-lane/x', repo: '.github', commit }), /owner/);
 });
 
-test('the reusable workflow answers to calls and to this repository\'s own events, and never fails on a missing review', () => {
+test('the reusable workflow answers to calls and to this repository\'s own events, pinned and with its least rights', () => {
   const wf = fs.readFileSync(workflowPath, 'utf8');
   for (const trigger of ['workflow_call:', 'pull_request:', 'issue_comment:', 'pull_request_review:']) assert.ok(wf.includes(`  ${trigger}`), trigger);
   assert.match(wf, /permissions:\n\s+statuses: write\n\s+pull-requests: read\n\n/);
   assert.doesNotMatch(wf, /actions: write/);
-  for (const line of wf.split('\n').filter((l) => /^\s*-?\s*uses:/.test(l))) {
+  const uses = wf.split('\n').filter((l) => /^\s*-?\s*uses:/.test(l));
+  assert.ok(uses.length >= 1);
+  for (const line of uses) {
     assert.match(line, /@[0-9a-f]{40}\b/, `every uses: line is pinned to a commit: ${line.trim()}`);
   }
-  assert.match(wf, /job\.workflow_sha/);
+});
+
+test('the job is named apart from the status it sets', () => {
+  const wf = fs.readFileSync(workflowPath, 'utf8');
+  const names = [...wf.matchAll(/^ {4}name: (.+)$/gm)].map((m) => m[1].trim());
+  assert.deepEqual(names, ['Settle engineer review']);
+  assert.notEqual(names[0], CONTEXT);
+  assert.equal(CONTEXT, 'Engineer review');
+});
+
+test('the script is fetched with checkout at the workflow\'s own repository and commit, failing closed on an empty context', () => {
+  const wf = fs.readFileSync(workflowPath, 'utf8');
+  assert.doesNotMatch(wf, /curl|raw\.githubusercontent/);
+  assert.match(wf, /uses: actions\/checkout@[0-9a-f]{40}/);
+  assert.match(wf, /SOURCE_REPO: \$\{\{ job\.workflow_repository \}\}/);
+  assert.match(wf, /SOURCE_SHA: \$\{\{ job\.workflow_sha \}\}/);
+  assert.match(wf, /repository: \$\{\{ steps\.source\.outputs\.repo \}\}/);
+  assert.match(wf, /ref: \$\{\{ steps\.source\.outputs\.sha \}\}/);
+  assert.match(wf, /token: \$\{\{ github\.token \}\}/);
+  assert.match(wf, /if \[ -z "\$SOURCE_REPO" \]; then\n\s+echo "::error[^"]*job\.workflow_repository is empty[^"]*"\n\s+exit 1/);
+  assert.match(wf, /if \[ -z "\$SOURCE_SHA" \]; then\n\s+echo "::error[^"]*job\.workflow_sha is empty[^"]*"\n\s+exit 1/);
+  assert.match(wf, /run: node \.engineer-review\/engineer-review\/decide\.mjs/);
+});
+
+test('a reviewed comment posted through an App does not count', async () => {
+  const d = check('reviewed comment posted through an App');
+  assert.match(d.considered[0].why, /harbor-relay/);
+  // And through a whole comment event, the status stays pending.
+  const e = fixture.events['a reviewed comment on the pull request'];
+  const answers = structuredClone(e.answers);
+  answers[`/repos/${fixture.repository}/issues/42/comments`] = scenario('reviewed comment posted through an App').comments;
+  const client = recordedClient(answers);
+  await run({ eventName: e.eventName, event: e.event, repo: fixture.repository, client, actor: e.actor });
+  assert.equal(client.posts.length, 1);
+  assert.equal(client.posts[0].body.state, 'pending', `${SHOULD_NOT}: an App-posted comment set ${client.posts[0].body.state} (${client.posts[0].body.description})`);
+});
+
+test('an edited comment is judged by its edit time and never counts', () => {
+  for (const name of [
+    'reviewed comment edited after the last push',
+    'comment posted before the last push, edited to reviewed after it',
+    'reviewed comment edited before the last push',
+  ]) {
+    const d = check(name);
+    const why = d.considered[0].why;
+    assert.ok(why.includes(scenario(name).expect.why), `"${name}" should name its edit time: ${why}`);
+  }
+  assert.equal(wasEdited({ created_at: '2026-10-20T11:05:00Z', updated_at: '2026-10-20T11:05:00Z' }), false);
+  assert.equal(wasEdited({ created_at: '2026-10-20T11:05:00Z', updated_at: '2026-10-20T11:05:01Z' }), true);
+});
+
+test('a token that cannot write statuses skips the write and ends green', async () => {
+  for (const name of ['a push to a pull request from a fork', 'a review on a pull request from a fork', 'a pull request Dependabot opened']) {
+    const { e, out, client } = await runEvent(name);
+    assert.equal(out.readOnly, true, `"${name}" should be read as a read-only token`);
+    assert.equal(out.status, null);
+    assert.equal(client.posts.length, 0, `"${name}" tried to write a status with a read-only token`);
+    assert.equal(client.reads.length, 0);
+    assert.ok(out.skip.includes(e.expect.says), out.skip);
+  }
+  // The same events from the repository itself, or a comment on a fork's pull request, can write.
+  const push = fixture.events['a push after the review'];
+  assert.equal(readOnlyReason(push.eventName, push.event, 'mira-okafor'), null);
+  const fork = fixture.events['a push to a pull request from a fork'];
+  assert.equal(readOnlyReason('issue_comment', fork.event, 'mira-okafor'), null);
+});
+
+test('a caller pin is refused unless its commit is on the shared workflow repository main', async () => {
+  const pins = fixture.callerPins;
+  const client = recordedClient(new Proxy(pins.answers, {
+    has: () => true,
+    get: (t, k) => (k in t ? t[k] : null),
+  }));
+  const caller = fs.readFileSync(callerPath, 'utf8');
+  for (const commit of pins.accepted) {
+    const copy = await callerFor(client, caller, { owner: pins.owner, repo: pins.repo, commit });
+    assert.ok(copy.includes(`@${commit}\n`));
+  }
+  for (const [commit, why] of Object.entries(pins.refused)) {
+    await assert.rejects(callerFor(client, caller, { owner: pins.owner, repo: pins.repo, commit }),
+      (err) => err.message.includes(commit) && err.message.includes(why === 'no comparison' ? 'no comparison' : `"${why}"`),
+      `an imposter or unmerged commit ${commit} was accepted as a pin`);
+  }
+  assert.equal(await confirmOnMain(client, { owner: pins.owner, repo: pins.repo, commit: pins.accepted[1] }), 'identical');
+  assert.ok(client.reads.every((r) => r.startsWith(`/repos/${pins.owner}/${pins.repo}/compare/main...`)));
 });

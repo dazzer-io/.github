@@ -2,7 +2,8 @@
 # .github/workflows/engineer-review.yml (engineer-review/README.md, "Adopting it").
 # The copy is made with
 #   node engineer-review/decide.mjs caller --owner <organisation> --repo <shared workflow repository> --commit <40-character commit id>
-# which fills the one "uses:" line below and refuses a branch or tag in place of a commit.
+# which fills the one "uses:" line below, refuses a branch or tag in place of a commit,
+# and refuses a commit that is not on the shared workflow repository's main branch.
 name: Engineer review
 
 on:

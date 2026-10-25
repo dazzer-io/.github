@@ -733,6 +733,338 @@
       "expect": {
         "result": "pending"
       }
+    },
+    "reviewed comment posted through an App": {
+      "pr": {
+        "number": 42,
+        "headSha": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+        "headRef": "add-ledger-export"
+      },
+      "activity": [
+        {
+          "id": 1792492200,
+          "node_id": "RA_20261020103000",
+          "before": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "after": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+          "ref": "refs/heads/add-ledger-export",
+          "timestamp": "2026-10-20T10:30:00Z",
+          "activity_type": "push",
+          "actor": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          }
+        },
+        {
+          "id": 1792486800,
+          "node_id": "RA_20261020090000",
+          "before": "0000000000000000000000000000000000000000",
+          "after": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "ref": "refs/heads/add-ledger-export",
+          "timestamp": "2026-10-20T09:00:00Z",
+          "activity_type": "branch_creation",
+          "actor": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          }
+        }
+      ],
+      "permissions": {
+        "mira-okafor": {
+          "permission": "admin",
+          "role_name": "admin",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User",
+            "permissions": {}
+          }
+        },
+        "tomas-reyes": {
+          "permission": "read",
+          "role_name": "triage",
+          "user": {
+            "login": "tomas-reyes",
+            "id": 11007,
+            "type": "User",
+            "permissions": {}
+          }
+        }
+      },
+      "comments": [
+        {
+          "id": 5101,
+          "node_id": "IC_5002",
+          "html_url": "https://github.com/harbor-lane/ledger/pull/42#issuecomment-5002",
+          "body": "reviewed",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          },
+          "created_at": "2026-10-20T11:05:00Z",
+          "updated_at": "2026-10-20T11:05:00Z",
+          "author_association": "MEMBER",
+          "performed_via_github_app": {
+            "id": 880011,
+            "slug": "harbor-relay",
+            "name": "Harbor Relay",
+            "owner": {
+              "login": "harbor-lane",
+              "type": "Organization"
+            }
+          }
+        }
+      ],
+      "reviews": [],
+      "expect": {
+        "result": "pending",
+        "why": "harbor-relay"
+      }
+    },
+    "reviewed comment edited after the last push": {
+      "pr": {
+        "number": 42,
+        "headSha": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+        "headRef": "add-ledger-export"
+      },
+      "activity": [
+        {
+          "id": 1792492200,
+          "node_id": "RA_20261020103000",
+          "before": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "after": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+          "ref": "refs/heads/add-ledger-export",
+          "timestamp": "2026-10-20T10:30:00Z",
+          "activity_type": "push",
+          "actor": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          }
+        },
+        {
+          "id": 1792486800,
+          "node_id": "RA_20261020090000",
+          "before": "0000000000000000000000000000000000000000",
+          "after": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "ref": "refs/heads/add-ledger-export",
+          "timestamp": "2026-10-20T09:00:00Z",
+          "activity_type": "branch_creation",
+          "actor": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          }
+        }
+      ],
+      "permissions": {
+        "mira-okafor": {
+          "permission": "admin",
+          "role_name": "admin",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User",
+            "permissions": {}
+          }
+        },
+        "tomas-reyes": {
+          "permission": "read",
+          "role_name": "triage",
+          "user": {
+            "login": "tomas-reyes",
+            "id": 11007,
+            "type": "User",
+            "permissions": {}
+          }
+        }
+      },
+      "comments": [
+        {
+          "id": 5102,
+          "node_id": "IC_5002",
+          "html_url": "https://github.com/harbor-lane/ledger/pull/42#issuecomment-5002",
+          "body": "reviewed",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          },
+          "created_at": "2026-10-20T11:05:00Z",
+          "updated_at": "2026-10-20T11:20:00Z",
+          "author_association": "MEMBER",
+          "performed_via_github_app": null
+        }
+      ],
+      "reviews": [],
+      "expect": {
+        "result": "pending",
+        "why": "2026-10-20T11:20:00Z"
+      }
+    },
+    "comment posted before the last push, edited to reviewed after it": {
+      "pr": {
+        "number": 42,
+        "headSha": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+        "headRef": "add-ledger-export"
+      },
+      "activity": [
+        {
+          "id": 1792492200,
+          "node_id": "RA_20261020103000",
+          "before": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "after": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+          "ref": "refs/heads/add-ledger-export",
+          "timestamp": "2026-10-20T10:30:00Z",
+          "activity_type": "push",
+          "actor": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          }
+        },
+        {
+          "id": 1792486800,
+          "node_id": "RA_20261020090000",
+          "before": "0000000000000000000000000000000000000000",
+          "after": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "ref": "refs/heads/add-ledger-export",
+          "timestamp": "2026-10-20T09:00:00Z",
+          "activity_type": "branch_creation",
+          "actor": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          }
+        }
+      ],
+      "permissions": {
+        "mira-okafor": {
+          "permission": "admin",
+          "role_name": "admin",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User",
+            "permissions": {}
+          }
+        },
+        "tomas-reyes": {
+          "permission": "read",
+          "role_name": "triage",
+          "user": {
+            "login": "tomas-reyes",
+            "id": 11007,
+            "type": "User",
+            "permissions": {}
+          }
+        }
+      },
+      "comments": [
+        {
+          "id": 5103,
+          "node_id": "IC_5002",
+          "html_url": "https://github.com/harbor-lane/ledger/pull/42#issuecomment-5002",
+          "body": "reviewed",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          },
+          "created_at": "2026-10-20T09:40:00Z",
+          "updated_at": "2026-10-20T11:25:00Z",
+          "author_association": "MEMBER",
+          "performed_via_github_app": null
+        }
+      ],
+      "reviews": [],
+      "expect": {
+        "result": "pending",
+        "why": "2026-10-20T11:25:00Z"
+      }
+    },
+    "reviewed comment edited before the last push": {
+      "pr": {
+        "number": 42,
+        "headSha": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+        "headRef": "add-ledger-export"
+      },
+      "activity": [
+        {
+          "id": 1792492200,
+          "node_id": "RA_20261020103000",
+          "before": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "after": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+          "ref": "refs/heads/add-ledger-export",
+          "timestamp": "2026-10-20T10:30:00Z",
+          "activity_type": "push",
+          "actor": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          }
+        },
+        {
+          "id": 1792486800,
+          "node_id": "RA_20261020090000",
+          "before": "0000000000000000000000000000000000000000",
+          "after": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "ref": "refs/heads/add-ledger-export",
+          "timestamp": "2026-10-20T09:00:00Z",
+          "activity_type": "branch_creation",
+          "actor": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          }
+        }
+      ],
+      "permissions": {
+        "mira-okafor": {
+          "permission": "admin",
+          "role_name": "admin",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User",
+            "permissions": {}
+          }
+        },
+        "tomas-reyes": {
+          "permission": "read",
+          "role_name": "triage",
+          "user": {
+            "login": "tomas-reyes",
+            "id": 11007,
+            "type": "User",
+            "permissions": {}
+          }
+        }
+      },
+      "comments": [
+        {
+          "id": 5104,
+          "node_id": "IC_5002",
+          "html_url": "https://github.com/harbor-lane/ledger/pull/42#issuecomment-5002",
+          "body": "reviewed",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          },
+          "created_at": "2026-10-20T09:40:00Z",
+          "updated_at": "2026-10-20T10:00:00Z",
+          "author_association": "MEMBER",
+          "performed_via_github_app": null
+        }
+      ],
+      "reviews": [],
+      "expect": {
+        "result": "pending",
+        "why": "2026-10-20T10:00:00Z"
+      }
     }
   },
   "mergeGroupHeadRef": "refs/heads/gh-readonly-queue/main/pr-42-abababababababababababababababababababab",
@@ -899,7 +1231,8 @@
           "2026-10-20T11:05:00Z",
           "9f8e7d6"
         ]
-      }
+      },
+      "actor": "mira-okafor"
     },
     "a push after the review": {
       "eventName": "pull_request",
@@ -1074,7 +1407,8 @@
         "says": [
           "2026-10-20T12:00:00Z"
         ]
-      }
+      },
+      "actor": "mira-okafor"
     },
     "an approving review on the head commit": {
       "eventName": "pull_request_review",
@@ -1233,7 +1567,8 @@
           "mira-okafor",
           "approving review"
         ]
-      }
+      },
+      "actor": "mira-okafor"
     },
     "a comment on an issue, not a pull request": {
       "eventName": "issue_comment",
@@ -1279,7 +1614,219 @@
       "answers": {},
       "expect": {
         "state": null
+      },
+      "actor": "mira-okafor"
+    },
+    "a push to a pull request from a fork": {
+      "eventName": "pull_request",
+      "actor": "rowan-ito",
+      "event": {
+        "action": "synchronize",
+        "number": 42,
+        "repository": {
+          "full_name": "harbor-lane/ledger",
+          "name": "ledger",
+          "owner": {
+            "login": "harbor-lane"
+          }
+        },
+        "sender": {
+          "login": "rowan-ito",
+          "id": 8008,
+          "type": "User"
+        },
+        "before": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+        "after": "5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d",
+        "pull_request": {
+          "number": 42,
+          "state": "open",
+          "title": "Add the ledger export",
+          "html_url": "https://github.com/harbor-lane/ledger/pull/42",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          },
+          "head": {
+            "ref": "add-ledger-export",
+            "sha": "5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d",
+            "repo": {
+              "full_name": "rowan-ito/ledger"
+            }
+          },
+          "base": {
+            "ref": "main",
+            "repo": {
+              "full_name": "harbor-lane/ledger"
+            }
+          }
+        }
+      },
+      "answers": {},
+      "expect": {
+        "state": null,
+        "readOnly": true,
+        "says": "fork"
       }
+    },
+    "a review on a pull request from a fork": {
+      "eventName": "pull_request_review",
+      "actor": "mira-okafor",
+      "event": {
+        "action": "submitted",
+        "repository": {
+          "full_name": "harbor-lane/ledger",
+          "name": "ledger",
+          "owner": {
+            "login": "harbor-lane"
+          }
+        },
+        "sender": {
+          "login": "mira-okafor",
+          "id": 11007,
+          "type": "User"
+        },
+        "review": {
+          "id": 702,
+          "node_id": "PRR_702",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          },
+          "body": "",
+          "state": "APPROVED",
+          "commit_id": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+          "submitted_at": "2026-10-20T11:30:00Z",
+          "html_url": "https://github.com/harbor-lane/ledger/pull/42#pullrequestreview-702",
+          "author_association": "MEMBER"
+        },
+        "pull_request": {
+          "number": 42,
+          "state": "open",
+          "title": "Add the ledger export",
+          "html_url": "https://github.com/harbor-lane/ledger/pull/42",
+          "user": {
+            "login": "mira-okafor",
+            "id": 11007,
+            "type": "User"
+          },
+          "head": {
+            "ref": "add-ledger-export",
+            "sha": "5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d",
+            "repo": {
+              "full_name": "rowan-ito/ledger"
+            }
+          },
+          "base": {
+            "ref": "main",
+            "repo": {
+              "full_name": "harbor-lane/ledger"
+            }
+          }
+        }
+      },
+      "answers": {},
+      "expect": {
+        "state": null,
+        "readOnly": true,
+        "says": "fork"
+      }
+    },
+    "a pull request Dependabot opened": {
+      "eventName": "pull_request",
+      "actor": "dependabot[bot]",
+      "event": {
+        "action": "opened",
+        "number": 42,
+        "repository": {
+          "full_name": "harbor-lane/ledger",
+          "name": "ledger",
+          "owner": {
+            "login": "harbor-lane"
+          }
+        },
+        "sender": {
+          "login": "dependabot[bot]",
+          "id": 49699333,
+          "type": "Bot"
+        },
+        "before": "9f8e7d6c5b4a39281706f5e4d3c2b1a0f9e8d7c6",
+        "after": "5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d",
+        "pull_request": {
+          "number": 42,
+          "state": "open",
+          "title": "Add the ledger export",
+          "html_url": "https://github.com/harbor-lane/ledger/pull/42",
+          "user": {
+            "login": "dependabot[bot]",
+            "id": 49699333,
+            "type": "Bot"
+          },
+          "head": {
+            "ref": "dependabot/npm_and_yarn/ledger-csv-2.4.1",
+            "sha": "5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d",
+            "repo": {
+              "full_name": "harbor-lane/ledger"
+            }
+          },
+          "base": {
+            "ref": "main",
+            "repo": {
+              "full_name": "harbor-lane/ledger"
+            }
+          }
+        }
+      },
+      "answers": {},
+      "expect": {
+        "state": null,
+        "readOnly": true,
+        "says": "Dependabot"
+      }
+    }
+  },
+  "callerPins": {
+    "owner": "harbor-lane",
+    "repo": ".github",
+    "answers": {
+      "/repos/harbor-lane/.github/compare/main...3e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f": {
+        "status": "behind",
+        "ahead_by": 0,
+        "behind_by": 4,
+        "total_commits": 0,
+        "html_url": "https://github.com/harbor-lane/.github/compare"
+      },
+      "/repos/harbor-lane/.github/compare/main...7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b": {
+        "status": "identical",
+        "ahead_by": 0,
+        "behind_by": 0,
+        "total_commits": 0,
+        "html_url": "https://github.com/harbor-lane/.github/compare"
+      },
+      "/repos/harbor-lane/.github/compare/main...d00dfeedd00dfeedd00dfeedd00dfeedd00dfeed": {
+        "status": "diverged",
+        "ahead_by": 1,
+        "behind_by": 2,
+        "total_commits": 1,
+        "html_url": "https://github.com/harbor-lane/.github/compare"
+      },
+      "/repos/harbor-lane/.github/compare/main...c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00": {
+        "status": "ahead",
+        "ahead_by": 1,
+        "behind_by": 0,
+        "total_commits": 1,
+        "html_url": "https://github.com/harbor-lane/.github/compare"
+      }
+    },
+    "accepted": [
+      "3e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f",
+      "7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b"
+    ],
+    "refused": {
+      "d00dfeedd00dfeedd00dfeedd00dfeedd00dfeed": "diverged",
+      "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00": "ahead",
+      "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0": "no comparison"
     }
   }
 }

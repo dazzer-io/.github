@@ -1,0 +1,46 @@
+# Engineer review: a change merges only after a person who may merge to the
+# repository has recorded a review of its head commit (engineer-review/README.md).
+# Required on the gated repositories through the organisation ruleset; the
+# repository and organisation come from the run's own context, never from this file.
+name: Engineer review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    types: [created]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  actions: write # only to re-run the pull request's own check after a review arrives by comment or review
+
+jobs:
+  engineer-review:
+    name: Engineer review
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Find this workflow's repository
+        id: source
+        run: echo "repo=${GITHUB_WORKFLOW_REF%%/.github/workflows/*}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the decision script at this workflow's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.source.outputs.repo }}
+          ref: ${{ github.workflow_sha }}
+          path: .engineer-review
+          sparse-checkout: engineer-review
+          persist-credentials: false
+
+      - name: Settle the engineer review
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .engineer-review/engineer-review/decide.mjs

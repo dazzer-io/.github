@@ -1,0 +1,391 @@
+# Security scan (security-scan/README.md): required on every gated repository through the
+# organisation ruleset's workflows rule, so no repository carries a caller file. It scans
+# only what a change brings in, and its final job, security-scan, is settled by
+# security-scan/decide.mjs.
+#
+# Two branches, chosen by the calling repository's variable SECURITY_SCAN_NATIVE:
+#   - "true" (GitHub Code Security and Secret Protection on): GitHub's dependency review only.
+#     Code scanning there is CodeQL default setup, required by the organisation ruleset's
+#     code_scanning rule, and secrets are push protection's, so no other scanner runs.
+#   - unset or "false": osv-scanner over the lockfiles at the change and at its base, with
+#     the lockfiles the change deletes or renames listed beside it, gitleaks over the pull
+#     request's commits, and Semgrep's open-source engine against the base commit, each
+#     installed by pinned version and checksum.
+#
+# The mode is the variable SECURITY_SCAN_MODE, read on every run: advisory records every
+# finding and passes with "security-scan would block: N"; blocking fails on a new critical
+# or high runtime finding not on the calling repository's .github/security-accepted.json.
+# Unset or anything else reads as blocking and says so. The scanner jobs never decide:
+# in advisory mode each runs continue-on-error, keyed on the variable itself as the first
+# job is, so a first job that failed cannot make them strict; the workflow's result is
+# security-scan's alone and a scanner that failed counts there as one would-block item. In
+# blocking mode the dependency-review action itself also fails on a finding, as GitHub built it.
+#
+# A change cannot quiet the open-source scanners from inside itself: each of their jobs
+# removes every .semgrepignore, .gitleaksignore, .gitleaks.toml and osv-scanner.toml from the
+# checkout before scanning, osv-scanner reads an empty config the workflow writes and
+# scans lockfiles .gitignore would skip, and Semgrep scans files .gitignore lists.
+# The organisation and repositories come from the run's own context, never from this file.
+name: Security scan
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+
+jobs:
+  plan:
+    name: Read the switches
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Advisory only when the variable reads advisory (GitHub compares without case); the
+    # final job still runs and counts every output this leaves missing.
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
+    outputs:
+      native: ${{ steps.plan.outputs.native }}
+      mode: ${{ steps.plan.outputs.mode }}
+      warn_only: ${{ steps.plan.outputs.warn_only }}
+      allow_ghsas: ${{ steps.plan.outputs.allow_ghsas }}
+    steps:
+      - name: Name this workflow's own repository and commit
+        id: source
+        env:
+          SOURCE_REPO: ${{ job.workflow_repository }}
+          SOURCE_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$SOURCE_REPO" ] || [ -z "$SOURCE_SHA" ]; then
+            echo "::error title=security-scan::the contexts job.workflow_repository and job.workflow_sha must both be set, so the decision script's source is known"
+            exit 1
+          fi
+          echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the decision script at that commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.source.outputs.repo }}
+          ref: ${{ steps.source.outputs.sha }}
+          token: ${{ github.token }}
+          path: .security-scan-source
+          sparse-checkout: security-scan
+          persist-credentials: false
+
+      - name: Fetch the accepted list at the change's head commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          path: .security-scan-accepted
+          sparse-checkout: .github/security-accepted.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Read the mode, the branch and the accepted advisories
+        id: plan
+        env:
+          SECURITY_SCAN_MODE: ${{ vars.SECURITY_SCAN_MODE }}
+          SECURITY_SCAN_NATIVE: ${{ vars.SECURITY_SCAN_NATIVE }}
+        run: node .security-scan-source/security-scan/decide.mjs plan --accepted .security-scan-accepted/.github/security-accepted.json
+
+  dependency-review:
+    name: Dependency review
+    needs: plan
+    if: needs.plan.outputs.native == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
+    steps:
+      - name: Review the dependencies the change adds
+        id: review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          base-ref: ${{ env.BASE_SHA }}
+          head-ref: ${{ env.HEAD_SHA }}
+          fail-on-scopes: runtime, unknown
+          fail-on-severity: high
+          warn-only: ${{ needs.plan.outputs.warn_only }}
+          allow-ghsas: ${{ needs.plan.outputs.allow_ghsas }}
+          license-check: false
+          comment-summary-in-pr: never
+
+      - name: Keep the review's findings for the decision
+        if: ${{ !cancelled() }}
+        env:
+          VULNERABLE: ${{ steps.review.outputs.vulnerable-changes }}
+          OUTCOME: ${{ steps.review.outcome }}
+        run: |
+          mkdir -p scan
+          printf '%s' "$VULNERABLE" > scan/dependency-review.out
+          printf '%s\n' "$OUTCOME" > scan/dependency-review.exit
+
+      - name: Hand them to the final job
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-scan-dependency-review
+          path: scan/
+          if-no-files-found: error
+
+  osv-scanner:
+    name: Dependency audit (osv-scanner)
+    needs: plan
+    if: needs.plan.outputs.native != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
+    env:
+      OSV_SCANNER_VERSION: v2.7.0
+      OSV_SCANNER_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
+    steps:
+      - name: Fetch the change with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Remove the files a change could quiet the scan with
+        # Every .semgrepignore, .gitleaksignore, .gitleaks.toml and osv-scanner.toml in the
+        # checkout, at any depth outside .git: only the accepted list accepts a finding.
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/quieting-files"
+          find target -path target/.git -prune -o ! -type d \( -name .semgrepignore -o -name .gitleaksignore \
+            -o -name .gitleaks.toml -o -name osv-scanner.toml \) -print0 > "$list"
+          if [ -s "$list" ]; then
+            xargs -0 rm -f -- < "$list"
+            echo "Removed before scanning:"
+            tr '\000\n\r' '\n??' < "$list"
+          fi
+
+      - name: Install osv-scanner by pinned version and checksum
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $RUNNER_TEMP/osv-scanner" | sha256sum --check --strict -
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+
+      - name: Scan the lockfiles at the change and at its base
+        # An empty config the workflow writes overrides any osv-scanner.toml, and --no-ignore
+        # scans a lockfile the change lists in .gitignore. The files the change deletes, a
+        # rename counted as a deletion, are listed for the decision: a lockfile among them
+        # left its dependencies unscanned.
+        run: |
+          mkdir -p scan
+          config="$RUNNER_TEMP/osv-scanner-empty.toml"
+          : > "$config"
+          set +e
+          "$RUNNER_TEMP/osv-scanner" scan source --recursive --no-ignore --config "$config" --format json target > scan/osv-head.out
+          echo "$?" > scan/osv-head.exit
+          git -C target diff --name-only -z --no-renames --diff-filter=D "$BASE_SHA" HEAD > scan/osv-removed.out
+          echo "$?" > scan/osv-removed.exit
+          if git -C target worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"; then
+            "$RUNNER_TEMP/osv-scanner" scan source --recursive --no-ignore --config "$config" --format json "$RUNNER_TEMP/base" > scan/osv-base.out
+            echo "$?" > scan/osv-base.exit
+          else
+            echo "base commit not found" > scan/osv-base.exit
+          fi
+          exit 0
+
+      - name: Hand the outputs to the final job
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-scan-osv-scanner
+          path: scan/
+          if-no-files-found: error
+
+  gitleaks:
+    name: Secret detection (gitleaks)
+    needs: plan
+    if: needs.plan.outputs.native != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+      # The built-in rules only: a change cannot quiet the scan by adding its own
+      # .gitleaks.toml or .gitleaksignore (both removed before the scan, and the ignore file
+      # read from an empty folder) or a gitleaks:allow comment; acceptance goes through
+      # .github/security-accepted.json instead.
+      GITLEAKS_CONFIG_TOML: |
+        [extend]
+        useDefault = true
+    steps:
+      - name: Fetch the change with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Remove the files a change could quiet the scan with
+        # Every .semgrepignore, .gitleaksignore, .gitleaks.toml and osv-scanner.toml in the
+        # checkout, at any depth outside .git: only the accepted list accepts a finding.
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/quieting-files"
+          find target -path target/.git -prune -o ! -type d \( -name .semgrepignore -o -name .gitleaksignore \
+            -o -name .gitleaks.toml -o -name osv-scanner.toml \) -print0 > "$list"
+          if [ -s "$list" ]; then
+            xargs -0 rm -f -- < "$list"
+            echo "Removed before scanning:"
+            tr '\000\n\r' '\n??' < "$list"
+          fi
+
+      - name: Install gitleaks by pinned version and checksum
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+          mkdir -p "$RUNNER_TEMP/no-ignore"
+
+      - name: Scan the pull request's commits
+        run: |
+          mkdir -p scan
+          set +e
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --ignore-gitleaks-allow \
+            --gitleaks-ignore-path "$RUNNER_TEMP/no-ignore" \
+            --log-opts="${BASE_SHA}..${HEAD_SHA}" \
+            --report-format json --report-path scan/gitleaks.out --exit-code 2 target
+          echo "$?" > scan/gitleaks.exit
+          exit 0
+
+      - name: Hand the output to the final job
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-scan-gitleaks
+          path: scan/
+          if-no-files-found: error
+
+  semgrep:
+    name: Static analysis (Semgrep)
+    needs: plan
+    if: needs.plan.outputs.native != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
+    env:
+      # Semgrep's open-source engine, by version and image checksum.
+      SEMGREP_IMAGE: semgrep/semgrep:1.182.0@sha256:4a34048c04fef049f71665047f074cffb00cc3d89482f965a5cd151d589237af
+    steps:
+      - name: Fetch the change with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Remove the files a change could quiet the scan with
+        # Every .semgrepignore, .gitleaksignore, .gitleaks.toml and osv-scanner.toml in the
+        # checkout, at any depth outside .git: only the accepted list accepts a finding.
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/quieting-files"
+          find target -path target/.git -prune -o ! -type d \( -name .semgrepignore -o -name .gitleaksignore \
+            -o -name .gitleaks.toml -o -name osv-scanner.toml \) -print0 > "$list"
+          if [ -s "$list" ]; then
+            xargs -0 rm -f -- < "$list"
+            echo "Removed before scanning:"
+            tr '\000\n\r' '\n??' < "$list"
+          fi
+
+      - name: Commit the removal, so the baseline scan reads a clean tree
+        # Semgrep's --baseline-commit refuses a tree with pending changes; a local commit on
+        # top of the change keeps the scan to what the change adds, without those files.
+        run: |
+          set -euo pipefail
+          if [ -n "$(git -C target status --porcelain --untracked-files=no)" ]; then
+            git -C target -c user.name=security-scan -c user.email=security-scan@localhost \
+              -c commit.gpgsign=false commit --quiet --no-verify --all \
+              --message "security-scan: remove the change's own ignore files before scanning"
+          fi
+
+      - name: Scan only the code the change adds
+        # --no-git-ignore: a file the change force-adds and lists in .gitignore is still scanned.
+        run: |
+          mkdir -p scan
+          set +e
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/target:/src" -v "$GITHUB_WORKSPACE/scan:/out" -w /src \
+            -e SEMGREP_SEND_METRICS=off \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/src \
+            "$SEMGREP_IMAGE" \
+            semgrep scan --config p/default --baseline-commit "$BASE_SHA" --disable-nosem \
+              --no-git-ignore --metrics off --json --output /out/semgrep.out
+          echo "$?" > scan/semgrep.exit
+          exit 0
+
+      - name: Hand the output to the final job
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-scan-semgrep
+          path: scan/
+          if-no-files-found: error
+
+  security-scan:
+    name: security-scan
+    needs: [plan, dependency-review, osv-scanner, gitleaks, semgrep]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Name this workflow's own repository and commit
+        id: source
+        env:
+          SOURCE_REPO: ${{ job.workflow_repository }}
+          SOURCE_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$SOURCE_REPO" ] || [ -z "$SOURCE_SHA" ]; then
+            echo "::error title=security-scan::the contexts job.workflow_repository and job.workflow_sha must both be set, so the decision script's source is known"
+            exit 1
+          fi
+          echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the decision script at that commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.source.outputs.repo }}
+          ref: ${{ steps.source.outputs.sha }}
+          token: ${{ github.token }}
+          path: .security-scan-source
+          sparse-checkout: security-scan
+          persist-credentials: false
+
+      - name: Fetch the accepted list at the change's head commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          path: .security-scan-accepted
+          sparse-checkout: .github/security-accepted.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Collect the scanners' outputs
+        # A scanner job that did not run leaves no output; the decision reads that as
+        # missing (blocking) on the branch that requires it, and ignores it elsewhere.
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: security-scan-*
+          merge-multiple: true
+          path: scan
+
+      - name: Settle the scan
+        env:
+          SECURITY_SCAN_MODE: ${{ vars.SECURITY_SCAN_MODE }}
+          SECURITY_SCAN_NATIVE: ${{ vars.SECURITY_SCAN_NATIVE }}
+        run: node .security-scan-source/security-scan/decide.mjs settle --outputs scan --accepted .security-scan-accepted/.github/security-accepted.json

@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   decide, summary, annotations, readMode, readNative, readAccepted, allowGhsas,
   requiredOutputs, fromCvss, fromWord, blocks, OPEN_SOURCE_OUTPUTS,
-  readRemovedLockfiles, isLockfile, EVERY_DEPENDENCY_FILE_REMOVED,
+  readRemovedLockfiles, isLockfile, EVERY_DEPENDENCY_FILE_REMOVED, DEPENDENCY_FILES_REMOVED, cell,
 } from '../security-scan/decide.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +25,8 @@ const WRONGLY_BLOCKED = 'a finding the change may carry blocked the scan';
 const MISSED = 'a finding that should block did not block the scan';
 // Said only when a check goes red on a change that removed dependency files and passed.
 const HIDDEN = 'a change hid its dependencies from the scan';
+// Said only when a check goes red on removing every dependency file being something no record clears.
+const UNACCEPTABLE = 'a change retiring its last dependency file cannot be accepted';
 
 function outputOf(key) {
   const o = fixture.outputs[key];
@@ -133,7 +135,7 @@ test('a missing dependency review output blocks', () => {
 
 // ---------- the open-source scanners ----------
 
-test('elsewhere, clean scanners pass, and all four outputs are required', () => {
+test('elsewhere, clean scanners pass, and all five outputs are required', () => {
   const d = check('open source: everything clean, blocking');
   assert.deepEqual(d.required, ['osv-head', 'osv-base', 'osv-removed', 'gitleaks', 'semgrep']);
   assert.equal(d.branch, 'open source');
@@ -182,10 +184,14 @@ test('a repository with no dependency files passes the dependency job with the n
 function removesEveryDependencyFile(name) {
   const { input } = inputOf(name);
   const d = decide(input);
-  assert.ok(d.errors.includes(EVERY_DEPENDENCY_FILE_REMOVED),
-    `${HIDDEN}: "${name}" passed as no dependency files: ${JSON.stringify({ result: d.result, errors: d.errors, notes: d.notes })}`);
+  const f = d.findings.find((x) => x.id === DEPENDENCY_FILES_REMOVED);
+  assert.ok(f,
+    `${UNACCEPTABLE}: "${name}" has no ${DEPENDENCY_FILES_REMOVED} finding: ${JSON.stringify({ result: d.result, errors: d.errors, notes: d.notes })}`);
+  assert.equal(f.severity, 'high');
+  assert.equal(f.isNew, true);
   assert.ok(!d.notes.some((n) => /no dependency files/.test(n)), `${HIDDEN}: "${name}" says no dependency files`);
-  assert.match(summary(d), /the change removes every dependency file its base had/);
+  assert.match(summary(d), new RegExp(EVERY_DEPENDENCY_FILE_REMOVED));
+  return { d, f };
 }
 
 test('a change that deletes its only lockfile blocks, though the change scan finds no dependency files', () => {
@@ -193,8 +199,21 @@ test('a change that deletes its only lockfile blocks, though the change scan fin
   check('open source: the change deletes its only lockfile, blocking');
   removesEveryDependencyFile('open source: the change deletes its only lockfile, base vulnerable, blocking');
   check('open source: the change deletes its only lockfile, base vulnerable, blocking');
-  const d = check('open source: the change deletes its only lockfile, advisory');
-  assert.ok(d.errors.includes(EVERY_DEPENDENCY_FILE_REMOVED), `${HIDDEN}: the advisory run does not count it`);
+  const { f } = removesEveryDependencyFile('open source: the change deletes its only lockfile, advisory');
+  assert.equal(f.blocks, true, `${HIDDEN}: the advisory run does not count it`);
+  check('open source: the change deletes its only lockfile, advisory');
+});
+
+test('a change retiring its last dependency file is accepted through risk records, like any other finding', () => {
+  const { s, input } = inputOf('open source: the last dependency file retired with its records, blocking');
+  const r = decide(input);
+  assert.equal(r.result, s.expect.result, `${UNACCEPTABLE}: ${JSON.stringify({ result: r.result, errors: r.errors })}`);
+  const d = check('open source: the last dependency file retired with its records, blocking');
+  const { f } = removesEveryDependencyFile('open source: the last dependency file retired with its records, blocking');
+  assert.equal(f.accepted, 'records/risk-acceptance/2026-11-okafor-ledger-retired.md');
+  assert.equal(d.errors.length, 0, `${UNACCEPTABLE}: it is still an error no record can clear`);
+  // Accepting the whole retirement does not accept the lockfile it removes: each needs its record.
+  check('open source: the last dependency file retired, its lockfile not accepted, blocking');
 });
 
 test('no dependency files at the change passes only when the base scan says so too', () => {
@@ -215,6 +234,31 @@ test('a lockfile the change deletes or renames among several is one would-block 
 
 test('a lockfile retired on purpose is accepted only through the accepted list', () => {
   check('open source: a removed lockfile accepted with its record, blocking');
+});
+
+// Separators in one summary table row: pipes not escaped by an odd run of backslashes.
+function cellSeparators(row) {
+  let n = 0;
+  for (let i = 0; i < row.length; i++) {
+    if (row[i] !== '|') continue;
+    let k = 0;
+    while (i - 1 - k >= 0 && row[i - 1 - k] === '\\') k++;
+    if (k % 2 === 0) n++;
+  }
+  return n;
+}
+
+test('a value ending in a backslash, or carrying one before a pipe, cannot break the summary table', () => {
+  const finding = {
+    scanner: 'semgrep', severity: 'high', scope: 'runtime', isNew: true, accepted: null, blocks: true, note: null,
+    id: 'harbor-lane.rule:src\\okafor\\', where: 'src\\|okafor.js:3', words: 'Mira Okafor wrote C:\\temp\\',
+  };
+  const d = { mode: 'blocking', branch: 'open source', native: false, notes: [], errors: [], findings: [finding], annotation: 'security-scan blocks: 1' };
+  const rows = summary(d).split('\n').filter((l) => l.startsWith('| '));
+  const header = cellSeparators(rows[0]);
+  for (const row of rows) assert.equal(cellSeparators(row), header, `a value broke the summary table: ${row}`);
+  assert.equal(cell('ends\\'), 'ends\\\\');
+  assert.equal(cell('a\\|b'), 'a\\\\\\|b');
 });
 
 test('lockfile names are read by the file name alone', () => {

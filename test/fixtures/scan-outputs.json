@@ -16,6 +16,13 @@
     "removed-yarn-lockfile": [
       { "id": "lockfile-removed:services/harbor-lane/yarn.lock", "record": "records/risk-acceptance/2026-10-harbor-lane-retired.md" }
     ],
+    "last-lockfile-retired": [
+      { "id": "dependency-files-removed", "record": "records/risk-acceptance/2026-11-okafor-ledger-retired.md" },
+      { "id": "lockfile-removed:package-lock.json", "record": "records/risk-acceptance/2026-11-okafor-ledger-retired.md" }
+    ],
+    "every-dependency-file-only": [
+      { "id": "dependency-files-removed", "record": "records/risk-acceptance/2026-11-okafor-ledger-retired.md" }
+    ],
     "eval-rule-and-path": [
       { "id": "javascript.lang.security.audit.eval-detected:src/run.js", "record": "records/risk-acceptance/2026-10-harbor-lane-eval.md" }
     ]
@@ -409,17 +416,31 @@
     "open source: the change deletes its only lockfile, blocking": {
       "mode": "blocking",
       "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
-      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1, "findings": 0 }
+      "expect": { "result": "fail", "wouldBlock": 2, "errors": 0, "findings": 2,
+        "blocking": ["dependency-files-removed", "lockfile-removed:package-lock.json"] }
     },
     "open source: the change deletes its only lockfile, base vulnerable, blocking": {
       "mode": "blocking",
       "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-base-utils-high", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
-      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1, "findings": 0 }
+      "expect": { "result": "fail", "wouldBlock": 2, "errors": 0, "findings": 2,
+        "blocking": ["dependency-files-removed", "lockfile-removed:package-lock.json"] }
     },
     "open source: the change deletes its only lockfile, advisory": {
       "mode": "advisory",
       "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
-      "expect": { "result": "pass", "wouldBlock": 1, "blocking": [], "errors": 1, "annotation": "security-scan would block: 1" }
+      "expect": { "result": "pass", "wouldBlock": 2, "errors": 0, "annotation": "security-scan would block: 2",
+        "blocking": ["dependency-files-removed", "lockfile-removed:package-lock.json"] }
+    },
+    "open source: the last dependency file retired with its records, blocking": {
+      "mode": "blocking", "accepted": "last-lockfile-retired",
+      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "pass", "wouldBlock": 0, "errors": 0, "blocking": [], "findings": 2,
+        "acceptedBy": "records/risk-acceptance/2026-11-okafor-ledger-retired.md" }
+    },
+    "open source: the last dependency file retired, its lockfile not accepted, blocking": {
+      "mode": "blocking", "accepted": "every-dependency-file-only",
+      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "fail", "wouldBlock": 1, "errors": 0, "blocking": ["lockfile-removed:package-lock.json"], "findings": 2 }
     },
     "open source: no dependency files at the change and its base scan missing, blocking": {
       "mode": "blocking",

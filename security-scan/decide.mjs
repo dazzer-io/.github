@@ -33,7 +33,9 @@ export const RECORD_PREFIX = 'records/risk-acceptance/';
 export const NATIVE_OUTPUTS = ['dependency-review'];
 export const OPEN_SOURCE_OUTPUTS = ['osv-head', 'osv-base', 'osv-removed', 'gitleaks', 'semgrep'];
 export const LOCKFILE_REMOVED = 'lockfile-removed:';
-export const EVERY_DEPENDENCY_FILE_REMOVED = 'osv-scanner: the change removes every dependency file its base had';
+// The fixed id of the finding "the change removes every dependency file its base had".
+export const DEPENDENCY_FILES_REMOVED = 'dependency-files-removed';
+export const EVERY_DEPENDENCY_FILE_REMOVED = 'the change removes every dependency file its base had, so nothing it depends on is scanned';
 
 // The lockfile and manifest names osv-scanner reads its packages from. A file the change deletes
 // or renames with one of these names leaves its dependencies unscanned at the change.
@@ -268,7 +270,10 @@ export function readRemovedLockfiles(output) {
 // osv-scanner at the change (head) and at its base: a finding counts as the change's own
 // only when the base does not already carry that package with that vulnerability.
 // Exit 128 is osv-scanner's "no packages found": at the change it passes only when the base
-// had none either; when the base's scan finished (exit 0 or 1) the change removed them all.
+// had none either; when the base's scan finished (exit 0 or 1) the change removed them all,
+// which is one finding with the fixed id dependency-files-removed: high, runtime, new, so a
+// repository retiring its last dependency file on purpose says so in a reviewed record, like
+// any other finding, beside the record each lockfile it removes needs.
 export function readOsv(head, base, removed) {
   const h = osvFindings('osv-scanner (change)', head);
   if (h.error) return { error: h.error };
@@ -277,7 +282,14 @@ export function readOsv(head, base, removed) {
   const b = osvFindings('osv-scanner (base)', base);
   if (b.error) return { error: b.error };
   if (h.none) {
-    if (!b.none) return { error: EVERY_DEPENDENCY_FILE_REMOVED };
+    if (!b.none) {
+      const all = {
+        scanner: 'osv-scanner', id: DEPENDENCY_FILES_REMOVED, ids: [DEPENDENCY_FILES_REMOVED],
+        severity: 'high', scope: 'runtime', where: 'every dependency file',
+        words: EVERY_DEPENDENCY_FILE_REMOVED, isNew: true, note: null,
+      };
+      return { findings: [all, ...r.findings], notes: [] };
+    }
     return { findings: r.findings, notes: ['osv-scanner: no dependency files'] };
   }
   const onBase = new Set();
@@ -390,8 +402,10 @@ export function decide(input) {
   };
 }
 
-function cell(s) {
-  return String(s ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').slice(0, 300);
+// One table cell: cut to length first, so the cut never splits an escape; then every
+// backslash is doubled before every pipe is escaped, so no value can end a cell early.
+export function cell(s) {
+  return String(s ?? '').replace(/\r?\n/g, ' ').slice(0, 300).replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
 }
 
 export function summary(d) {

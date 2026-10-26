@@ -23,8 +23,22 @@ On the open-source branch only the change's own findings count: osv-scanner scan
 lockfiles at the change and at its base, and a finding the base already carries is recorded
 but never blocks; gitleaks reads only the commits between the base and the change's head;
 Semgrep runs with `--baseline-commit` set to the base, so it reports only results the change
-adds. A repository with no dependency files passes the dependency audit with the note
-"no dependency files".
+adds. A repository with no dependency files, at the change and at its base, passes the
+dependency audit with the note "no dependency files".
+
+A change cannot hide its dependencies by removing their lockfile:
+
+- When osv-scanner finds no dependency files at the change (its exit 128) but its scan of the
+  base finished (exit 0 or 1), the decision records the error "the change removes every
+  dependency file its base had", which blocks in blocking mode and counts as one would-block
+  item in advisory. A missing or failed base scan blocks the same way.
+- The osv-scanner job also lists the files the change deletes
+  (`git diff --name-only -z --no-renames --diff-filter=D <base> HEAD`, so a rename counts as
+  deleting the old name). Each lockfile among them (by file name: `package-lock.json`,
+  `yarn.lock`, `pnpm-lock.yaml`, `Cargo.lock`, `go.mod`, `poetry.lock`, `requirements*.txt` and
+  the rest osv-scanner reads) is one high finding, `lockfile-removed:<path>`, which blocks in
+  blocking mode. A lockfile retired on purpose is accepted through the accepted list under that
+  id, with its record. If the list cannot be made (git fails), that blocks too.
 
 A change cannot quiet the open-source scanners with a file or comment of its own:
 
@@ -38,7 +52,8 @@ A change cannot quiet the open-source scanners with a file or comment of its own
   so a lockfile the change lists in `.gitignore` is still scanned.
 - gitleaks runs on its built-in rules only (the workflow hands it its own config), reads its
   ignore file from an empty folder, and ignores `gitleaks:allow` comments.
-- Semgrep ignores `nosemgrep` comments (`--disable-nosem`).
+- Semgrep ignores `nosemgrep` comments (`--disable-nosem`) and scans files the change lists in
+  `.gitignore` (`--no-git-ignore`).
 
 A finding is accepted only through the accepted list below.
 
@@ -63,9 +78,11 @@ crash, a missing job, malformed JSON, a malformed accepted list), counts like a 
 finding: it fails the check in blocking mode and is counted in `would block: N` in advisory,
 one item per scanner. So a scanner job that fails in advisory mode (the dependency review
 refusing, a download that fails) leaves the run green and shows as one would-block item in
-the summary. The first job, which reads the switches, runs `continue-on-error` only when
-`SECURITY_SCAN_MODE` reads `advisory` exactly (GitHub compares without case); any other value
-keeps it strict, the safe direction.
+the summary. The first job, which reads the switches, and the four scanner jobs run
+`continue-on-error` only when `SECURITY_SCAN_MODE` reads `advisory` exactly (GitHub compares
+without case); any other value keeps them strict, the safe direction. The scanner jobs read the
+variable itself rather than the first job's output, so a first job that failed in advisory mode
+cannot leave them strict.
 
 ## Severity, one scale for every scanner
 
@@ -128,6 +145,15 @@ that accepts a finding is not blocked by it:
   it does, when a change touches a file the base's `.semgrepignore` excludes, findings already
   in that file can read as new. That fails safe; such a finding is fixed or accepted.
 
+- **Semgrep's built-in default ignore list applies.** Each scanner job removes the change's
+  `.semgrepignore`, and with none Semgrep falls back to its own default ignore list: among
+  others `test/`, `tests/`, `vendor/`, `build/`, `dist/`, `node_modules/` and `*.min.js`. Code a
+  change puts there is not scanned by Semgrep. Writing a `.semgrepignore` of the workflow's own
+  would lift that, at the cost of scanning vendored and generated code.
+- **A deleted lockfile is matched by its file name.** A dependency file osv-scanner reads under a
+  name not on the list in `decide.mjs` is not flagged when the change deletes it; the change
+  scan finding no dependency files at all still blocks.
+
 ## Files
 
 - `.github/workflows/security-scan.yml`: the workflow. Its first job reads the switches through
@@ -136,7 +162,8 @@ that accepts a finding is not blocked by it:
 - `security-scan/decide.mjs`: the decision. Pure functions, exported for the tests.
 - `test/security-scan-decide.test.mjs` over `test/fixtures/scan-outputs.json`: recorded
   outputs, no network. It also runs the workflow's own removal, commit and osv-scanner steps
-  in a temporary git repository, with a stand-in osv-scanner that records how it was called.
+  in a temporary git repository, with a stand-in osv-scanner that records how it was called,
+  and reads the deleted lockfiles that step lists.
 
 Pinned today: GitHub's dependency-review action v5.0.0, osv-scanner v2.7.0, gitleaks 8.30.1 and
 the Semgrep image 1.182.0, each by commit or SHA-256 checksum in the workflow. To move one, read

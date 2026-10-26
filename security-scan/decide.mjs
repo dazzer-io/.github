@@ -7,8 +7,10 @@
 //     CodeQL default setup, required by the organisation ruleset, and secrets are push
 //     protection's, so no open-source scanner runs and none is required;
 //   - open source (unset, "false" or anything else): osv-scanner over the lockfiles at the
-//     change and at its base (only what the change adds counts), gitleaks over the pull
-//     request's commits, and Semgrep's open-source engine against the base commit.
+//     change and at its base (only what the change adds counts), with the lockfiles the change
+//     deletes or renames listed beside it, so no change hides its dependencies by removing
+//     them; gitleaks over the pull request's commits; and Semgrep's open-source engine against
+//     the base commit.
 //
 // The mode is the variable SECURITY_SCAN_MODE, read on every run: "advisory" records every
 // finding and passes, ending with the annotation "security-scan would block: N"; "blocking"
@@ -29,7 +31,25 @@ export const BLOCKING_SEVERITIES = new Set(['critical', 'high']);
 export const MODES = ['advisory', 'blocking'];
 export const RECORD_PREFIX = 'records/risk-acceptance/';
 export const NATIVE_OUTPUTS = ['dependency-review'];
-export const OPEN_SOURCE_OUTPUTS = ['osv-head', 'osv-base', 'gitleaks', 'semgrep'];
+export const OPEN_SOURCE_OUTPUTS = ['osv-head', 'osv-base', 'osv-removed', 'gitleaks', 'semgrep'];
+export const LOCKFILE_REMOVED = 'lockfile-removed:';
+export const EVERY_DEPENDENCY_FILE_REMOVED = 'osv-scanner: the change removes every dependency file its base had';
+
+// The lockfile and manifest names osv-scanner reads its packages from. A file the change deletes
+// or renames with one of these names leaves its dependencies unscanned at the change.
+export const LOCKFILE_NAMES = new Set([
+  'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'deno.lock',
+  'Cargo.lock', 'composer.lock', 'Gemfile.lock', 'gems.locked', 'go.mod', 'mix.lock',
+  'poetry.lock', 'Pipfile.lock', 'pdm.lock', 'uv.lock', 'pylock.toml', 'pubspec.lock', 'renv.lock',
+  'packages.lock.json', 'packages.config', 'conan.lock', 'gradle.lockfile', 'buildscript-gradle.lockfile',
+  'verification-metadata.xml', 'pom.xml', 'Podfile.lock', 'Package.resolved', 'stack.yaml.lock',
+  'cabal.project.freeze',
+]);
+
+export function isLockfile(file) {
+  const name = String(file).split('/').pop();
+  return LOCKFILE_NAMES.has(name) || /^requirements.*\.txt$/.test(name);
+}
 export const ANNOTATION_TITLE = 'security-scan';
 
 // ---------- the switches ----------
@@ -222,20 +242,50 @@ function osvFindings(name, output) {
   return { findings };
 }
 
+// The files the change deletes, renames counted as deletions: the output of
+// git diff --name-only -z --no-renames --diff-filter=D <base> HEAD, and git's exit code.
+// Each lockfile among them is one finding: high, runtime, new, accepted only through the
+// accepted list as lockfile-removed:<path>, so a change that retires a lockfile on purpose
+// says so in a reviewed record.
+export function readRemovedLockfiles(output) {
+  const name = 'osv-scanner (removed lockfiles)';
+  if (!output) return { error: `${name} wrote no output` };
+  const exit = String(output.exit ?? '').trim();
+  if (exit !== '0') return { error: `${name}: git diff ended with exit ${exit || 'unknown'}, so the lockfiles the change removes are unknown` };
+  const files = String(output.text ?? '').split('\0').filter((f) => f !== '');
+  const findings = files.filter(isLockfile).map((file) => {
+    const id = `${LOCKFILE_REMOVED}${file}`;
+    return {
+      scanner: 'osv-scanner', id, ids: [id], severity: 'high', scope: 'runtime',
+      where: file,
+      words: 'the change deletes or renames this lockfile, so the dependencies it pinned are no longer scanned',
+      isNew: true, note: null,
+    };
+  });
+  return { findings };
+}
+
 // osv-scanner at the change (head) and at its base: a finding counts as the change's own
 // only when the base does not already carry that package with that vulnerability.
-export function readOsv(head, base) {
+// Exit 128 is osv-scanner's "no packages found": at the change it passes only when the base
+// had none either; when the base's scan finished (exit 0 or 1) the change removed them all.
+export function readOsv(head, base, removed) {
   const h = osvFindings('osv-scanner (change)', head);
   if (h.error) return { error: h.error };
-  if (h.none) return { findings: [], notes: ['osv-scanner: no dependency files'] };
+  const r = readRemovedLockfiles(removed);
+  if (r.error) return { error: r.error };
   const b = osvFindings('osv-scanner (base)', base);
   if (b.error) return { error: b.error };
+  if (h.none) {
+    if (!b.none) return { error: EVERY_DEPENDENCY_FILE_REMOVED };
+    return { findings: r.findings, notes: ['osv-scanner: no dependency files'] };
+  }
   const onBase = new Set();
   for (const f of b.findings) for (const id of f.ids) onBase.add(`${f.key}|${id}`);
   const findings = h.findings.map(({ key, ...f }) => ({
     ...f, isNew: !f.ids.some((id) => onBase.has(`${key}|${id}`)),
   }));
-  return { findings, notes: [] };
+  return { findings: [...findings, ...r.findings], notes: [] };
 }
 
 // gitleaks over the pull request's commits, run with --redact and --exit-code 2:
@@ -312,7 +362,7 @@ export function decide(input) {
   const errors = accepted.error ? [accepted.error] : [];
   const reads = native
     ? [readDependencyReview(outputs['dependency-review'])]
-    : [readOsv(outputs['osv-head'], outputs['osv-base']), readGitleaks(outputs.gitleaks), readSemgrep(outputs.semgrep)];
+    : [readOsv(outputs['osv-head'], outputs['osv-base'], outputs['osv-removed']), readGitleaks(outputs.gitleaks), readSemgrep(outputs.semgrep)];
   const findings = [];
   for (const r of reads) {
     if (r.error) { errors.push(r.error); continue; }
@@ -353,8 +403,8 @@ export function summary(d) {
   lines.push('');
   if (d.errors.length > 0) {
     lines.push(d.mode === 'advisory'
-      ? '### Outputs that could not be read (each counts as one would-block item)'
-      : '### Outputs that could not be read (each blocks like a finding)', '');
+      ? '### Outputs that could not be read, or that hide what the change brings in (each counts as one would-block item)'
+      : '### Outputs that could not be read, or that hide what the change brings in (each blocks like a finding)', '');
     for (const e of d.errors) lines.push(`- ${cell(e)}`);
     lines.push('');
   }

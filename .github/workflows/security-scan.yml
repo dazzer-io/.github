@@ -7,22 +7,24 @@
 #   - "true" (GitHub Code Security and Secret Protection on): GitHub's dependency review only.
 #     Code scanning there is CodeQL default setup, required by the organisation ruleset's
 #     code_scanning rule, and secrets are push protection's, so no other scanner runs.
-#   - unset or "false": osv-scanner over the lockfiles at the change and at its base,
-#     gitleaks over the pull request's commits, and Semgrep's open-source engine against
-#     the base commit, each installed by pinned version and checksum.
+#   - unset or "false": osv-scanner over the lockfiles at the change and at its base, with
+#     the lockfiles the change deletes or renames listed beside it, gitleaks over the pull
+#     request's commits, and Semgrep's open-source engine against the base commit, each
+#     installed by pinned version and checksum.
 #
 # The mode is the variable SECURITY_SCAN_MODE, read on every run: advisory records every
 # finding and passes with "security-scan would block: N"; blocking fails on a new critical
 # or high runtime finding not on the calling repository's .github/security-accepted.json.
 # Unset or anything else reads as blocking and says so. The scanner jobs never decide:
-# in advisory mode each runs continue-on-error, so the workflow's result is security-scan's
-# alone and a scanner that failed counts there as one would-block item; in blocking mode
-# the dependency-review action itself also fails on a finding, as GitHub built it.
+# in advisory mode each runs continue-on-error, keyed on the variable itself as the first
+# job is, so a first job that failed cannot make them strict; the workflow's result is
+# security-scan's alone and a scanner that failed counts there as one would-block item. In
+# blocking mode the dependency-review action itself also fails on a finding, as GitHub built it.
 #
 # A change cannot quiet the open-source scanners from inside itself: each of their jobs
 # removes every .semgrepignore, .gitleaksignore, .gitleaks.toml and osv-scanner.toml from the
-# checkout before scanning, and osv-scanner reads an empty config the workflow writes and
-# scans lockfiles .gitignore would skip.
+# checkout before scanning, osv-scanner reads an empty config the workflow writes and
+# scans lockfiles .gitignore would skip, and Semgrep scans files .gitignore lists.
 # The organisation and repositories come from the run's own context, never from this file.
 name: Security scan
 
@@ -96,7 +98,7 @@ jobs:
     if: needs.plan.outputs.native == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: ${{ needs.plan.outputs.mode == 'advisory' }}
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     steps:
       - name: Review the dependencies the change adds
         id: review
@@ -135,7 +137,7 @@ jobs:
     if: needs.plan.outputs.native != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: ${{ needs.plan.outputs.mode == 'advisory' }}
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
       OSV_SCANNER_VERSION: v2.7.0
       OSV_SCANNER_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
@@ -171,7 +173,9 @@ jobs:
 
       - name: Scan the lockfiles at the change and at its base
         # An empty config the workflow writes overrides any osv-scanner.toml, and --no-ignore
-        # scans a lockfile the change lists in .gitignore.
+        # scans a lockfile the change lists in .gitignore. The files the change deletes, a
+        # rename counted as a deletion, are listed for the decision: a lockfile among them
+        # left its dependencies unscanned.
         run: |
           mkdir -p scan
           config="$RUNNER_TEMP/osv-scanner-empty.toml"
@@ -179,6 +183,8 @@ jobs:
           set +e
           "$RUNNER_TEMP/osv-scanner" scan source --recursive --no-ignore --config "$config" --format json target > scan/osv-head.out
           echo "$?" > scan/osv-head.exit
+          git -C target diff --name-only -z --no-renames --diff-filter=D "$BASE_SHA" HEAD > scan/osv-removed.out
+          echo "$?" > scan/osv-removed.exit
           if git -C target worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"; then
             "$RUNNER_TEMP/osv-scanner" scan source --recursive --no-ignore --config "$config" --format json "$RUNNER_TEMP/base" > scan/osv-base.out
             echo "$?" > scan/osv-base.exit
@@ -201,7 +207,7 @@ jobs:
     if: needs.plan.outputs.native != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: ${{ needs.plan.outputs.mode == 'advisory' }}
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
       GITLEAKS_VERSION: 8.30.1
       GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
@@ -269,7 +275,7 @@ jobs:
     if: needs.plan.outputs.native != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: ${{ needs.plan.outputs.mode == 'advisory' }}
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
       # Semgrep's open-source engine, by version and image checksum.
       SEMGREP_IMAGE: semgrep/semgrep:1.182.0@sha256:4a34048c04fef049f71665047f074cffb00cc3d89482f965a5cd151d589237af
@@ -307,6 +313,7 @@ jobs:
           fi
 
       - name: Scan only the code the change adds
+        # --no-git-ignore: a file the change force-adds and lists in .gitignore is still scanned.
         run: |
           mkdir -p scan
           set +e
@@ -316,7 +323,7 @@ jobs:
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/src \
             "$SEMGREP_IMAGE" \
             semgrep scan --config p/default --baseline-commit "$BASE_SHA" --disable-nosem \
-              --metrics off --json --output /out/semgrep.out
+              --no-git-ignore --metrics off --json --output /out/semgrep.out
           echo "$?" > scan/semgrep.exit
           exit 0
 

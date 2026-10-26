@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   decide, summary, annotations, readMode, readNative, readAccepted, allowGhsas,
   requiredOutputs, fromCvss, fromWord, blocks, OPEN_SOURCE_OUTPUTS,
+  readRemovedLockfiles, isLockfile, EVERY_DEPENDENCY_FILE_REMOVED,
 } from '../security-scan/decide.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -22,6 +23,8 @@ const CRITICAL_PASSED = 'a critical finding did not block in blocking mode';
 const WRONGLY_BLOCKED = 'a finding the change may carry blocked the scan';
 // Said only when a check goes red on a high finding or unreadable output that passed.
 const MISSED = 'a finding that should block did not block the scan';
+// Said only when a check goes red on a change that removed dependency files and passed.
+const HIDDEN = 'a change hid its dependencies from the scan';
 
 function outputOf(key) {
   const o = fixture.outputs[key];
@@ -132,7 +135,7 @@ test('a missing dependency review output blocks', () => {
 
 test('elsewhere, clean scanners pass, and all four outputs are required', () => {
   const d = check('open source: everything clean, blocking');
-  assert.deepEqual(d.required, ['osv-head', 'osv-base', 'gitleaks', 'semgrep']);
+  assert.deepEqual(d.required, ['osv-head', 'osv-base', 'osv-removed', 'gitleaks', 'semgrep']);
   assert.equal(d.branch, 'open source');
 });
 
@@ -172,6 +175,57 @@ test('a development-only dependency advisory does not block', () => {
 
 test('a repository with no dependency files passes the dependency job with the note', () => {
   check('open source: no dependency files, blocking');
+});
+
+// ---------- a change that hides its dependencies ----------
+
+function removesEveryDependencyFile(name) {
+  const { input } = inputOf(name);
+  const d = decide(input);
+  assert.ok(d.errors.includes(EVERY_DEPENDENCY_FILE_REMOVED),
+    `${HIDDEN}: "${name}" passed as no dependency files: ${JSON.stringify({ result: d.result, errors: d.errors, notes: d.notes })}`);
+  assert.ok(!d.notes.some((n) => /no dependency files/.test(n)), `${HIDDEN}: "${name}" says no dependency files`);
+  assert.match(summary(d), /the change removes every dependency file its base had/);
+}
+
+test('a change that deletes its only lockfile blocks, though the change scan finds no dependency files', () => {
+  removesEveryDependencyFile('open source: the change deletes its only lockfile, blocking');
+  check('open source: the change deletes its only lockfile, blocking');
+  removesEveryDependencyFile('open source: the change deletes its only lockfile, base vulnerable, blocking');
+  check('open source: the change deletes its only lockfile, base vulnerable, blocking');
+  const d = check('open source: the change deletes its only lockfile, advisory');
+  assert.ok(d.errors.includes(EVERY_DEPENDENCY_FILE_REMOVED), `${HIDDEN}: the advisory run does not count it`);
+});
+
+test('no dependency files at the change passes only when the base scan says so too', () => {
+  check('open source: no dependency files at the change and its base scan missing, blocking');
+});
+
+test('a lockfile the change deletes or renames among several is one would-block item each', () => {
+  const d = check('open source: the change deletes lockfiles among several, blocking');
+  for (const f of d.findings) {
+    assert.equal(f.blocks, true, `${HIDDEN}: ${f.id}`);
+    assert.equal(f.severity, 'high');
+  }
+  assert.match(summary(d), /services\/okafor-ledger\/Cargo\.lock/);
+  check('open source: the change deletes lockfiles among several, advisory');
+  check('open source: the change deletes files that are not lockfiles, blocking');
+  check('open source: the removed-lockfile list could not be read, blocking');
+});
+
+test('a lockfile retired on purpose is accepted only through the accepted list', () => {
+  check('open source: a removed lockfile accepted with its record, blocking');
+});
+
+test('lockfile names are read by the file name alone', () => {
+  for (const f of ['package-lock.json', 'a/b/yarn.lock', 'pnpm-lock.yaml', 'svc/Cargo.lock', 'go.mod',
+    'poetry.lock', 'requirements.txt', 'requirements-prod.txt', 'Gemfile.lock', 'composer.lock']) {
+    assert.ok(isLockfile(f), `${HIDDEN}: ${f} is not read as a lockfile`);
+  }
+  for (const f of ['package.json', 'src/lock.js', 'yarn.lock.bak', 'docs/requirements.md']) {
+    assert.ok(!isLockfile(f), `${f} is read as a lockfile`);
+  }
+  assert.match(readRemovedLockfiles(undefined).error, /wrote no output/);
 });
 
 test('an ERROR-level Semgrep result blocks', () => {
@@ -471,12 +525,17 @@ test('osv-scanner reads an empty config the workflow writes and scans ignored lo
   try {
     const target = path.join(box.dir, 'target');
     write(target, 'package-lock.json', '{}\n');
+    write(target, 'services/harbor-lane/yarn.lock', '# yarn\n');
+    write(target, 'services/okafor-ledger/Cargo.lock', '# cargo\n');
+    write(target, 'docs/okafor-notes.md', 'notes\n');
     git(box, 'init', '--quiet');
     git(box, 'add', '--all');
     git(box, 'commit', '--quiet', '--message', 'base');
     const base = git(box, 'rev-parse', 'HEAD');
     write(target, 'osv-scanner.toml', '[[IgnoredVulns]]\nid = "GHSA-c3pq-7v5r-hj8x"\n');
     write(target, '.gitignore', 'package-lock.json\n');
+    git(box, 'rm', '--quiet', 'services/harbor-lane/yarn.lock', 'docs/okafor-notes.md');
+    git(box, 'mv', 'services/okafor-ledger/Cargo.lock', 'services/okafor-ledger/Cargo.lock.old');
     git(box, 'add', '--all');
     git(box, 'commit', '--quiet', '--message', 'the change');
     const fake = path.join(box.runner, 'osv-scanner');
@@ -504,9 +563,32 @@ test('osv-scanner reads an empty config the workflow writes and scans ignored lo
     }
     assert.equal(fs.readFileSync(path.join(box.dir, 'scan', 'osv-head.exit'), 'utf8').trim(), '0');
     assert.equal(fs.readFileSync(path.join(box.dir, 'scan', 'osv-base.exit'), 'utf8').trim(), '0');
+    const removed = {
+      exit: fs.readFileSync(path.join(box.dir, 'scan', 'osv-removed.exit'), 'utf8').trim(),
+      text: fs.readFileSync(path.join(box.dir, 'scan', 'osv-removed.out'), 'utf8'),
+    };
+    const ids = (readRemovedLockfiles(removed).findings || []).map((f) => f.id).sort();
+    assert.deepEqual(ids, ['lockfile-removed:services/harbor-lane/yarn.lock', 'lockfile-removed:services/okafor-ledger/Cargo.lock'],
+      `${HIDDEN}: the lockfiles the change deleted and renamed are not all listed: ${JSON.stringify(removed)}`);
   } finally {
     fs.rmSync(box.dir, { recursive: true, force: true });
   }
+});
+
+test('Semgrep scans files the change lists in .gitignore', () => {
+  const list = steps('semgrep');
+  const scan = list[scanStepIndex(list)];
+  assert.ok(scan, 'the Semgrep job has no scan step');
+  assert.match(scan.run.replace(/\\\n\s*/g, ' '), /semgrep scan [^\n]*--no-git-ignore(\s|$)/,
+    `${QUIETED}: Semgrep skips a file the change lists in .gitignore`);
+});
+
+test('the README names Semgrep\'s built-in default ignore list among the known limits', () => {
+  const readme = fs.readFileSync(path.join(here, '..', 'security-scan', 'README.md'), 'utf8');
+  const limits = readme.split(/^## /m).find((s) => s.startsWith('Known limits'));
+  assert.ok(limits, 'the README has no Known limits section');
+  assert.match(limits, /default ignore list/i, 'Known limits does not name Semgrep\'s built-in default ignore list');
+  for (const dir of ['test/', 'vendor/', 'node_modules/']) assert.ok(limits.includes(dir), `Known limits does not name ${dir}`);
 });
 
 test('the dependency review fails on runtime and unknown scopes, never development', () => {
@@ -519,8 +601,10 @@ test('the dependency review fails on runtime and unknown scopes, never developme
 });
 
 test('in advisory mode only the security-scan job decides the workflow\'s result', () => {
+  // Keyed on the variable, never on the first job's output: a first job that failed leaves
+  // that output empty, and the scanners would run strict.
   for (const job of SCANNER_JOBS) {
-    assert.equal(jobKey(job, 'continue-on-error'), "${{ needs.plan.outputs.mode == 'advisory' }}",
+    assert.equal(jobKey(job, 'continue-on-error'), "${{ vars.SECURITY_SCAN_MODE == 'advisory' }}",
       `${ADVISORY_RED}: the job ${job}`);
   }
   assert.equal(jobKey('plan', 'continue-on-error'), "${{ vars.SECURITY_SCAN_MODE == 'advisory' }}",

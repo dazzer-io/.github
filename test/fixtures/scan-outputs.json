@@ -1,0 +1,360 @@
+{
+  "about": "Recorded scanner outputs for test/security-scan-decide.test.mjs. Each output is { exit, body } (body is what the scanner printed, as JSON) or { exit, text } (raw text, for output that is not JSON). Names, packages and advisories are invented.",
+  "accepted": {
+    "parser-advisory": [
+      { "id": "GHSA-2m4c-9fq8-wx7h", "record": "records/risk-acceptance/2026-10-harbor-lane-parser.md" }
+    ],
+    "parser-advisory-no-record": [
+      { "id": "GHSA-2m4c-9fq8-wx7h" }
+    ],
+    "utils-advisory-by-alias": [
+      { "id": "CVE-2026-41234", "record": "records/risk-acceptance/2026-10-okafor-utils.md" }
+    ]
+  },
+  "outputs": {
+    "dr-runtime-high": {
+      "exit": "failure",
+      "body": [
+        {
+          "change_type": "added", "manifest": "package-lock.json", "ecosystem": "npm",
+          "name": "harbor-lane-parser", "version": "2.1.0", "package_url": "pkg:npm/harbor-lane-parser@2.1.0",
+          "license": "MIT", "source_repository_url": null, "scope": "runtime",
+          "vulnerabilities": [
+            { "severity": "high", "advisory_ghsa_id": "GHSA-2m4c-9fq8-wx7h",
+              "advisory_summary": "Prototype pollution in harbor-lane-parser",
+              "advisory_url": "https://example.invalid/advisories/GHSA-2m4c-9fq8-wx7h" }
+          ]
+        }
+      ]
+    },
+    "dr-runtime-critical": {
+      "exit": "failure",
+      "body": [
+        {
+          "change_type": "added", "manifest": "package-lock.json", "ecosystem": "npm",
+          "name": "okafor-template", "version": "0.9.3", "package_url": "pkg:npm/okafor-template@0.9.3",
+          "license": "MIT", "source_repository_url": null, "scope": "runtime",
+          "vulnerabilities": [
+            { "severity": "critical", "advisory_ghsa_id": "GHSA-f9gw-3mx2-p7qc",
+              "advisory_summary": "Remote code execution through crafted templates in okafor-template",
+              "advisory_url": "https://example.invalid/advisories/GHSA-f9gw-3mx2-p7qc" }
+          ]
+        }
+      ]
+    },
+    "dr-dev-high": {
+      "exit": "success",
+      "body": [
+        {
+          "change_type": "added", "manifest": "package-lock.json", "ecosystem": "npm",
+          "name": "harbor-lane-test-runner", "version": "5.0.1", "package_url": "pkg:npm/harbor-lane-test-runner@5.0.1",
+          "license": "MIT", "source_repository_url": null, "scope": "development",
+          "vulnerabilities": [
+            { "severity": "high", "advisory_ghsa_id": "GHSA-r8vh-4cjm-x2wq",
+              "advisory_summary": "Regular expression denial of service in harbor-lane-test-runner",
+              "advisory_url": "https://example.invalid/advisories/GHSA-r8vh-4cjm-x2wq" }
+          ]
+        }
+      ]
+    },
+    "dr-removed-critical": {
+      "exit": "success",
+      "body": [
+        {
+          "change_type": "removed", "manifest": "package-lock.json", "ecosystem": "npm",
+          "name": "okafor-template", "version": "0.9.2", "package_url": "pkg:npm/okafor-template@0.9.2",
+          "license": "MIT", "source_repository_url": null, "scope": "runtime",
+          "vulnerabilities": [
+            { "severity": "critical", "advisory_ghsa_id": "GHSA-f9gw-3mx2-p7qc",
+              "advisory_summary": "Remote code execution through crafted templates in okafor-template",
+              "advisory_url": "https://example.invalid/advisories/GHSA-f9gw-3mx2-p7qc" }
+          ]
+        }
+      ]
+    },
+    "dr-no-changes": { "exit": "success", "text": "" },
+    "dr-refused": { "exit": "failure", "text": "" },
+    "osv-head-utils-high": {
+      "exit": "1",
+      "body": {
+        "results": [
+          {
+            "source": { "path": "/home/runner/work/target/package-lock.json", "type": "lockfile" },
+            "packages": [
+              {
+                "package": { "name": "okafor-utils", "version": "1.0.0", "ecosystem": "npm" },
+                "vulnerabilities": [
+                  { "id": "GHSA-c3pq-7v5r-hj8x", "aliases": ["CVE-2026-41234"],
+                    "summary": "Path traversal in okafor-utils archive extraction",
+                    "database_specific": { "severity": "HIGH" } }
+                ],
+                "groups": [ { "ids": ["GHSA-c3pq-7v5r-hj8x"], "aliases": ["GHSA-c3pq-7v5r-hj8x", "CVE-2026-41234"], "max_severity": "8.1" } ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "osv-head-utils-no-score": {
+      "exit": "1",
+      "body": {
+        "results": [
+          {
+            "source": { "path": "/home/runner/work/target/package-lock.json", "type": "lockfile" },
+            "packages": [
+              {
+                "package": { "name": "okafor-utils", "version": "1.0.0", "ecosystem": "npm" },
+                "vulnerabilities": [
+                  { "id": "GHSA-c3pq-7v5r-hj8x", "aliases": ["CVE-2026-41234"],
+                    "summary": "Path traversal in okafor-utils archive extraction",
+                    "database_specific": { "severity": "CRITICAL" } }
+                ],
+                "groups": [ { "ids": ["GHSA-c3pq-7v5r-hj8x"], "aliases": ["CVE-2026-41234"], "max_severity": "" } ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "osv-head-utils-dev": {
+      "exit": "1",
+      "body": {
+        "results": [
+          {
+            "source": { "path": "/home/runner/work/target/package-lock.json", "type": "lockfile" },
+            "packages": [
+              {
+                "package": { "name": "okafor-utils", "version": "1.0.0", "ecosystem": "npm" },
+                "dependency_groups": ["dev"],
+                "vulnerabilities": [
+                  { "id": "GHSA-c3pq-7v5r-hj8x", "aliases": ["CVE-2026-41234"],
+                    "summary": "Path traversal in okafor-utils archive extraction" }
+                ],
+                "groups": [ { "ids": ["GHSA-c3pq-7v5r-hj8x"], "aliases": ["CVE-2026-41234"], "max_severity": "9.8" } ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "osv-base-utils-high": {
+      "exit": "1",
+      "body": {
+        "results": [
+          {
+            "source": { "path": "/home/runner/work/_temp/base/package-lock.json", "type": "lockfile" },
+            "packages": [
+              {
+                "package": { "name": "okafor-utils", "version": "0.9.0", "ecosystem": "npm" },
+                "vulnerabilities": [
+                  { "id": "GHSA-c3pq-7v5r-hj8x", "aliases": ["CVE-2026-41234"],
+                    "summary": "Path traversal in okafor-utils archive extraction" }
+                ],
+                "groups": [ { "ids": ["GHSA-c3pq-7v5r-hj8x"], "aliases": ["CVE-2026-41234"], "max_severity": "8.1" } ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "osv-clean": { "exit": "0", "body": { "results": [] } },
+    "osv-no-dependency-files": { "exit": "128", "text": "" },
+    "osv-not-json": { "exit": "1", "text": "{\"results\": [ {\"source\": " },
+    "osv-crashed": { "exit": "127", "text": "" },
+    "gitleaks-clean": { "exit": "0", "body": [] },
+    "gitleaks-leak": {
+      "exit": "2",
+      "body": [
+        {
+          "RuleID": "generic-api-key", "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+          "StartLine": 12, "EndLine": 12, "StartColumn": 3, "EndColumn": 40,
+          "Match": "harborLaneToken = REDACTED", "Secret": "REDACTED",
+          "File": "config/settings.js", "SymlinkFile": "",
+          "Commit": "4f1c2b9e8d7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e", "Entropy": 4.2,
+          "Author": "Mira Okafor", "Email": "mira@harbor-lane.example", "Date": "2026-10-20T09:15:00Z",
+          "Message": "Add the settings loader", "Tags": [],
+          "Fingerprint": "4f1c2b9e8d7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e:config/settings.js:generic-api-key:12"
+        }
+      ]
+    },
+    "gitleaks-leaks-but-empty": { "exit": "2", "body": [] },
+    "semgrep-clean": { "exit": "0", "body": { "results": [], "errors": [], "version": "1.182.0" } },
+    "semgrep-eval": {
+      "exit": "0",
+      "body": {
+        "results": [
+          { "check_id": "javascript.lang.security.audit.eval-detected", "path": "src/run.js",
+            "start": { "line": 4, "col": 3 }, "end": { "line": 4, "col": 20 },
+            "extra": { "severity": "ERROR", "message": "Detected the use of eval() on a value that can come from outside." } }
+        ],
+        "errors": [],
+        "version": "1.182.0"
+      }
+    },
+    "semgrep-warning": {
+      "exit": "0",
+      "body": {
+        "results": [
+          { "check_id": "javascript.lang.best-practice.weak-random", "path": "src/id.js",
+            "start": { "line": 9, "col": 1 }, "end": { "line": 9, "col": 30 },
+            "extra": { "severity": "WARNING", "message": "Math.random() is not suitable for identifiers that must be unguessable." } }
+        ],
+        "errors": [ { "type": "Syntax error", "path": "src/legacy.js" } ],
+        "version": "1.182.0"
+      }
+    },
+    "semgrep-crashed": { "exit": "2", "text": "" }
+  },
+  "scenarios": {
+    "native: a runtime high added, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-runtime-high" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-2m4c-9fq8-wx7h"] }
+    },
+    "native: a runtime high added, advisory": {
+      "mode": "advisory", "native": "true",
+      "outputs": { "dependency-review": "dr-runtime-high" },
+      "expect": { "result": "pass", "wouldBlock": 1, "blocking": ["GHSA-2m4c-9fq8-wx7h"], "annotation": "security-scan would block: 1" }
+    },
+    "native: a runtime critical added, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-runtime-critical" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-f9gw-3mx2-p7qc"] }
+    },
+    "native: a development-scope high added, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-dev-high" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1 }
+    },
+    "native: a removed critical, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-removed-critical" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 0 }
+    },
+    "native: an accepted advisory, blocking": {
+      "mode": "blocking", "native": "true", "accepted": "parser-advisory",
+      "outputs": { "dependency-review": "dr-runtime-high" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1,
+        "acceptedBy": "records/risk-acceptance/2026-10-harbor-lane-parser.md" }
+    },
+    "native: an accepted advisory naming no record, blocking": {
+      "mode": "blocking", "native": "true", "accepted": "parser-advisory-no-record",
+      "outputs": { "dependency-review": "dr-runtime-high" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-2m4c-9fq8-wx7h"] }
+    },
+    "native: no dependency changes and no open-source output, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-no-changes" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 0 }
+    },
+    "native: the dependency review refused and wrote nothing, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-refused" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "native: the dependency review output missing, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": {},
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "open source: everything clean, blocking": {
+      "mode": "blocking", "native": "false",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 0 }
+    },
+    "open source: a gitleaks finding on the change, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "gitleaks": "gitleaks-leak", "semgrep": "semgrep-clean" },
+      "expect": { "result": "fail", "wouldBlock": 1,
+        "blocking": ["4f1c2b9e8d7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e:config/settings.js:generic-api-key:12"] }
+    },
+    "open source: gitleaks says leaks but lists none, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "gitleaks": "gitleaks-leaks-but-empty", "semgrep": "semgrep-clean" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "open source: a dependency advisory the change adds, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-head-utils-high", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-c3pq-7v5r-hj8x"] }
+    },
+    "open source: a dependency advisory already on the base, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-head-utils-high", "osv-base": "osv-base-utils-high", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1 }
+    },
+    "open source: a dependency advisory accepted by its alias, blocking": {
+      "mode": "blocking", "accepted": "utils-advisory-by-alias",
+      "outputs": { "osv-head": "osv-head-utils-high", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1,
+        "acceptedBy": "records/risk-acceptance/2026-10-okafor-utils.md" }
+    },
+    "open source: a critical by severity word alone, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-head-utils-no-score", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-c3pq-7v5r-hj8x"], "severity": "critical" }
+    },
+    "open source: a development-only dependency advisory, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-head-utils-dev", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1 }
+    },
+    "open source: no dependency files, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-no-dependency-files", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 0, "note": "no dependency files" }
+    },
+    "open source: an ERROR-level Semgrep result, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-eval" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["javascript.lang.security.audit.eval-detected:src/run.js"] }
+    },
+    "open source: a WARNING-level Semgrep result, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-warning" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1 }
+    },
+    "open source: malformed osv-scanner output, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-not-json", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "open source: malformed osv-scanner output, advisory": {
+      "mode": "advisory",
+      "outputs": { "osv-head": "osv-not-json", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "pass", "wouldBlock": 1, "blocking": [], "errors": 1, "annotation": "security-scan would block: 1" }
+    },
+    "open source: osv-scanner crashed, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-crashed", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "open source: Semgrep crashed, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-crashed" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "open source: the gitleaks job did not run, blocking": {
+      "mode": "blocking",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "open source: a malformed accepted list, blocking": {
+      "mode": "blocking", "acceptedText": "[{ \"id\": \"GHSA-2m4c-9fq8-wx7h\", ",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "unset mode: a runtime high added": {
+      "native": "true",
+      "outputs": { "dependency-review": "dr-runtime-high" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-2m4c-9fq8-wx7h"], "mode": "blocking",
+        "note": "SECURITY_SCAN_MODE is unset; read as blocking" }
+    },
+    "unknown mode: a runtime high added": {
+      "mode": "warn", "native": "true",
+      "outputs": { "dependency-review": "dr-runtime-high" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-2m4c-9fq8-wx7h"], "mode": "blocking",
+        "note": "neither advisory nor blocking; read as blocking" }
+    }
+  }
+}

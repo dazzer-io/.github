@@ -14,8 +14,15 @@
 # The mode is the variable SECURITY_SCAN_MODE, read on every run: advisory records every
 # finding and passes with "security-scan would block: N"; blocking fails on a new critical
 # or high runtime finding not on the calling repository's .github/security-accepted.json.
-# Unset or anything else reads as blocking and says so. The scanner jobs never decide;
-# only the dependency-review action itself also fails in blocking mode, as GitHub built it.
+# Unset or anything else reads as blocking and says so. The scanner jobs never decide:
+# in advisory mode each runs continue-on-error, so the workflow's result is security-scan's
+# alone and a scanner that failed counts there as one would-block item; in blocking mode
+# the dependency-review action itself also fails on a finding, as GitHub built it.
+#
+# A change cannot quiet the open-source scanners from inside itself: each of their jobs
+# removes every .semgrepignore, .gitleaksignore, .gitleaks.toml and osv-scanner.toml from the
+# checkout before scanning, and osv-scanner reads an empty config the workflow writes and
+# scans lockfiles .gitignore would skip.
 # The organisation and repositories come from the run's own context, never from this file.
 name: Security scan
 
@@ -35,6 +42,9 @@ jobs:
     name: Read the switches
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Advisory only when the variable reads advisory (GitHub compares without case); the
+    # final job still runs and counts every output this leaves missing.
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     outputs:
       native: ${{ steps.plan.outputs.native }}
       mode: ${{ steps.plan.outputs.mode }}
@@ -86,6 +96,7 @@ jobs:
     if: needs.plan.outputs.native == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    continue-on-error: ${{ needs.plan.outputs.mode == 'advisory' }}
     steps:
       - name: Review the dependencies the change adds
         id: review
@@ -93,7 +104,7 @@ jobs:
         with:
           base-ref: ${{ env.BASE_SHA }}
           head-ref: ${{ env.HEAD_SHA }}
-          fail-on-scopes: runtime
+          fail-on-scopes: runtime, unknown
           fail-on-severity: high
           warn-only: ${{ needs.plan.outputs.warn_only }}
           allow-ghsas: ${{ needs.plan.outputs.allow_ghsas }}
@@ -124,6 +135,7 @@ jobs:
     if: needs.plan.outputs.native != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    continue-on-error: ${{ needs.plan.outputs.mode == 'advisory' }}
     env:
       OSV_SCANNER_VERSION: v2.7.0
       OSV_SCANNER_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
@@ -135,6 +147,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Remove the files a change could quiet the scan with
+        # Every .semgrepignore, .gitleaksignore, .gitleaks.toml and osv-scanner.toml in the
+        # checkout, at any depth outside .git: only the accepted list accepts a finding.
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/quieting-files"
+          find target -path target/.git -prune -o ! -type d \( -name .semgrepignore -o -name .gitleaksignore \
+            -o -name .gitleaks.toml -o -name osv-scanner.toml \) -print0 > "$list"
+          if [ -s "$list" ]; then
+            xargs -0 rm -f -- < "$list"
+            echo "Removed before scanning:"
+            tr '\000\n\r' '\n??' < "$list"
+          fi
+
       - name: Install osv-scanner by pinned version and checksum
         run: |
           set -euo pipefail
@@ -144,13 +170,17 @@ jobs:
           chmod +x "$RUNNER_TEMP/osv-scanner"
 
       - name: Scan the lockfiles at the change and at its base
+        # An empty config the workflow writes overrides any osv-scanner.toml, and --no-ignore
+        # scans a lockfile the change lists in .gitignore.
         run: |
           mkdir -p scan
+          config="$RUNNER_TEMP/osv-scanner-empty.toml"
+          : > "$config"
           set +e
-          "$RUNNER_TEMP/osv-scanner" scan source --recursive --format json target > scan/osv-head.out
+          "$RUNNER_TEMP/osv-scanner" scan source --recursive --no-ignore --config "$config" --format json target > scan/osv-head.out
           echo "$?" > scan/osv-head.exit
           if git -C target worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"; then
-            "$RUNNER_TEMP/osv-scanner" scan source --recursive --format json "$RUNNER_TEMP/base" > scan/osv-base.out
+            "$RUNNER_TEMP/osv-scanner" scan source --recursive --no-ignore --config "$config" --format json "$RUNNER_TEMP/base" > scan/osv-base.out
             echo "$?" > scan/osv-base.exit
           else
             echo "base commit not found" > scan/osv-base.exit
@@ -171,12 +201,14 @@ jobs:
     if: needs.plan.outputs.native != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    continue-on-error: ${{ needs.plan.outputs.mode == 'advisory' }}
     env:
       GITLEAKS_VERSION: 8.30.1
       GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
       # The built-in rules only: a change cannot quiet the scan by adding its own
-      # .gitleaks.toml, .gitleaksignore or gitleaks:allow comment; acceptance goes
-      # through .github/security-accepted.json instead.
+      # .gitleaks.toml or .gitleaksignore (both removed before the scan, and the ignore file
+      # read from an empty folder) or a gitleaks:allow comment; acceptance goes through
+      # .github/security-accepted.json instead.
       GITLEAKS_CONFIG_TOML: |
         [extend]
         useDefault = true
@@ -187,6 +219,20 @@ jobs:
           path: target
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Remove the files a change could quiet the scan with
+        # Every .semgrepignore, .gitleaksignore, .gitleaks.toml and osv-scanner.toml in the
+        # checkout, at any depth outside .git: only the accepted list accepts a finding.
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/quieting-files"
+          find target -path target/.git -prune -o ! -type d \( -name .semgrepignore -o -name .gitleaksignore \
+            -o -name .gitleaks.toml -o -name osv-scanner.toml \) -print0 > "$list"
+          if [ -s "$list" ]; then
+            xargs -0 rm -f -- < "$list"
+            echo "Removed before scanning:"
+            tr '\000\n\r' '\n??' < "$list"
+          fi
 
       - name: Install gitleaks by pinned version and checksum
         run: |
@@ -223,6 +269,7 @@ jobs:
     if: needs.plan.outputs.native != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    continue-on-error: ${{ needs.plan.outputs.mode == 'advisory' }}
     env:
       # Semgrep's open-source engine, by version and image checksum.
       SEMGREP_IMAGE: semgrep/semgrep:1.182.0@sha256:4a34048c04fef049f71665047f074cffb00cc3d89482f965a5cd151d589237af
@@ -233,6 +280,31 @@ jobs:
           path: target
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Remove the files a change could quiet the scan with
+        # Every .semgrepignore, .gitleaksignore, .gitleaks.toml and osv-scanner.toml in the
+        # checkout, at any depth outside .git: only the accepted list accepts a finding.
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/quieting-files"
+          find target -path target/.git -prune -o ! -type d \( -name .semgrepignore -o -name .gitleaksignore \
+            -o -name .gitleaks.toml -o -name osv-scanner.toml \) -print0 > "$list"
+          if [ -s "$list" ]; then
+            xargs -0 rm -f -- < "$list"
+            echo "Removed before scanning:"
+            tr '\000\n\r' '\n??' < "$list"
+          fi
+
+      - name: Commit the removal, so the baseline scan reads a clean tree
+        # Semgrep's --baseline-commit refuses a tree with pending changes; a local commit on
+        # top of the change keeps the scan to what the change adds, without those files.
+        run: |
+          set -euo pipefail
+          if [ -n "$(git -C target status --porcelain --untracked-files=no)" ]; then
+            git -C target -c user.name=security-scan -c user.email=security-scan@localhost \
+              -c commit.gpgsign=false commit --quiet --no-verify --all \
+              --message "security-scan: remove the change's own ignore files before scanning"
+          fi
 
       - name: Scan only the code the change adds
         run: |

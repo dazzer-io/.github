@@ -53,12 +53,15 @@ test('it holds a read-only token, keeps no credentials and names no secret', () 
   assert.doesNotMatch(t, /secrets\./, 'the workflow reads a secret');
 });
 
-test('every action is pinned by commit and the tests run over test/', () => {
+test('every action is pinned by commit and the tests run as test/*.test.mjs', () => {
   const t = read();
   const uses = [...t.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
   assert.ok(uses.some((u) => u.startsWith('actions/setup-node@')), 'the workflow sets up no Node');
   for (const u of uses) assert.match(u, /@[0-9a-f]{40}$/, `the action ${u} is not pinned by commit`);
   const job = jobs(t).find((j) => (j.name ?? j.id) === REQUIRED_CHECK);
   assert.ok(job, MISSING);
-  assert.match(job.body, /run:\s*node --test test\/?\s*$/m, `${MISSING}: the job does not run node --test over test/`);
+  // Node 22 reads a bare folder (node --test test/) as one file and fails; the glob is
+  // expanded by the shell, so every test file runs on any Node version.
+  assert.match(job.body, /run:\s*node --test test\/\*\.test\.mjs\s*$/m,
+    'the decide-tests check cannot run the tests: the job does not run node --test test/*.test.mjs');
 });

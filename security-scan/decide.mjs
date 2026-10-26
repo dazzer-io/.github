@@ -417,8 +417,8 @@ export function summary(d) {
   lines.push('');
   if (d.errors.length > 0) {
     lines.push(d.mode === 'advisory'
-      ? '### Outputs that could not be read, or that hide what the change brings in (each counts as one would-block item)'
-      : '### Outputs that could not be read, or that hide what the change brings in (each blocks like a finding)', '');
+      ? '### Outputs that could not be read (each counts as one would-block item)'
+      : '### Outputs that could not be read (each blocks like a finding)', '');
     for (const e of d.errors) lines.push(`- ${cell(e)}`);
     lines.push('');
   }

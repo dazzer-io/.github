@@ -1,4 +1,4 @@
-# Decide tests: runs this repository's own tests (node --test over test/) on every pull
+# Decide tests: runs this repository's own tests (node --test test/*.test.mjs) on every pull
 # request and merge queue entry, so the decision logic of the shared workflows has CI.
 #
 # The repository ruleset requires a check named "decide-tests" from GitHub Actions; that
@@ -31,4 +31,4 @@ jobs:
           node-version: 22
 
       - name: Run the tests
-        run: node --test test/
+        run: node --test test/*.test.mjs

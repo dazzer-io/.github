@@ -29,9 +29,13 @@ dependency audit with the note "no dependency files".
 A change cannot hide its dependencies by removing their lockfile:
 
 - When osv-scanner finds no dependency files at the change (its exit 128) but its scan of the
-  base finished (exit 0 or 1), the decision records the error "the change removes every
-  dependency file its base had", which blocks in blocking mode and counts as one would-block
-  item in advisory. A missing or failed base scan blocks the same way.
+  base finished (exit 0 or 1), the decision records one high finding with the fixed id
+  `dependency-files-removed` ("the change removes every dependency file its base had"), which
+  blocks in blocking mode and counts as one would-block item in advisory. A repository that
+  retires its last dependency file on purpose accepts it through the accepted list under that
+  id, with its record, like any other finding; each lockfile it deletes needs its own entry too
+  (below), and both entries may name the same record. A missing or failed base scan is an
+  unreadable output and blocks; no entry clears it.
 - The osv-scanner job also lists the files the change deletes
   (`git diff --name-only -z --no-renames --diff-filter=D <base> HEAD`, so a rename counts as
   deleting the old name). Each lockfile among them (by file name: `package-lock.json`,
@@ -153,6 +157,13 @@ that accepts a finding is not blocked by it:
 - **A deleted lockfile is matched by its file name.** A dependency file osv-scanner reads under a
   name not on the list in `decide.mjs` is not flagged when the change deletes it; the change
   scan finding no dependency files at all still blocks.
+- **A rewritten lockfile is trusted as written.** A change that keeps a lockfile's name but
+  rewrites its content, or replaces it with a symbolic link, is not flagged as removing
+  anything: osv-scanner scans what the file now says, and what the rewrite dropped is not
+  scanned at the change.
+- **A moved lockfile counts as deleted.** Renames are read as a deletion of the old name, so a
+  change that moves a lockfile to another folder needs a risk record for the old path under
+  `lockfile-removed:<old path>`, even though the dependencies are still scanned at the new one.
 
 ## Files
 

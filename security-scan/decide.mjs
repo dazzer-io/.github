@@ -12,10 +12,11 @@
 //
 // The mode is the variable SECURITY_SCAN_MODE, read on every run: "advisory" records every
 // finding and passes, ending with the annotation "security-scan would block: N"; "blocking"
-// fails on a critical or high runtime finding the change brings in that the calling
-// repository's .github/security-accepted.json does not accept. Unset or anything else reads
+// fails on a critical or high finding the change brings in, from any dependency not marked
+// development, that the calling repository's .github/security-accepted.json does not accept. Unset or anything else reads
 // as blocking and says so. A scanner output that is missing or cannot be read blocks the
-// same way a finding does.
+// same way a finding does, and in advisory mode counts as one would-block item: there every
+// scanner job runs continue-on-error, so this job alone decides the workflow's result.
 //
 // The pure part is exported for the tests; main() reads the files the workflow wrote.
 // Nothing here names an organisation, repository or company.
@@ -136,9 +137,10 @@ function parseJson(name, text) {
 }
 
 // GitHub's dependency-review action: its "vulnerable-changes" output and the action step's
-// outcome. Run with fail-on-scopes runtime, the action already leaves out development
+// outcome. Run with fail-on-scopes runtime, unknown, the action already leaves out development
 // changes and accepted advisories, and, in blocking mode, anything below high; this reads
 // scope, severity and acceptance again, so the decision never rests on the action's filters.
+// A scope the action calls unknown is kept as written and blocks like runtime.
 // An empty output from a successful step is the action's "no dependency changes".
 export function readDependencyReview(output) {
   if (!output) return { error: 'dependency review wrote no output' };
@@ -278,9 +280,11 @@ export function readSemgrep(output) {
     }
     const word = r.extra && r.extra.severity;
     const sev = fromWord(word);
+    // A Semgrep finding is accepted only as <rule id>:<path>; a bare rule id accepts nothing,
+    // so one entry can never accept a rule on every path.
     const id = `${r.check_id}:${r.path}`;
     findings.push({
-      scanner: 'semgrep', id, ids: [id, r.check_id], severity: sev || 'high', scope: 'runtime',
+      scanner: 'semgrep', id, ids: [id], rule: r.check_id, severity: sev || 'high', scope: 'runtime',
       where: `${r.path}:${(r.start && r.start.line) || '?'}`,
       words: (r.extra && r.extra.message) || r.check_id,
       isNew: true, note: sev ? null : `severity "${word}" unknown; read as high`,
@@ -293,8 +297,9 @@ export function readSemgrep(output) {
 
 // ---------- the decision ----------
 
+// A dependency counts as runtime unless its scanner says development: an unknown scope blocks.
 export function blocks(f) {
-  return f.isNew && BLOCKING_SEVERITIES.has(f.severity) && f.scope === 'runtime' && !f.accepted;
+  return f.isNew && BLOCKING_SEVERITIES.has(f.severity) && f.scope !== 'development' && !f.accepted;
 }
 
 // input: { mode, native, accepted: <file text or null>, outputs: { <name>: { exit, text } } }
@@ -318,6 +323,11 @@ export function decide(input) {
     }
   }
   for (const f of findings) f.blocks = blocks(f);
+  const acceptedIds = new Set((accepted.entries || []).map((e) => e.id));
+  const bare = new Set(findings.filter((f) => f.rule && acceptedIds.has(f.rule)).map((f) => f.rule));
+  for (const rule of bare) {
+    notes.push(`accepted entry "${rule}" names a Semgrep rule without a path; a Semgrep entry must name <rule id>:<path>, so it accepts nothing`);
+  }
   const wouldBlock = findings.filter((f) => f.blocks).length + errors.length;
   const pass = mode === 'advisory' || wouldBlock === 0;
   const annotation = mode === 'advisory'
@@ -342,7 +352,9 @@ export function summary(d) {
   for (const n of d.notes) lines.push(`- ${cell(n)}`);
   lines.push('');
   if (d.errors.length > 0) {
-    lines.push('### Outputs that could not be read (each blocks like a finding)', '');
+    lines.push(d.mode === 'advisory'
+      ? '### Outputs that could not be read (each counts as one would-block item)'
+      : '### Outputs that could not be read (each blocks like a finding)', '');
     for (const e of d.errors) lines.push(`- ${cell(e)}`);
     lines.push('');
   }

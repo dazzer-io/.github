@@ -9,6 +9,12 @@
     ],
     "utils-advisory-by-alias": [
       { "id": "CVE-2026-41234", "record": "records/risk-acceptance/2026-10-okafor-utils.md" }
+    ],
+    "eval-rule-bare": [
+      { "id": "javascript.lang.security.audit.eval-detected", "record": "records/risk-acceptance/2026-10-harbor-lane-eval.md" }
+    ],
+    "eval-rule-and-path": [
+      { "id": "javascript.lang.security.audit.eval-detected:src/run.js", "record": "records/risk-acceptance/2026-10-harbor-lane-eval.md" }
     ]
   },
   "outputs": {
@@ -68,6 +74,21 @@
             { "severity": "critical", "advisory_ghsa_id": "GHSA-f9gw-3mx2-p7qc",
               "advisory_summary": "Remote code execution through crafted templates in okafor-template",
               "advisory_url": "https://example.invalid/advisories/GHSA-f9gw-3mx2-p7qc" }
+          ]
+        }
+      ]
+    },
+    "dr-runtime-unknown-scope": {
+      "exit": "failure",
+      "body": [
+        {
+          "change_type": "added", "manifest": "requirements.txt", "ecosystem": "pip",
+          "name": "harbor-lane-yaml", "version": "3.2.0", "package_url": "pkg:pypi/harbor-lane-yaml@3.2.0",
+          "license": "MIT", "source_repository_url": null, "scope": "unknown",
+          "vulnerabilities": [
+            { "severity": "high", "advisory_ghsa_id": "GHSA-w7x9-q4mf-2hvc",
+              "advisory_summary": "Arbitrary code execution when loading untrusted documents in harbor-lane-yaml",
+              "advisory_url": "https://example.invalid/advisories/GHSA-w7x9-q4mf-2hvc" }
           ]
         }
       ]
@@ -343,6 +364,43 @@
       "mode": "blocking", "acceptedText": "[{ \"id\": \"GHSA-2m4c-9fq8-wx7h\", ",
       "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "native: an unknown-scope high added, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-runtime-unknown-scope" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-w7x9-q4mf-2hvc"] }
+    },
+    "native: an unknown-scope high added, advisory": {
+      "mode": "advisory", "native": "true",
+      "outputs": { "dependency-review": "dr-runtime-unknown-scope" },
+      "expect": { "result": "pass", "wouldBlock": 1, "blocking": ["GHSA-w7x9-q4mf-2hvc"], "annotation": "security-scan would block: 1" }
+    },
+    "native: the dependency review refused, advisory": {
+      "mode": "advisory", "native": "true",
+      "outputs": { "dependency-review": "dr-refused" },
+      "expect": { "result": "pass", "wouldBlock": 1, "blocking": [], "errors": 1, "annotation": "security-scan would block: 1" }
+    },
+    "open source: a Semgrep result accepted by its bare rule id, blocking": {
+      "mode": "blocking", "accepted": "eval-rule-bare",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-eval" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["javascript.lang.security.audit.eval-detected:src/run.js"],
+        "note": "names a Semgrep rule without a path" }
+    },
+    "open source: a Semgrep result accepted by rule and path, blocking": {
+      "mode": "blocking", "accepted": "eval-rule-and-path",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-eval" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1,
+        "acceptedBy": "records/risk-acceptance/2026-10-harbor-lane-eval.md" }
+    },
+    "open source: the osv-scanner job failed, advisory": {
+      "mode": "advisory",
+      "outputs": { "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "expect": { "result": "pass", "wouldBlock": 1, "blocking": [], "errors": 1, "annotation": "security-scan would block: 1" }
+    },
+    "open source: every scanner job failed, advisory": {
+      "mode": "advisory",
+      "outputs": {},
+      "expect": { "result": "pass", "wouldBlock": 3, "blocking": [], "errors": 3, "annotation": "security-scan would block: 3" }
     },
     "unset mode: a runtime high added": {
       "native": "true",

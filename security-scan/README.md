@@ -128,6 +128,10 @@ that accepts a finding is not blocked by it:
 
 ## Known limits
 
+- **Accepting dependency-files-removed covers the repository, and it does not expire.** The
+  item has one id per repository, and accepted entries carry no end date, so once accepted it
+  also covers any later pull request that removes every dependency file. A later removal needs
+  its own record review: take the entry out after the change it was accepted for merges.
 - **Dependency review is filtered before the decision reads it.** On the native branch the
   action's `vulnerable-changes` output already leaves out what the action itself would not fail
   on: medium and low advisories in blocking mode, development dependencies, and the accepted

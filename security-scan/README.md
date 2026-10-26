@@ -1,0 +1,98 @@
+# Security scan
+
+Every pull request to a gated repository, and every merge-queue group, runs the check
+**security-scan**. It scans only what the change itself brings in: a vulnerable dependency
+the change adds, a secret in one of its commits, a weakness in the code it adds. Advisories
+against code already on the default branch are not this check's business; they go on the
+fix clock through the repository's Dependabot alerts.
+
+The organisation ruleset requires `.github/workflows/security-scan.yml` from this repository
+on every gated repository (its workflows rule), so no gated repository carries a copy or a
+caller file, and nobody can skip it.
+
+## The two branches
+
+The calling repository's variable `SECURITY_SCAN_NATIVE` chooses.
+
+| `SECURITY_SCAN_NATIVE` | What runs | Why |
+|---|---|---|
+| `true` (GitHub Code Security and Secret Protection are on) | GitHub's dependency review, pinned to a commit: runtime dependencies only, high and above, the accepted advisories allowed | code scanning there is CodeQL default setup, which the organisation ruleset's `code_scanning` rule requires and which fails a pull request only on new alerts in the code it changes; secrets are stopped by push protection. No other scanner runs. |
+| unset, `false` or anything else | osv-scanner over the lockfiles, gitleaks over the pull request's commits, and Semgrep's open-source engine | the repository has no GitHub code security licence, so free open-source scanners stand in. Each is installed by pinned version and checksum, never through an action that needs a licence key. |
+
+On the open-source branch only the change's own findings count: osv-scanner scans the
+lockfiles at the change and at its base, and a finding the base already carries is recorded
+but never blocks; gitleaks reads only the commits between the base and the change's head;
+Semgrep runs with `--baseline-commit` set to the base, so it reports only results the change
+adds. A repository with no dependency files passes the dependency audit with the note
+"no dependency files". A change cannot quiet the open-source scanners from inside itself:
+gitleaks runs on its built-in rules only, ignoring a `.gitleaks.toml`, a `.gitleaksignore` or a
+`gitleaks:allow` comment, and Semgrep ignores `nosemgrep` comments. A finding is accepted only
+through the accepted list below.
+
+**Not yet confirmed.** GitHub's dependency-review action asks for Advanced Security on private
+repositories. The first advisory run on each private repository whose variable is `true`
+confirms that it works under Code Security. If it refuses there, the job ends with no output,
+the summary says the dependency review wrote no output, and the repository's
+`SECURITY_SCAN_NATIVE` is set back to `false` so the open-source branch runs there.
+
+## The mode
+
+The organisation variable `SECURITY_SCAN_MODE` is read on every run.
+
+| `SECURITY_SCAN_MODE` | What the check does |
+|---|---|
+| `advisory` | records every finding in the job summary, in the scanner's own words, ends with the annotation `security-scan would block: N`, and passes. The dependency-review action runs `warn-only`. |
+| `blocking` | fails on a critical or high runtime finding the change brings in that the accepted list does not accept. |
+| unset or anything else | reads as `blocking` and says so in a warning annotation. |
+
+Output a scanner should have written but did not, or wrote in a form that cannot be read (a
+crash, a missing job, malformed JSON, a malformed accepted list), counts like a blocking
+finding: it fails the check in blocking mode and is counted in `would block: N` in advisory.
+
+## Severity, one scale for every scanner
+
+| Scanner | Read as |
+|---|---|
+| dependency review | GitHub's own word: critical, high, moderate (medium), low |
+| osv-scanner | the advisory's CVSS base score: 9.0 and above critical, 7.0 to 8.9 high, 4.0 to 6.9 medium, below that low; with no score, the advisory database's own severity word; with neither, high, and the summary says so |
+| gitleaks | always critical: a secret in the code |
+| Semgrep | ERROR high, WARNING medium, INFO low (CRITICAL, HIGH, MEDIUM and LOW as written); an unknown word reads as high, and the summary says so |
+
+A dependency counts as runtime unless its scanner says it is a development dependency
+(dependency review's scope `development`; osv-scanner's dependency group `dev`). A development
+dependency's finding is recorded and never blocks.
+
+## Accepting a finding
+
+A finding that cannot be fixed yet is accepted in the calling repository's
+`.github/security-accepted.json`, read from the change's own head commit, so the pull request
+that accepts a finding is not blocked by it:
+
+```json
+[
+  { "id": "GHSA-xxxx-xxxx-xxxx", "record": "records/risk-acceptance/2026-11-example-parser.md" }
+]
+```
+
+- `id` is the scanner's finding id: the advisory id for dependency review (`GHSA-…`), any of
+  an advisory's ids or aliases for osv-scanner (`GHSA-…`, `CVE-…`), the finding's fingerprint
+  for gitleaks (`<commit>:<file>:<rule>:<line>`), and `<rule id>:<path>` for Semgrep.
+- `record` names the approved risk-acceptance record in the records repository. An entry
+  without one under `records/risk-acceptance/` accepts nothing, and the summary says so.
+- The file is absent until someone needs it and changes only through a reviewed pull request.
+  The scan cannot read the private records repository, so the daily reading checks every
+  entry against an approved, unexpired record there.
+
+## Files
+
+- `.github/workflows/security-scan.yml`: the workflow. Its first job reads the switches through
+  `decide.mjs plan`; the scanner jobs only record what their scanners printed and the exit
+  code; the final job `security-scan` runs `decide.mjs settle` over those outputs.
+- `security-scan/decide.mjs`: the decision. Pure functions, exported for the tests.
+- `test/security-scan-decide.test.mjs` over `test/fixtures/scan-outputs.json`: recorded
+  outputs, no network.
+
+Pinned today: GitHub's dependency-review action v5.0.0, osv-scanner v2.7.0, gitleaks 8.30.1 and
+the Semgrep image 1.182.0, each by commit or SHA-256 checksum in the workflow. To move one, read
+the new release's published checksum and change the version and checksum together in one
+reviewed pull request.

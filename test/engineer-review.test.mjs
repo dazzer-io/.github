@@ -265,6 +265,42 @@ test('the script is fetched with checkout at the workflow\'s own repository and 
   assert.match(wf, /run: node \.engineer-review\/engineer-review\/decide\.mjs/);
 });
 
+// Said only when a check goes red on a run that fetches or runs a pull request's own code.
+const UNTRUSTED = "the Engineer review run fetches or runs code a pull request's author chose";
+
+// The job's steps with comment lines dropped, each from its "- " line to the next.
+function workflowSteps(wf) {
+  const code = wf.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  const at = code.indexOf('\n    steps:\n');
+  assert.ok(at >= 0, 'the job has no steps');
+  return code.slice(at + '\n    steps:\n'.length).split(/\n(?= {6}- )/).filter((s) => s.trim());
+}
+
+test("a comment run fetches only the workflow's own commit and runs only the script fetched from it", () => {
+  // issue_comment holds a write token for every pull request, a fork's too. Its run is safe
+  // only while the one checkout is job.workflow_sha (GitHub takes the file from the default
+  // branch, or the caller's pin on main) and nothing else fetches or runs code.
+  const wf = fs.readFileSync(workflowPath, 'utf8');
+  const steps = workflowSteps(wf);
+  const code = steps.join('\n');
+  for (const head of [/\bhead[._](?:sha|ref)\b/, /\bmerge_commit_sha\b/, /refs\/pull\//, /\bgit\s+(?:fetch|pull|checkout|clone|switch)\b/, /\bgh\s+pr\s+checkout\b/]) {
+    assert.doesNotMatch(code, head, `${UNTRUSTED}: a step names a pull request's head or fetches one (${head})`);
+  }
+  const actions = steps.filter((s) => /^\s*-?\s*uses:/m.test(s));
+  assert.equal(actions.length, 1, `${UNTRUSTED}: ${actions.length} steps run an action, where the one allowed is the script's checkout`);
+  const [checkout] = actions;
+  assert.match(checkout, /uses: actions\/checkout@[0-9a-f]{40}/, `${UNTRUSTED}: the one action is not the pinned checkout`);
+  assert.match(checkout, /repository: \$\{\{ steps\.source\.outputs\.repo \}\}/, `${UNTRUSTED}: the checkout's repository is not the workflow's own`);
+  assert.match(checkout, /ref: \$\{\{ steps\.source\.outputs\.sha \}\}/, `${UNTRUSTED}: the checkout's commit is not the workflow's own`);
+  assert.match(checkout, /persist-credentials: false/, `${UNTRUSTED}: the checkout leaves the token in the fetched copy`);
+  const runs = steps.filter((s) => /^\s*-?\s*run:/m.test(s));
+  assert.equal(runs.length, 2, `${UNTRUSTED}: ${runs.length} steps run commands, where two are allowed`);
+  assert.match(runs[0], /^\s*id: source$/m, `${UNTRUSTED}: the first command is not the step naming the workflow's own commit`);
+  assert.doesNotMatch(runs[0].slice(runs[0].indexOf('run:')), /\$\{\{/, `${UNTRUSTED}: the naming step's script takes an expression in`);
+  assert.match(runs[1], /run: node \.engineer-review\/engineer-review\/decide\.mjs\s*$/, `${UNTRUSTED}: the last command is not the fetched decision script`);
+  assert.ok(steps.indexOf(checkout) < steps.indexOf(runs[1]), `${UNTRUSTED}: the script runs before it is fetched`);
+});
+
 test('a reviewed comment posted through an App does not count', async () => {
   const d = check('reviewed comment posted through an App');
   assert.match(d.considered[0].why, /harbor-relay/);

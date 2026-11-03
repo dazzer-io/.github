@@ -54,6 +54,14 @@ jobs:
           echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
           echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
+      # Never a pull request's code. Code scanning (actions/untrusted-checkout/high) reads
+      # any checkout ref taken from a step output named like "sha" as a pull request head;
+      # this one is job.workflow_sha, the commit of this workflow file. On issue_comment,
+      # the trigger whose token writes for every pull request, fork or not, GitHub reads
+      # that file from the default branch's last commit, or, called from a gated repository,
+      # at the commit its default-branch caller pins on this repository's main. On
+      # pull_request and pull_request_review it is the pull request's own commit, run with
+      # the token GitHub gives that pull request: read-only from a fork or Dependabot.
       - name: Fetch the decision script at that commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

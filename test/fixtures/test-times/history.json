@@ -1,0 +1,17 @@
+{"v":1,"repo":"example-org/sample-shop","workflow":"checks.yml","event":"push","branch":"main","attempt":1,"read_at":"2026-11-01T09:00:00.000Z","source":"history","why":null,
+"runs":[{"id":9100000003,"attempt":1,"sha":"3333333333333333333333333333333333333333"},{"id":9100000002,"attempt":2,"sha":"2222222222222222222222222222222222222222"},{"id":9100000001,"attempt":1,"sha":"1111111111111111111111111111111111111111"}],
+"files":{
+"e2e/basket.spec.ts":[{"group":"chromium","ms":3000,"workers":2,"serial":false,"n":3},{"group":"firefox","ms":5000,"workers":2,"serial":false,"n":3},{"group":"webkit","ms":6000,"workers":2,"serial":false,"n":2}],
+"e2e/checkout.spec.ts":[{"group":"chromium","ms":7000,"workers":2,"serial":false,"n":3}],
+"e2e/search.spec.ts":[{"group":"chromium","ms":4000,"workers":2,"serial":false,"n":3}],
+"int/locks-a.int.ts":[{"group":"lock-order","ms":2400,"workers":1,"serial":true,"n":3}],
+"test/alpha.test.mjs":[{"group":null,"ms":4000,"workers":4,"serial":false,"n":3}],
+"test/bravo.test.mjs":[{"group":null,"ms":12000,"workers":4,"serial":false,"n":3}],
+"test/charlie.test.mjs":[{"group":null,"ms":2000,"workers":4,"serial":false,"n":3}],
+"test/delta.test.mjs":[{"group":null,"ms":9000,"workers":1,"serial":true,"n":3}],
+"test/foxtrot.test.mjs":[{"group":null,"ms":6000,"workers":4,"serial":false,"n":3}],
+"test/golf.test.mjs":[{"group":null,"ms":800,"workers":4,"serial":false,"n":2}],
+"test/hotel.test.mjs":[{"group":null,"ms":16000,"workers":4,"serial":false,"n":3}],
+"test/india.test.mjs":[{"group":null,"ms":2400,"workers":4,"serial":false,"n":3}]
+},
+"jobs":{"CI Gate":{"ms":70000,"setup_ms":null,"n":3},"build-docs":{"ms":50000,"setup_ms":12000,"n":3},"lint":{"ms":45000,"setup_ms":10000,"n":3},"unit-tests":{"ms":420000,"setup_ms":30000,"n":3}}}

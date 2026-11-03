@@ -13,6 +13,7 @@ name, result or record of any repository.
 | --- | --- |
 | `record.mjs` | The format's writer and reader: `parseRecord`, `readRunFile` (unzips a downloaded run file with `node:zlib`, stored and deflated entries only), `compareRecords`, `gitBlob`, `Recorder`. And the readers' contract: `jobOf`, `pairRecords`, `ranNoTest`, `jobsOfRun` (attempts and matrix legs), `jobGroups`, `groupTimes`, `KEEP_STEP`. Every other reader imports these, so none rebuilds them. |
 | `read.mjs` | The reader's command line and its GitHub reads. |
+| `plan.mjs` | The planner: deals test files into parts by their recorded time, and counts parts. A module (`deal`, `count`, `weigh`, `checkDeal`, `loadHistory`, `dealLine`) and a command line. |
 | `node-test-reporter.mjs`, `vitest-reporter.mjs`, `playwright-reporter.mjs` | The three adapters. |
 | `touch.mjs` | The touch preload. |
 | `setup.mjs`, `finish.mjs` | Run before and after a workflow's tests. |
@@ -67,7 +68,9 @@ name, result or record of any repository.
   without it. A process killed by a signal has said its kinds, and its waits are unknown. So
   `waits_ms` is known only when every process that wrote a line, for the file or in job scope for
   the job, also wrote its exit line; one without makes it null. The runner's own process marks itself,
-  and its lines are dropped.
+  and its lines are dropped. So under `node --test --test-isolation=none` (Node 22:
+  `--experimental-test-isolation=none`), where the tests run in the runner's own process,
+  `waits_ms` is null: the tests' own waits never reach the record (record.mjs `testsInRunner`).
 - **A file's `ms`:**
   - Node's runner: its own `test:complete` time;
   - vitest: its module's environment, prepare, collect, setup and test durations added
@@ -107,6 +110,7 @@ Around the job's tests, add three steps:
 ```yaml
       - name: Fetch the test-time recorder
         continue-on-error: true
+        timeout-minutes: <this repository's number, with the reading it rests on>
         run: |
           git clone --quiet --filter=blob:none https://github.com/dazzer-io/.github "$RUNNER_TEMP/test-times-src"
           git -C "$RUNNER_TEMP/test-times-src" checkout --quiet "$TEST_TIMES_SHA"
@@ -118,11 +122,13 @@ Around the job's tests, add three steps:
         id: test-times
         if: always()
         continue-on-error: true
+        timeout-minutes: <this repository's number, with the reading it rests on>
         run: node "$TEST_TIMES_DIR/finish.mjs" >> "$GITHUB_OUTPUT"
 
       - name: Keep the test times
         if: always()
         continue-on-error: true
+        timeout-minutes: <this repository's number, with the reading it rests on>
         uses: actions/upload-artifact@<commit, pinned as the repository pins it>
         with:
           name: ${{ steps.test-times.outputs.name }}
@@ -130,6 +136,10 @@ Around the job's tests, add three steps:
           overwrite: true
 ```
 
+- **Each of the three steps also carries a step-level `timeout-minutes`.** A clone or upload that
+  stalls never ends, so `continue-on-error` never absorbs it, and the job fails at its own limit.
+  Each repository states its number beside the step with the reading it rests on, never typed
+  bare; this README names none.
 - **setup.mjs** prints `TEST_TIMES_DIR`, `TEST_TIMES_FILE` (`$RUNNER_TEMP/test-times.jsonl`)
   and `TEST_TIMES_ID`, and writes the run's facts beside the record.
   - `runner.label` is `TEST_TIMES_LABEL` when the workflow sets it, else the runner image
@@ -155,15 +165,28 @@ them. With the variables unset, the command or config is exactly today's.
     --test-reporter=<dir>/node-test-reporter.mjs --test-reporter-destination=<file> <files>
   ```
 
-- **vitest:**
+- **vitest.** vitest evaluates a config file more than once in one process (each project with
+  `extends: true` loads it again), and a later evaluation finds the environment already emptied.
+  So the first evaluation keeps the pair on `globalThis` for the life of the process, and later
+  ones read it from there:
 
   ```js
+  const KEPT = Symbol.for('dazzer.test-times');
   const dir = process.env.TEST_TIMES_DIR; const file = process.env.TEST_TIMES_FILE;
   delete process.env.TEST_TIMES_DIR; delete process.env.TEST_TIMES_FILE;
-  // only when both were set:
-  reporters: [...today, [`${dir}/vitest-reporter.mjs`, { file }]],
-  execArgv: [`--import=${dir}/touch.mjs?out=${file}.touch`],   // the process pool's
+  if (dir && file) globalThis[KEPT] = { dir, file };
+  const times = globalThis[KEPT];
+  // only when times is set:
+  reporters: [
+    'default', ...(process.env.GITHUB_ACTIONS === 'true' ? ['github-actions'] : []),
+    [`${times.dir}/vitest-reporter.mjs`, { file: times.file }],
+  ],
+  execArgv: [`--import=${times.dir}/touch.mjs?out=${times.file}.touch`],   // the process pool's
   ```
+
+  Setting `reporters` replaces vitest's default, so the list spells that default out: `default`,
+  and `github-actions` when `GITHUB_ACTIONS` is `"true"`. A config that set its own reporters
+  keeps those in their place.
 
 - **Playwright:** the same read and removal, then
   `reporter: [...today, [`${dir}/playwright-reporter.mjs`, { file }]]`.
@@ -235,8 +258,68 @@ node read.mjs --repo <owner/name> --workflow <file> --event <push|pull_request> 
   The API is `GITHUB_API_URL`, else `https://api.github.com`. A run file's storage redirect is
   followed without the token.
 
-The tests in `test/test-times-record.test.mjs` and `test/test-times-read.test.mjs` prove each of
-these. Their fixtures under `test/fixtures/test-times/` lie outside `test/*.test.mjs`, and
-`fail.test.mjs` is meant to fail. The files that fail as files are written by the test into a
+## Dealing tests into parts: `plan.mjs`
+
+```
+node plan.mjs --history <file or folder> --files <file> --parts <n> [--part <i> --out <file>] [--deal <file>] [--lane <job group>]
+node plan.mjs --history <file or folder> --count --lane <job group> [--ignore <job group>]...
+node plan.mjs --history <file or folder> --count --group <name> --under <ms>
+```
+
+`--files` holds every test file the runner discovered at the run's commit, one `<path>\t<group>`
+per line; a line with no tab, or an empty group, is a file of no group. A file listed twice is
+refused: `a file was discovered twice: <file>`.
+
+- **The history.** `--history` is the file `read.mjs --history` wrote, or a folder of them at
+  any depth, as `actions/download-artifact` leaves them by pattern. From a folder it takes the
+  one whose `attempt` is the highest not above `GITHUB_RUN_ATTEMPT` (with none set, the
+  highest), so a part re-run alone deals the deal its first attempt dealt. None fitting is
+  refused, and so are two different files of one attempt.
+- **The deal**, `deal({ files, history, parts, lane })`:
+  - **weights:** a file is matched to the history entry with its own path and group; it weighs
+    that entry's `ms` divided by its `workers`, or its whole `ms` when it is `serial`. A file with
+    no history weighs the median of the known weights, and is serial when the known files of its
+    group are. With no history at all every file weighs the same and the time is unknown;
+  - **order:** heaviest first, ties by path, then group (null first);
+  - **placement:** each file onto the part with the least total so far, ties to the lower part;
+  - **prediction:** each part's total plus the lane's `setup_ms` from `history.jobs[lane]`; with no
+    `--lane`, or none recorded, the set-up is unknown;
+  - **every file exactly once:** the parts are checked against the discovered files, and a deal
+    that misses one, holds one twice or holds one never discovered is refused, exit 1:
+    `the deal does not hold every file exactly once: <file>`.
+
+  The same inputs, in any order, give the same deal, so every part computes the whole deal from
+  the one history file and takes its own share.
+- **The hash** is the SHA-256 of the parts' file lists, each file `[path, group]` and each list
+  sorted by path then group, as JSON, in part order. Its first 16 characters are printed.
+- **What it prints:** the history it rests on (its files, runs, attempt, the first 16 characters
+  of its own SHA-256 and its path, or `none` and why), then per part its file count, its
+  predicted time and how many of its files have history, then `deal <hash>`. A part holding one
+  file that is the slowest part says `<file> alone sets the wait`.
+- **What it writes,** with `--part <i>`: to `--out`, part i's paths, one per line, each path once;
+  to `--deal`, the record's deal line, `{"type":"deal","parts","part","files","discovered",
+  "discovered_count","history"}`, where `files` holds one path per dealt file, `discovered` is
+  the SHA-256 of every discovered `[path, group]`, sorted, as JSON, and `history` the SHA-256 of
+  the history file's bytes. A part passes `<record file>.deal` as `--deal`, and the adapter copies
+  the line into the record.
+- **How many parts**, `--count --lane <job group> [--ignore <job group>]...`: the smallest count
+  whose predicted slowest part, set-up included where it is recorded, is no longer than the
+  longest median of the other job groups in `history.jobs`, leaving out the lane's own and those
+  ignored. The lane's files are every file in the history, so the plan job limits them to the
+  lane's jobs with `read.mjs --job-prefix`. With no history, or no other group, one.
+- **How many shares**, `--count --group <name> --under <ms>`: the smallest count whose slowest
+  share of that group's recorded files is no longer than `--under`.
+- Where no count gets under its figure, the count stops at the smallest one at the lowest slowest
+  part, and says `<file> alone sets the wait`. The counts print the count and the slowest part
+  against the figure it was held to, and append `count=<n>` and `parts=[1,…,n]` to
+  `$GITHUB_OUTPUT` when that is set.
+- **Exit codes:** 0 dealt or counted; 1 refused, saying why; 2 `plan.mjs: <what is wrong>` for
+  arguments it does not take.
+
+The tests in `test/test-times-record.test.mjs`, `test/test-times-read.test.mjs` and
+`test/test-times-plan.test.mjs` prove each of these. Their fixtures under
+`test/fixtures/test-times/` lie outside `test/*.test.mjs`, and `fail.test.mjs` is meant to fail.
+The planner's stored deal, `expected-deal.json`, was worked out by hand from `history.json` and
+`files.tsv`, not written by the planner. The files that fail as files are written by the test into a
 temporary folder. Each child the tests start gets an environment built from a short list, so
 the suite answers the same on a GitHub runner as on a laptop.

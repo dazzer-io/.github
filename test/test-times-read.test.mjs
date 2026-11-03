@@ -201,7 +201,7 @@ test('--history --allow-none still writes its file, saying none and why, and war
   const r = await read(['--repo', 'acme-labs/sprocket', ...BASE, '--history', '--allow-none', '--out', out], { GITHUB_RUN_ATTEMPT: '2' });
   assert.equal(r.code, 0, show(r));
   const why = 'could not read: GET /repos/acme-labs/sprocket/actions/runs/5001/jobs answered 403';
-  assert.match(r.stdout, new RegExp(`^::warning title=test-times history::${why.replace(/[/.]/g, '\\$&')}$`, 'm'));
+  assert.ok(r.stdout.split('\n').includes(`::warning title=test-times history::${why}`), show(r));
   const h = JSON.parse(fs.readFileSync(out, 'utf8'));
   delete h.read_at;
   assert.deepEqual(h, { v: 1, repo: 'acme-labs/sprocket', workflow: 'checks.yml', event: 'push', branch: 'main', attempt: 2,
@@ -247,6 +247,15 @@ test('--not-slowest passes while another group is longer and names the group whe
   const ignored = await read(['--repo', 'acme-labs/widget', ...BASE, '--not-slowest', 'unit', '--ignore', 'db']);
   assert.equal(ignored.code, 1, show(ignored));
   assert.match(ignored.stdout, /^unit sets the wait: 4\.0 min against lint 1\.0 min$/m);
+});
+
+// acme-labs/gizmo has two groups, unit and lint: with lint ignored, unit is alone.
+test('--not-slowest with no other group left fails, a group alone being the longest', async () => {
+  const r = await read(['--repo', 'acme-labs/gizmo', ...BASE, '--not-slowest', 'unit', '--ignore', 'lint']);
+  assert.equal(r.code, 1, show(r));
+  assert.deepEqual(r.stdout.trim().split('\n'), [
+    'unit: 6.0 min over 1 runs', 'unit sets the wait: 6.0 min against no other group',
+  ], show(r));
 });
 
 test('the arguments it does not take are refused before any read', async () => {
@@ -308,7 +317,7 @@ test('a run file whose download breaks off is a read that could not be made', as
   assert.equal(r.stdout.trim().split('\n').length, 1, show(r));
 });
 
-test('--history --allow-none never exits 2: any read error writes none with why, and warns', async () => {
+test('--history --allow-none writes none with why on any read error, and warns', async () => {
   for (const [repo, words] of [
     ['acme-labs/bolt', /^could not read: the run file behind \/repos\/acme-labs\/bolt\/actions\/artifacts\/9201\/zip broke off: \S+$/],
     ['acme-labs/nut', /^could not read: run file test-times-unit-1-gh-nu-1791021600000 expired$/],
@@ -319,7 +328,7 @@ test('--history --allow-none never exits 2: any read error writes none with why,
     const h = JSON.parse(fs.readFileSync(out, 'utf8'));
     assert.equal(h.source, 'none', show(r));
     assert.match(h.why, words, show(r));
-    assert.match(r.stdout, new RegExp(`^::warning title=test-times history::${h.why.replace(/[/.\\]/g, '\\$&')}$`, 'm'), show(r));
+    assert.ok(r.stdout.split('\n').includes(`::warning title=test-times history::${h.why}`), show(r));
   }
 });
 

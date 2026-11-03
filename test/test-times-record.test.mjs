@@ -488,8 +488,30 @@ test('the runner\'s own process is never counted as a test file\'s, whenever it 
   assert.deepEqual(record.readTouch(out, 10).map((l) => l.pid), [11, 11]);
 });
 
-test('the README says why fullyParallel is not read and what --not-slowest does with no other group', () => {
-  const readme = fs.readFileSync(path.join(DIR, 'README.md'), 'utf8');
-  assert.match(readme, /`fullyParallel`[^\n]*not read/, 'the README says fullyParallel is not read, and why');
-  assert.match(readme, /`--not-slowest`[^\n]*no other group/, 'the README says what --not-slowest does with no other group');
+// Job scope: a vitest pool's workers each run several files. Worker 11 exits having asked
+// 100 ms; worker 12 said a kind and was killed before its exit line, so its waits, and the
+// job's, are unknown.
+test('in job scope the job\'s waits_ms is null unless every process that wrote a line wrote its exit line', () => {
+  const file = path.join(tmp(), 'test-times.jsonl');
+  const rec = new Recorder({ file, runnerKind: 'vitest' });
+  rec.start({ kindScope: 'job' });
+  rec.test({ file: path.join(FIX, 'pass.test.mjs'), group: 'unit', name: 'one', ms: 1, status: 'pass' });
+  rec.test({ file: path.join(FIX, 'socket.test.mjs'), group: 'unit', name: 'two', ms: 1, status: 'pass' });
+  const exited = [
+    { pid: 11, ppid: process.pid, file: '/repo/worker.js', kinds: ['process'], waits_ms: null },
+    { pid: 11, ppid: process.pid, file: '/repo/worker.js', kinds: ['process'], waits_ms: 100 },
+  ];
+  const killed = { pid: 12, ppid: process.pid, file: '/repo/worker.js', kinds: ['local-service'], waits_ms: null };
+  rec.finish({ complete: true, touchLines: [...exited, killed] });
+  const r = parseRecord(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(r.files.map((f) => [f.kinds, f.waits_ms]),
+    [[['process', 'local-service'], null], [['process', 'local-service'], null]],
+    'worker 12 left no exit line, so no file line can say the job\'s waits');
+  const whole = path.join(tmp(), 'test-times.jsonl');
+  const both = new Recorder({ file: whole, runnerKind: 'vitest' });
+  both.start({ kindScope: 'job' });
+  both.test({ file: path.join(FIX, 'pass.test.mjs'), group: 'unit', name: 'one', ms: 1, status: 'pass' });
+  both.finish({ complete: true, touchLines: [...exited, killed, { ...killed, waits_ms: 30 }] });
+  assert.deepEqual(parseRecord(fs.readFileSync(whole, 'utf8')).files.map((f) => f.waits_ms), [130],
+    'with both exit lines the job\'s waits are their sum');
 });

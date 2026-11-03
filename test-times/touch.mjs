@@ -3,11 +3,16 @@
 // Loaded as `--import=<dir>/touch.mjs?out=<record file>.touch`, so its output path rides its
 // import address and no environment variable reaches a test. It watches child_process's
 // starting functions, net.Socket's connect (which fetch also goes through) and the timer
-// functions, a timer counted only when the call does not come straight from Node's own
-// internals. At the process's exit it appends one line to its output file:
+// functions, a timer counted only when the call comes from the process's own code: neither
+// straight from Node's own internals nor from code under node_modules. It appends a line to its
+// output file the moment it first sees each kind, with waits_ms null, and one more at the
+// process's exit holding every kind seen and the waits total, each line
 //   {"pid","ppid","file","kinds","waits_ms"}
-// where `file` is the process's main module. Each line stays under 4 KiB, so lines appended at
-// the same moment by several processes never interleave. It never writes a host, address,
+// It adds no signal listener, so a process killed by a signal dies as it would have, having
+// said its kinds and leaving its waits unknown. `file` is the process's main module. The
+// runner's own process marks itself with {"pid","ppid","runner":true} and writes nothing after.
+// Each line stays under 4 KiB, so lines appended at the same moment by several processes never
+// interleave. It never writes a host, address,
 // port or argument: a connection becomes `local-service` or `network`, nothing more.
 //
 // Imported with no `out` in its address, it installs nothing and only answers its exports.

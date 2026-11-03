@@ -207,20 +207,25 @@ export class Recorder {
   // Kinds and waits per file, from the touch lines this runner owns (record.mjs readTouch).
   // A process writes a line the moment it first sees each kind, with waits_ms null, and one
   // more at its exit holding all its kinds and its waits. So a process killed by a signal still
-  // says what it touched, and its waits are unknown: waits_ms is null when no line said any.
+  // says what it touched, and its waits are unknown. The waits of a file, or in job scope of the
+  // job, are known only when every process that wrote a line for it also wrote its exit line;
+  // one process with no exit line makes them null.
   touchFor(touchLines) {
     if (this.kindScope === 'runner') return { scope: 'runner', of: () => ({ kinds: ['browser'], waits_ms: null }) };
     if (!touchLines.length) return { scope: 'job', of: () => ({ kinds: [], waits_ms: null }) };
+    const fresh = () => ({ kinds: new Set(), waits: 0, pids: new Set(), exited: new Set() });
     const add = (e, t) => {
       for (const k of t.kinds ?? []) e.kinds.add(k);
-      if (typeof t.waits_ms === 'number') { e.waits += t.waits_ms; e.known = true; }
+      e.pids.add(t.pid);
+      if (typeof t.waits_ms === 'number') { e.waits += t.waits_ms; e.exited.add(t.pid); }
     };
-    const out = (e) => ({ kinds: orderKinds(e.kinds), waits_ms: e.known ? round1(e.waits) : null });
+    const known = (e) => e.pids.size > 0 && [...e.pids].every((p) => e.exited.has(p));
+    const out = (e) => ({ kinds: orderKinds(e.kinds), waits_ms: known(e) ? round1(e.waits) : null });
     if (this.kindScope === 'file') {
       const byFile = new Map();
       for (const t of touchLines) {
         if (!t.file) continue;
-        const e = byFile.get(t.file) ?? { kinds: new Set(), waits: 0, known: false };
+        const e = byFile.get(t.file) ?? fresh();
         add(e, t);
         byFile.set(t.file, e);
       }
@@ -232,7 +237,7 @@ export class Recorder {
         },
       };
     }
-    const all = { kinds: new Set(), waits: 0, known: false };
+    const all = fresh();
     for (const t of touchLines) add(all, t);
     const job = out(all);
     return { scope: 'job', of: () => job };

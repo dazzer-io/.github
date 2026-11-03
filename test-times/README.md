@@ -64,8 +64,9 @@ name, result or record of any repository.
   such as vitest's own per-test and per-hook timeouts, armed through its safe timers.
 - **The touch preload** writes a line the moment its process first does each kind, and one at
   exit with its waits. It sets no signal listener, so a process dies exactly as it would
-  without it. A process killed by a signal has said its kinds, and its waits are unknown: a file
-  whose processes left no exit line has `waits_ms` null. The runner's own process marks itself,
+  without it. A process killed by a signal has said its kinds, and its waits are unknown. So
+  `waits_ms` is known only when every process that wrote a line, for the file or in job scope for
+  the job, also wrote its exit line; one without makes it null. The runner's own process marks itself,
   and its lines are dropped.
 - **A file's `ms`:**
   - Node's runner: its own `test:complete` time;
@@ -197,7 +198,9 @@ node read.mjs --repo <owner/name> --workflow <file> --event <push|pull_request> 
   - `--job-prefix` limits which jobs feed `files`; `jobs` always holds every group.
   - With `--allow-none`, any read error, a refused call or a download that broke off alike,
     still writes the file, with `"source":"none"` and why, prints
-    `::warning title=test-times history::could not read: ...`, and exits 0. It never exits 2.
+    `::warning title=test-times history::could not read: ...`, and exits 0. It covers reading
+    only: arguments it does not take, an `--out` it cannot write, and an error while making the
+    history from records it did read still exit 2 with `could not read: ...`.
 - **`--slowest <group>` and `--not-slowest <group>`, with `[--ignore <group>]...`,** compare each
   group's median time over the newest ten successful runs. The one that fails exits 1 with
   `<group> sets the wait: <x> min against <group> <y> min`.

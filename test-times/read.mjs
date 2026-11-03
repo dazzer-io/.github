@@ -301,7 +301,7 @@ async function history(o) {
   } catch (err) {
     // Under --allow-none any read error, refused or not, writes `none` with why.
     if (!o.allowNone) throw err;
-    const why = `could not read: ${err instanceof Refused ? err.message : err.message || String(err)}`;
+    const why = `could not read: ${err.message || String(err)}`;
     fs.writeFileSync(o.out, JSON.stringify({ ...historyHead(o), source: 'none', why, runs: [], files: {}, jobs: {} }) + '\n');
     console.log(`::warning title=test-times history::${why}`);
     console.log(`history: none, ${why} -> ${o.out}`);

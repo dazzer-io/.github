@@ -51,6 +51,15 @@ export function referenceMs() {
   return round1(performance.now() - t0);
 }
 
+// The median of the numbers given: the middle one, or the mean of the two middle ones. Every
+// reader of records takes its medians here, so they agree. Null for none.
+export function median(xs) {
+  const s = [...xs].filter((x) => typeof x === 'number' && Number.isFinite(x)).sort((a, b) => a - b);
+  if (!s.length) return null;
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
 export function round1(n) {
   return typeof n === 'number' && Number.isFinite(n) ? Math.round(n * 10) / 10 : null;
 }
@@ -150,29 +159,32 @@ function writeLines(file, lines) {
 
 // Whether the runner runs the tests in its own process, whose touch lines are dropped
 // (readTouch): Node's runner under --test-isolation=none, which Node 22 names
-// --experimental-test-isolation. Read from the runner's own command line, as its adapter reads
-// it. There no file's or job's waits are known, since the tests' own never reach the record.
-export function testsInRunner(runnerKind, execArgv = process.execArgv) {
+// --experimental-test-isolation. An adapter that has read its isolation passes it as
+// `isolation`; without it, the runner's own command line is read, in both the `=` and the
+// separate-argument forms. There no file's or job's waits are known, since the tests' own never
+// reach the record; their kinds are lost the same way, and the README says so.
+export function testsInRunner(runnerKind, { isolation = null, execArgv = process.execArgv } = {}) {
   if (runnerKind !== 'node-test') return false;
-  let isolation = 'process';
+  if (typeof isolation === 'string') return isolation === 'none';
+  let read = 'process';
   for (let i = 0; i < execArgv.length; i++) {
     const a = String(execArgv[i]);
     for (const flag of ['--test-isolation', '--experimental-test-isolation']) {
-      if (a === flag) isolation = String(execArgv[++i]);
-      else if (a.startsWith(`${flag}=`)) isolation = a.slice(flag.length + 1);
+      if (a === flag) read = String(execArgv[++i]);
+      else if (a.startsWith(`${flag}=`)) read = a.slice(flag.length + 1);
     }
   }
-  return isolation === 'none';
+  return read === 'none';
 }
 
 // The writer every adapter uses. start() writes the run line before the first test, so a
 // record that exists and has no end means the runner stopped partway; finish() writes the
 // whole record, the run line's end included.
 export class Recorder {
-  constructor({ file, runnerKind, execArgv = process.execArgv }) {
+  constructor({ file, runnerKind, isolation = null, execArgv = process.execArgv }) {
     this.file = file;
     this.runnerKind = runnerKind;
-    this.inRunner = testsInRunner(runnerKind, execArgv);
+    this.inRunner = testsInRunner(runnerKind, { isolation, execArgv });
     this.tests = [];
     this.fileTimes = new Map();
   }

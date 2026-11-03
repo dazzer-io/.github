@@ -6,7 +6,14 @@
 //   node plan.mjs --history <file or folder> --count --group <name> --under <ms>
 //
 // `--files` holds one "<path>\t<group>" per line, every test file the runner discovered at the
-// run's commit; a line with no tab, or an empty group, is a file of no group.
+// run's commit; a line with no tab, or an empty group, is a file of no group. Paths are
+// repository-relative with forward slashes, the form the record writes (record.mjs repoPath),
+// or no history entry matches them. Every file the planner writes, to `--out` and in the deal
+// line, is written in that same line form, so its group is never dropped.
+//
+// A part dealt nothing runs no test: it prints `part <i>/<n>: run no test`, writes `run=false`
+// to $GITHUB_OUTPUT, and its caller never hands its runner the empty list, since a runner
+// given no file runs every file it finds.
 //
 // The history file is read.mjs --history's (README.md beside this file). Handed a folder, the
 // planner reads every history file in it at any depth and takes the one whose `attempt` is the
@@ -22,24 +29,24 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { median } from './record.mjs';
 
+export { median };
 export const NOT_EXACTLY_ONCE = 'the deal does not hold every file exactly once';
+export const NONE_DISCOVERED = 'no test file was discovered: a lane always holds at least one';
+// GitHub's own limit on the jobs one matrix makes (its workflow syntax page, "jobs.<job_id>.strategy.matrix").
+export const MATRIX_LIMIT = 256;
 
 export class PlanError extends Error {}
 class ArgError extends Error {}
-
-export function median(xs) {
-  const s = xs.filter((x) => typeof x === 'number' && Number.isFinite(x)).sort((a, b) => a - b);
-  if (!s.length) return null;
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
 
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 const groupOf = (g) => (g === undefined || g === '' ? null : g);
 const pairOf = (f) => [f.path, f.group];
 const keyOf = (f) => JSON.stringify(pairOf(f));
 export const label = (f) => (f.group === null ? f.path : `${f.path} (${f.group})`);
+// A file as one line of --files: its path, then a tab and its group when it has one.
+export const lineOf = (f) => (f.group === null ? f.path : `${f.path}\t${f.group}`);
 
 // Path first, then group, null first: the one order every list here is written in.
 function byPath(a, b) {
@@ -57,6 +64,7 @@ function normalise(files) {
     const one = typeof f === 'string' ? { path: f, group: null } : { path: f?.path, group: groupOf(f?.group) };
     if (typeof one.path !== 'string' || !one.path) throw new PlanError(`a discovered file has no path: ${JSON.stringify(f)}`);
     if (one.group !== null && typeof one.group !== 'string') throw new PlanError(`${one.path} has a group that is not a name`);
+    if (one.path.includes('\t')) throw new PlanError(`a discovered path holds a tab: ${JSON.stringify(one.path)}`);
     const k = keyOf(one);
     if (seen.has(k)) throw new PlanError(`a file was discovered twice: ${label(one)}`);
     seen.add(k);
@@ -128,6 +136,7 @@ export function hashDiscovered(files) {
 // total alone. The same inputs, in any order, always give the same deal.
 export function deal({ files, history, parts, lane = null }) {
   if (!Number.isInteger(parts) || parts < 1) throw new PlanError(`parts is a whole number above 0, not ${parts}`);
+  if (Array.isArray(files) && !files.length) throw new PlanError(NONE_DISCOVERED);
   const { files: weighed, timed } = weigh({ files, history });
   const order = [...weighed].sort((a, b) => b.weight - a.weight || byPath(a, b));
   const totals = new Array(parts).fill(0);
@@ -149,7 +158,8 @@ export function deal({ files, history, parts, lane = null }) {
     with_history: list.filter((f) => f.known).length,
     serial: list.filter((f) => f.serial).length,
   }));
-  return { parts: out, timed, setup_ms: setup, hash: hashDeal(lists) };
+  const recorded = Object.keys(history?.files ?? {}).length;
+  return { parts: out, timed, setup_ms: setup, hash: hashDeal(lists), recorded, matched: weighed.filter((f) => f.known).length };
 }
 
 const minutes = (ms) => `${(ms / 60000).toFixed(1)} min`;
@@ -158,21 +168,23 @@ function heaviest(weighed) {
   return [...weighed].sort((a, b) => b.weight - a.weight || byPath(a, b))[0] ?? null;
 }
 
-// The smallest count whose slowest part is no longer than the figure it is held to; where no
-// count gets there, the smallest count at the lowest slowest part, which is where one file alone
-// sets it. `entries` come from the history itself.
+// The smallest count whose slowest part is no longer than the figure it is held to, counting
+// no higher than GitHub's matrix limit. Where no count gets there, the smallest count at the
+// lowest slowest part: where one file alone sets it (`alone`), or the limit (`capped`).
+// `entries` come from the history itself.
 function smallest({ entries, history, lane, against, addSetup }) {
   const { files: weighed } = weigh({ files: entries, history });
   const top = heaviest(weighed);
+  const most = Math.min(entries.length, MATRIX_LIMIT);
   let best = null;
-  for (let n = 1; n <= entries.length; n++) {
+  for (let n = 1; n <= most; n++) {
     const d = deal({ files: entries, history, parts: n, lane: addSetup ? lane : null });
     const slowest = Math.max(...d.parts.map((p) => p.predicted_ms));
-    if (slowest <= against) return { count: n, slowest_ms: slowest, alone: null, setup_ms: d.setup_ms };
+    if (slowest <= against) return { count: n, slowest_ms: slowest, alone: null, capped: false, setup_ms: d.setup_ms };
     if (!best || slowest < best.slowest_ms) best = { count: n, slowest_ms: slowest, setup_ms: d.setup_ms };
-    if (slowest <= Math.round(top.weight + (d.setup_ms ?? 0))) break; // one file alone sets it from here on
+    if (slowest <= Math.round(top.weight + (d.setup_ms ?? 0))) return { ...best, alone: label(top), capped: false };
   }
-  return { ...best, alone: label(top) };
+  return { ...best, alone: null, capped: true };
 }
 
 const historyEntries = (history, keep = () => true) => {
@@ -195,9 +207,13 @@ const historyEntries = (history, keep = () => true) => {
 //     jobs with read.mjs --job-prefix.
 //   count({ history, group, under })  one group's share count: the smallest count whose
 //     slowest share of that group's files is no longer than `under` ms.
-// With no history, one. Answers { count, slowest_ms, against_ms, against, setup_ms, alone, why }.
+// With no history, or no other job group to hold a lane to, one. A lane whose set-up alone is
+// not under its figure stays at one part (`setup_over`), since every part pays the whole set-up
+// and no split brings it under. No count is ever above MATRIX_LIMIT.
+// Answers { count, slowest_ms, against_ms, against, setup_ms, alone, capped, setup_over, why }.
 export function count({ history, lane = null, ignore = [], group, under } = {}) {
-  const one = (why, extra = {}) => ({ count: 1, slowest_ms: null, against_ms: null, against: null, setup_ms: null, alone: null, why, ...extra });
+  const one = (why, extra = {}) => ({ count: 1, slowest_ms: null, against_ms: null, against: null, setup_ms: null,
+    alone: null, capped: false, setup_over: false, why, ...extra });
   const byGroup = group !== undefined;
   if (byGroup && !(typeof under === 'number' && Number.isFinite(under) && under > 0)) throw new PlanError(`under is a time in ms above 0, not ${under}`);
   if (!byGroup && (typeof lane !== 'string' || !lane)) throw new PlanError('name a lane, or a group and under');
@@ -206,15 +222,21 @@ export function count({ history, lane = null, ignore = [], group, under } = {}) 
   if (!entries.length) return one(byGroup ? `no recorded file in group ${group}` : 'no recorded file');
   if (byGroup) {
     const r = smallest({ entries, history, lane: null, against: under, addSetup: false });
-    return { ...r, setup_ms: null, against_ms: under, against: null, why: null };
+    return { ...r, setup_ms: null, against_ms: under, against: null, setup_over: false, why: null };
   }
   const others = Object.entries(history.jobs ?? {})
     .filter(([g, j]) => g !== lane && !ignore.includes(g) && typeof j?.ms === 'number')
     .sort(([ga, a], [gb, b]) => b.ms - a.ms || (ga < gb ? -1 : 1));
   if (!others.length) return one(`no other job group to hold ${lane} to`);
   const [against, { ms: againstMs }] = others[0];
+  const setup = history.jobs?.[lane]?.setup_ms;
+  if (typeof setup === 'number' && setup >= againstMs) {
+    const d = deal({ files: entries, history, parts: 1, lane });
+    return { count: 1, slowest_ms: d.parts[0].predicted_ms, against_ms: againstMs, against, setup_ms: setup,
+      alone: null, capped: false, setup_over: true, why: null };
+  }
   const r = smallest({ entries, history, lane, against: againstMs, addSetup: true });
-  return { ...r, against_ms: againstMs, against, why: null };
+  return { ...r, against_ms: againstMs, against, setup_over: false, why: null };
 }
 
 function isHistory(doc) {
@@ -232,9 +254,10 @@ function walk(dir, out = []) {
 }
 
 // The history a part deals from: the file handed, or, in a folder at any depth, the history
-// file of the highest attempt not above `attempt` (the part's own GITHUB_RUN_ATTEMPT; with none,
-// the highest). Answers { history, file, hash }, the hash over the file's bytes.
-export function loadHistory(where, attempt = process.env.GITHUB_RUN_ATTEMPT) {
+// file of the highest attempt not above `attempt`, which the command line reads from the part's
+// own GITHUB_RUN_ATTEMPT. An attempt not given, or not a whole number above 0, caps nothing, and
+// the highest is taken. Answers { history, file, hash }, the hash over the file's bytes.
+export function loadHistory(where, attempt) {
   let stat;
   try { stat = fs.statSync(where); } catch { throw new PlanError(`no history at ${where}`); }
   const read = (file) => {
@@ -263,12 +286,13 @@ export function loadHistory(where, attempt = process.env.GITHUB_RUN_ATTEMPT) {
   return newest[0];
 }
 
-// The record's deal line for part i (spec-record.md): its files' paths, one per dealt file, the
-// hash of everything discovered and of the history file the deal was made from.
+// The record's deal line for part i (spec-record.md): its files, one per dealt file in the line
+// form of --files (its path, and a tab and its group when it has one), the hash of everything
+// discovered and of the history file the deal was made from.
 export function dealLine({ dealt, part, files, historyHash }) {
   return {
     type: 'deal', parts: dealt.parts.length, part,
-    files: dealt.parts[part - 1].files.map((f) => f.path),
+    files: dealt.parts[part - 1].files.map(lineOf),
     discovered: hashDiscovered(files), discovered_count: files.length, history: historyHash,
   };
 }
@@ -328,17 +352,22 @@ function parseArgs(argv) {
   return o;
 }
 
+export const RUN_NO_TEST = 'run no test';
+
 function printDeal(dealt) {
+  if (dealt.recorded > 0 && dealt.matched === 0) {
+    console.log(`::warning title=test-times plan::none of the ${dealt.parts.reduce((n, p) => n + p.files.length, 0)} discovered files matched any of the history's ${dealt.recorded} files, so every file weighs the same: --files paths are repository-relative with forward slashes, as the record writes them`);
+  }
   const slowest = dealt.timed ? Math.max(...dealt.parts.map((p) => p.predicted_ms)) : null;
   const n = dealt.parts.length;
   for (const p of dealt.parts) {
+    if (!p.files.length) { console.log(`part ${p.part}/${n}: ${RUN_NO_TEST}`); continue; }
     const files = `${p.files.length} file${p.files.length === 1 ? '' : 's'}`;
     let time;
     if (!dealt.timed) time = 'predicted time unknown: no file has a recorded time';
     else if (dealt.setup_ms === null) time = `${minutes(p.predicted_ms)} predicted, set-up unknown`;
     else time = `${minutes(p.predicted_ms)} predicted with ${minutes(dealt.setup_ms)} set-up`;
     let line = `part ${p.part}/${n}: ${files}, ${time}, ${p.with_history} with history`;
-    if (!p.files.length) line += ', dealt nothing';
     if (n > 1 && dealt.timed && p.files.length === 1 && p.predicted_ms === slowest) line += `; ${label(p.files[0])} alone sets the wait`;
     console.log(line);
   }
@@ -353,7 +382,7 @@ export function main(argv) {
     return 2;
   }
   try {
-    const h = loadHistory(o.history);
+    const h = loadHistory(o.history, process.env.GITHUB_RUN_ATTEMPT);
     console.log(describeHistory(h));
     if (o.count) {
       const c = count(o.group !== undefined
@@ -365,7 +394,9 @@ export function main(argv) {
         const set = o.group !== undefined ? '' : c.setup_ms === null ? ', set-up unknown' : ` with ${minutes(c.setup_ms)} set-up`;
         const fig = o.group !== undefined ? `the ${minutes(c.against_ms)} given` : `${c.against} ${minutes(c.against_ms)}`;
         console.log(`count ${c.count}: ${what} ${minutes(c.slowest_ms)}${set} against ${fig}`);
+        if (c.setup_over) console.log(`no count holds it under: the lane's set-up alone, ${minutes(c.setup_ms)}, is not under ${fig}, and every part pays it`);
         if (c.alone) console.log(`no count holds it under: ${c.alone} alone sets the wait`);
+        if (c.capped) console.log(`no count up to GitHub's ${MATRIX_LIMIT}-job matrix limit holds it under: the count stops at ${c.count}`);
       }
       if (process.env.GITHUB_OUTPUT) {
         const parts = Array.from({ length: c.count }, (_, i) => i + 1);
@@ -379,11 +410,10 @@ export function main(argv) {
     const dealt = deal({ files, history: h.history, parts: o.parts, lane: o.lane ?? null });
     printDeal(dealt);
     if (o.part) {
-      if (o.out) {
-        const paths = [...new Set(dealt.parts[o.part - 1].files.map((f) => f.path))];
-        fs.writeFileSync(o.out, paths.map((p) => `${p}\n`).join(''));
-      }
+      const mine = dealt.parts[o.part - 1].files;
+      if (o.out) fs.writeFileSync(o.out, mine.map((f) => `${lineOf(f)}\n`).join(''));
       if (o.deal) fs.writeFileSync(o.deal, JSON.stringify(dealLine({ dealt, part: o.part, files, historyHash: h.hash })) + '\n');
+      if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `run=${mine.length > 0}\nfiles=${mine.length}\n`);
     }
     return 0;
   } catch (err) {

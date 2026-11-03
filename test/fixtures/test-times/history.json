@@ -4,7 +4,7 @@
 "e2e/basket.spec.ts":[{"group":"chromium","ms":3000,"workers":2,"serial":false,"n":3},{"group":"firefox","ms":5000,"workers":2,"serial":false,"n":3},{"group":"webkit","ms":6000,"workers":2,"serial":false,"n":2}],
 "e2e/checkout.spec.ts":[{"group":"chromium","ms":7000,"workers":2,"serial":false,"n":3}],
 "e2e/search.spec.ts":[{"group":"chromium","ms":4000,"workers":2,"serial":false,"n":3}],
-"int/locks-a.int.ts":[{"group":"lock-order","ms":2400,"workers":1,"serial":true,"n":3}],
+"int/locks-a.int.ts":[{"group":"serial-locks","ms":2400,"workers":1,"serial":true,"n":3}],
 "test/alpha.test.mjs":[{"group":null,"ms":4000,"workers":4,"serial":false,"n":3}],
 "test/bravo.test.mjs":[{"group":null,"ms":12000,"workers":4,"serial":false,"n":3}],
 "test/charlie.test.mjs":[{"group":null,"ms":2000,"workers":4,"serial":false,"n":3}],
@@ -14,4 +14,4 @@
 "test/hotel.test.mjs":[{"group":null,"ms":16000,"workers":4,"serial":false,"n":3}],
 "test/india.test.mjs":[{"group":null,"ms":2400,"workers":4,"serial":false,"n":3}]
 },
-"jobs":{"CI Gate":{"ms":70000,"setup_ms":null,"n":3},"build-docs":{"ms":50000,"setup_ms":12000,"n":3},"lint":{"ms":45000,"setup_ms":10000,"n":3},"unit-tests":{"ms":420000,"setup_ms":30000,"n":3}}}
+"jobs":{"Merge Check":{"ms":70000,"setup_ms":null,"n":3},"build-docs":{"ms":50000,"setup_ms":12000,"n":3},"lint":{"ms":45000,"setup_ms":10000,"n":3},"unit-tests":{"ms":420000,"setup_ms":30000,"n":3}}}

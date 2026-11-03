@@ -61,16 +61,18 @@ export function nodeOptions(execArgv, cwd = process.cwd()) {
   return { file, touch, concurrency, isolation };
 }
 
-export default async function* nodeTestReporter(source) {
-  const cwd = process.cwd();
-  const opts = nodeOptions(process.execArgv, cwd);
+// The record of one run of Node's runner, from the events Node yields and the command line the
+// runner was started with: what that command line says (nodeOptions) is read here once, and the
+// Recorder is handed the isolation read, never reading the flag again. It yields nothing.
+export async function* recordRun(source, { execArgv, cwd }) {
+  const opts = nodeOptions(execArgv, cwd);
   if (!opts.file) {
     process.stderr.write('test-times: node-test-reporter.mjs was given no file destination, so it records nothing\n');
     for await (const _ of source) { /* drain */ }
     return;
   }
   markRunner();
-  const rec = new Recorder({ file: opts.file, runnerKind: 'node-test' });
+  const rec = new Recorder({ file: opts.file, runnerKind: 'node-test', isolation: opts.isolation });
   rec.start({ kindScope: opts.touch && opts.isolation !== 'none' ? 'file' : 'job' });
   const workers = opts.concurrency;
   const serial = workers === 1;
@@ -107,4 +109,9 @@ export default async function* nodeTestReporter(source) {
     if (!rec.fileTimes.has(Recorder.key(file, null))) rec.fileTime({ file, ms, workers, serial });
   }
   rec.finish({ complete: true, touchLines: readTouch(opts.touch ?? `${opts.file}.touch`, process.pid) });
+}
+
+// Node's entry: this process's own command line and folder.
+export default async function* nodeTestReporter(source) {
+  yield* recordRun(source, { execArgv: process.execArgv, cwd: process.cwd() });
 }

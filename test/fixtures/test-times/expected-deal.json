@@ -14,7 +14,7 @@
   {
    "part": 2,
    "files": [
-    ["int/locks-a.int.ts", "lock-order"],
+    ["int/locks-a.int.ts", "serial-locks"],
     ["test/echo.test.mjs", null],
     ["test/foxtrot.test.mjs", null],
     ["test/hotel.test.mjs", null]
@@ -27,7 +27,7 @@
    "files": [
     ["e2e/basket.spec.ts", "chromium"],
     ["e2e/basket.spec.ts", "firefox"],
-    ["int/locks-b.int.ts", "lock-order"],
+    ["int/locks-b.int.ts", "serial-locks"],
     ["test/alpha.test.mjs", null],
     ["test/bravo.test.mjs", null]
    ],
@@ -35,5 +35,5 @@
    "predicted_ms": 39950
   }
  ],
- "hash": "c944783e49a4a3977ae7af2c9787b936bd7a025017e841cb04eb994f5c0cf4a7"
+ "hash": "388374df491737caa36b7a2d969c93413e393d883965e57dabfc053fcb3c6866"
 }

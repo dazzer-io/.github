@@ -148,7 +148,8 @@ Around the job's tests, add three steps:
   - `runner.label` is `TEST_TIMES_LABEL` when the workflow sets it, else the runner image
     (`ImageOS`), because GitHub hands a job no `runs-on` label.
 - **finish.mjs** writes a record saying `the test runner never started` when none was written,
-  and prints the run file's name, `test-times-<TEST_TIMES_ID>`.
+  carrying a dealt part's deal line from `<TEST_TIMES_FILE>.deal` when one is there, and prints
+  the run file's name, `test-times-<TEST_TIMES_ID>`.
 - **A plan job** keeps its history file with
   `finish.mjs --kind history --file <file>`, which prints `test-times-history-<run attempt>`, and
   an upload named `Keep the history`.
@@ -195,7 +196,8 @@ them. With the variables unset, the command or config is exactly today's.
   `reporter: [...today, [`${dir}/playwright-reporter.mjs`, { file }]]`.
 
 A dealt part writes its deal line to `<file>.deal` before its runner starts, and the adapter
-copies it into the record.
+copies it into the record; where no runner wrote a record, finish.mjs copies it into the
+never-started one.
 
 ## Reading records: `read.mjs`
 
@@ -298,9 +300,12 @@ per line; a line with no tab, or an empty group, is a file of no group.
   - **placement:** each file onto the part with the least total so far, ties to the lower part;
   - **prediction:** each part's total plus the lane's `setup_ms` from `history.jobs[lane]`; with no
     `--lane`, or none recorded, the set-up is unknown;
-  - **every file exactly once:** the parts are checked against the discovered files, and a deal
-    that misses one, holds one twice or holds one never discovered is refused, exit 1:
-    `the deal does not hold every file exactly once: <file>`.
+  - **every file exactly once:** the placement puts each discovered file into exactly one part,
+    once a file discovered twice has been refused, so `deal` runs no check that could never
+    fire. `checkDeal(files, parts)` checks a deal a caller holds against the discovered files
+    and refuses one that misses a file, holds one twice or holds one never discovered:
+    `the deal does not hold every file exactly once: <file>`. The tests check every count's deal
+    with it.
 
   The same inputs, in any order, give the same deal, so every part computes the whole deal from
   the one history file and takes its own share.
@@ -318,29 +323,37 @@ per line; a line with no tab, or an empty group, is a file of no group.
   "discovered_count","history"}`, where `files` holds one line per dealt file, `discovered` is
   the SHA-256 of every discovered `[path, group]`, sorted, as JSON, and `history` the SHA-256 of
   the history file's bytes. A part passes `<record file>.deal` as `--deal`, and the adapter copies
-  the line into the record. With `$GITHUB_OUTPUT` set it also appends `run=true` or `run=false`
-  and `files=<n>`.
+  the line into the record, or finish.mjs does when the runner never started. With `$GITHUB_OUTPUT` set it also appends `run=true` or `run=false`
+  and `file_count=<n>`, the count of part i's files (the files themselves are in `--out`).
 - **A part dealt nothing runs no test.** It prints `part <i>/<n>: run no test`, its `--out` is
   empty, its deal line holds no file, and it writes `run=false`. Its workflow skips the runner on
   `run=false` and never hands it the empty list: `node --test`, vitest and Playwright given no
   file run every file they find. This happens when a branch deletes files the count was made for,
   so it is not refused.
+  - **Its record** is the never-started one finish.mjs writes, carrying that deal line with no
+    file. A reader counts the part as planned and run: its job succeeded and its record says
+    `the test runner never started`, so it ran no test (record.mjs `ranNoTest`), and its deal
+    line says it was dealt nothing.
 - **How many parts**, `--count --lane <job group> [--ignore <job group>]...`: the smallest count
   whose predicted slowest part, set-up included where it is recorded, is no longer than the
   longest median of the other job groups in `history.jobs`, leaving out the lane's own and those
   ignored. The lane's files are every file in the history, so the plan job limits them to the
-  lane's jobs with `read.mjs --job-prefix`. With no history, or no other group, one. A lane
-  whose set-up alone is not under the figure stays at one part, saying
-  `the lane's set-up alone, <x> min, is not under <group> <y> min, and every part pays it`,
-  because no split brings it under.
+  lane's jobs with `read.mjs --job-prefix`. With no history, or no other group, one.
 - **How many shares**, `--count --group <name> --under <ms>`: the smallest count whose slowest
   share of that group's recorded files is no longer than `--under`.
-- Where no count gets under its figure, the count stops at the smallest one at the lowest slowest
-  part, and says `<file> alone sets the wait`. No count is ever above 256, GitHub's limit on the
-  jobs one matrix makes; reaching it, the count stops at the lowest slowest part up to it, and
-  says so. The counts print the count and the slowest part
-  against the figure it was held to, and append `count=<n>` and `parts=[1,…,n]` to
-  `$GITHUB_OUTPUT` when that is set.
+- **Where no count gets under its figure,** one rule from recorded figures only decides, so 1 ms
+  of set-up either side of the figure never swings the count:
+  - the smallest count whose slowest part's own tests, the part less the lane's recorded
+    set-up, are no longer than the figure, saying
+    `the lane's set-up, <x> min, keeps it over <group> <y> min, and every part pays it: the count holds the slowest part's own tests, <z> min, under it`;
+  - failing that, the smallest count at which the heaviest file stands alone and sets the
+    wait, saying `<file> alone sets the wait`;
+  - never above 256, GitHub's limit on the jobs one matrix makes: reaching it with neither met,
+    the count stops at the smallest one at the lowest slowest part up to it, and says so.
+
+  A share count has no set-up, so for it the first of these never applies.
+- The counts print the count and the slowest part against the figure it was held to, and
+  append `count=<n>` and `parts=[1,…,n]` to `$GITHUB_OUTPUT` when that is set.
 - **Exit codes:** 0 dealt or counted; 1 refused, saying why; 2 `plan.mjs: <what is wrong>` for
   arguments it does not take.
 

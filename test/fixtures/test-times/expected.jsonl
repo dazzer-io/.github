@@ -1,0 +1,16 @@
+{"v":1,"type":"run","repo":null,"sha":null,"ref":null,"event":"local","run_id":null,"run_attempt":null,"job_key":null,"runner_name":null,"runner":{"os":null,"arch":null,"cores":null,"label":null},"runner_kind":"node-test","reference_ms":24.6,"kind_scope":"file","started_at":"2026-11-03T19:44:57.243Z","ended_at":"2026-11-03T19:44:57.377Z"}
+{"type":"deal","parts":2,"part":1,"files":["test/fixtures/test-times/fail.test.mjs"],"discovered":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","discovered_count":3,"history":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+{"type":"test","file":"test/fixtures/test-times/fail.test.mjs","name":"passes first","n":0,"ms":0.6,"status":"pass","retry":0}
+{"type":"test","file":"test/fixtures/test-times/fail.test.mjs","name":"fails on purpose","n":0,"ms":0.6,"status":"fail","retry":0}
+{"type":"file","file":"test/fixtures/test-times/fail.test.mjs","group":null,"blob":"9067b23713e20f1bb5f7db5292e00b10f9970516","ms":80.4,"workers":2,"serial":false,"kinds":[],"waits_ms":0}
+{"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"a suite > adds > one","n":0,"ms":0.4,"status":"pass","retry":0}
+{"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"one title","n":0,"ms":0,"status":"pass","retry":0}
+{"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"one title","n":1,"ms":0,"status":"pass","retry":0}
+{"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"skipped","n":0,"ms":0,"status":"skip","retry":0}
+{"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"later","n":0,"ms":0,"status":"todo","retry":0}
+{"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"starts a child","n":0,"ms":52.6,"status":"pass","retry":0}
+{"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"waits","n":0,"ms":5.9,"status":"pass","retry":0}
+{"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":null,"blob":"c39f2274f32dfa5a19607f0549e97412367d0a4e","ms":132.4,"workers":2,"serial":false,"kinds":["process"],"waits_ms":5}
+{"type":"test","file":"test/fixtures/test-times/socket.test.mjs","name":"talks to a local server","n":0,"ms":7.7,"status":"pass","retry":0}
+{"type":"file","file":"test/fixtures/test-times/socket.test.mjs","group":null,"blob":"856d0ae9d6b398ff16b8cb8dd4d332b72470d6e7","ms":80.3,"workers":2,"serial":false,"kinds":["local-service"],"waits_ms":0}
+{"type":"end","tests":10,"files":3,"complete":true,"why":null}

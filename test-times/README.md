@@ -70,7 +70,8 @@ name, result or record of any repository.
   the job, also wrote its exit line; one without makes it null. The runner's own process marks itself,
   and its lines are dropped. So under `node --test --test-isolation=none` (Node 22:
   `--experimental-test-isolation=none`), where the tests run in the runner's own process,
-  `waits_ms` is null: the tests' own waits never reach the record (record.mjs `testsInRunner`).
+  `waits_ms` is null: the tests' own waits never reach the record (record.mjs `testsInRunner`,
+  handed the isolation the Node adapter read from its command line).
   Their kinds are lost the same way: `kinds` there holds only what the processes the tests
   started were seen to touch, and reads as if it were whole.
 - **A file's `ms`:**
@@ -215,9 +216,10 @@ node read.mjs --repo <owner/name> --workflow <file> --event <push|pull_request> 
   - `attempt` is `GITHUB_RUN_ATTEMPT`, or 1 outside a workflow.
   - `files[path]` is a list with one entry per group the path was recorded under, ordered by
     group with null first: `{"group","ms","workers","serial","n"}`, where `ms` is the median
-    over the complete records of that file in that group, `workers` and `serial` come from its
-    newest record in that group, and `n` counts the records the median rests on. No single entry
-    is ever picked from several groups (spec-split.md, D12).
+    over the complete records of that file in that group, `workers` and `serial` come from the
+    newest of them, and `n` counts them. A record whose `ms` for the file is not a finite number
+    (JSON reads `1e400` as Infinity) is not one of them, and a path with none in a group has no
+    entry for it. No single entry is ever picked from several groups (spec-split.md, D12).
   - `jobs[group]` holds `ms` (the median of the group's longest job), `setup_ms` (the median of
     job time minus record span) and `n`.
   - `--job-prefix` limits which jobs feed `files`; `jobs` always holds every group.

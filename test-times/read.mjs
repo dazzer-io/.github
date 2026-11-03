@@ -22,7 +22,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { KEEP_STEP, groupTimes, jobGroups, jobOf, jobsOfRun, pairRecords, readRunFile } from './record.mjs';
+import { KEEP_STEP, groupTimes, jobGroups, jobOf, jobsOfRun, median, pairRecords, readRunFile } from './record.mjs';
 
 export { KEEP_STEP };
 const WINDOW = 10; // the release door's own window (dev-cycle scripts/door-time.mjs)
@@ -167,13 +167,6 @@ async function readRun(gh, o, run) {
   return { id: run.id, attempt: run.run_attempt ?? 1, sha: run.head_sha ?? null, jobs: pairRecords(jobs.map(jobOf), records) };
 }
 
-function median(xs) {
-  const s = [...xs].sort((a, b) => a - b);
-  if (!s.length) return null;
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
-
 const minutes = (ms) => (ms / 60000).toFixed(1);
 
 async function readWindow(o, want, keep) {
@@ -260,7 +253,9 @@ function historyFrom(o, perRun) {
         }
         if (o.jobPrefix && !j.name.startsWith(o.jobPrefix)) continue;
         for (const f of r.files) {
-          if (typeof f.ms !== 'number') continue;
+          // A line whose ms is no finite time (JSON reads 1e400 as Infinity) is no sample, so
+          // `n` counts exactly the times the median rests on and a file with none has no entry.
+          if (!Number.isFinite(f.ms)) continue;
           if (!files.has(f.file)) files.set(f.file, new Map());
           const byGroup = files.get(f.file);
           const g = f.group ?? null;

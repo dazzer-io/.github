@@ -309,6 +309,59 @@ test('--history holds one entry per group a path was recorded under, null first,
   }, show(r));
 });
 
+// acme-labs/rivet, served from routes built here: one run whose two unit legs each left a
+// complete record. Two of their file lines hold `"ms":1e400`, a number JSON reads as Infinity,
+// so no time: test/a.test.mjs has one such line beside a 40-second one, test/b.test.mjs only
+// the one. A median that counts it, or a median of nothing written as 0, makes a weight up.
+test('--history weighs a file only by the times its records hold, never by a number that is no time', async () => {
+  const repo = 'acme-labs/rivet';
+  const keep = [{ name: 'Keep the test times', status: 'completed', conclusion: 'success', number: 2 }];
+  const job = (id, runner) => ({ id, run_id: 8301, run_attempt: 1, name: 'unit', status: 'completed', conclusion: 'success',
+    started_at: '2026-10-04T08:00:00Z', completed_at: '2026-10-04T08:05:00Z', runner_name: runner, steps: keep });
+  const record = (runner, files) => [
+    { v: 1, type: 'run', repo, sha: 'f830000000000000000000000000000000000000', ref: 'refs/heads/main', event: 'push',
+      run_id: 8301, run_attempt: 1, job_key: 'unit', runner_name: runner,
+      runner: { os: 'Linux', arch: 'X64', cores: 4, label: 'ubuntu24' }, runner_kind: 'node-test', reference_ms: 140.2,
+      kind_scope: 'job', started_at: '2026-10-04T08:01:00.000Z', ended_at: '2026-10-04T08:04:00.000Z' },
+    ...files.map(([file, ms]) => ({ type: 'file', file, group: null, blob: 'd830000000000000000000000000000000000000',
+      ms: ms ?? 'NO TIME', workers: 2, serial: false, kinds: [], waits_ms: 0 })),
+    { type: 'end', tests: 0, files: files.length, complete: true, why: null },
+  ].map((l) => JSON.stringify(l).replace('"ms":"NO TIME"', '"ms":1e400')).join('\n') + '\n';
+  const routes = {
+    [`/repos/${repo}/actions/workflows/checks.yml/runs`]: {
+      query: { status: 'completed', event: 'push', branch: 'main' },
+      body: { total_count: 1, workflow_runs: [{ id: 8301, name: 'Checks', run_attempt: 1, status: 'completed',
+        conclusion: 'success', event: 'push', head_branch: 'main', head_sha: 'f830000000000000000000000000000000000000',
+        created_at: '2026-10-04T08:00:00Z', run_started_at: '2026-10-04T08:00:00Z', updated_at: '2026-10-04T08:05:00Z' }] },
+    },
+    [`/repos/${repo}/actions/runs/8301/jobs`]: { query: { filter: 'all' },
+      body: { total_count: 2, jobs: [job(7301, 'gh-ru-1'), job(7302, 'gh-ru-2')] } },
+    [`/repos/${repo}/actions/runs/8301/artifacts`]: { body: { total_count: 2, artifacts: [
+      { id: 9301, name: 'test-times-unit-1-gh-ru-1-1791100860000', size_in_bytes: 1000, expired: false, workflow_run: { id: 8301 } },
+      { id: 9302, name: 'test-times-unit-1-gh-ru-2-1791100860000', size_in_bytes: 1000, expired: false, workflow_run: { id: 8301 } },
+    ] } },
+    [`/repos/${repo}/actions/artifacts/9301/zip`]: { status: 302, location: '/storage/9301' },
+    [`/repos/${repo}/actions/artifacts/9302/zip`]: { status: 302, location: '/storage/9302' },
+    '/storage/9301': { zip: [{ name: 'test-times.jsonl', method: 'deflate',
+      text: record('gh-ru-1', [['test/a.test.mjs', 40000], ['test/b.test.mjs', null]]) }] },
+    '/storage/9302': { zip: [{ name: 'test-times.jsonl', method: 'deflate',
+      text: record('gh-ru-2', [['test/a.test.mjs', null]]) }] },
+  };
+  for (const k of Object.keys(routes)) assert.equal(ANSWERS.routes[k], undefined, `${k} is built here, not stored`);
+  Object.assign(ANSWERS.routes, routes);
+  try {
+    const out = outFile();
+    const r = await read(['--repo', repo, ...BASE, '--history', '--out', out]);
+    assert.equal(r.code, 0, show(r));
+    const h = JSON.parse(fs.readFileSync(out, 'utf8'));
+    assert.deepEqual(h.files, {
+      'test/a.test.mjs': [{ group: null, ms: 40000, workers: 2, serial: false, n: 1 }],
+    }, `the history's weights are not the records' times, a line with no time being no sample:\n${fs.readFileSync(out, 'utf8')}`);
+  } finally {
+    for (const k of Object.keys(routes)) delete ANSWERS.routes[k];
+  }
+});
+
 // acme-labs/bolt: its one run file's download breaks off partway through the body.
 test('a run file whose download breaks off is a read that could not be made', async () => {
   const r = await read(['--repo', 'acme-labs/bolt', ...BASE, '--require-complete']);

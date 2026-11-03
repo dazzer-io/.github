@@ -25,7 +25,7 @@ import {
   NEVER_STARTED, Recorder, compareRecords, gitBlob, parseRecord, readRunFile, unzip,
 } from '../test-times/record.mjs';
 import { connectKind, isLoopback, outOf } from '../test-times/touch.mjs';
-import { nodeOptions } from '../test-times/node-test-reporter.mjs';
+import { nodeOptions, recordRun } from '../test-times/node-test-reporter.mjs';
 import VitestTestTimes from '../test-times/vitest-reporter.mjs';
 import PlaywrightTestTimes from '../test-times/playwright-reporter.mjs';
 
@@ -604,4 +604,33 @@ test('a Recorder for node --test with no isolation records the job\'s waits as u
     'with process isolation the job\'s waits stay known');
   assert.deepEqual(waitsOf({ isolation: 'process', execArgv: ['--test', '--test-isolation', 'none'] }), [0],
     'the isolation its adapter read is the one that counts');
+});
+
+// The Node adapter reads its command line once (nodeOptions) and hands the Recorder the
+// isolation it read. Driven here with a command line of its own, never this process's, it must
+// record the waits its own isolation says. One of its two isolations differs from this
+// process's own flags, however this suite is run, so a Recorder that read them would be caught.
+test('the Node adapter hands the Recorder the isolation it read, and the record\'s waits follow it', async () => {
+  const pass = path.join(FIX, 'pass.test.mjs');
+  const waitsUnder = async (isolation) => {
+    const dir = tmp();
+    const file = path.join(dir, 'test-times.jsonl');
+    fs.writeFileSync(`${file}.touch`, `${JSON.stringify({ pid: 41, ppid: process.pid, file: null, kinds: [], waits_ms: 0 })}\n`);
+    const execArgv = ['--test', ...isolation, '--test-concurrency=2',
+      `--test-reporter=${path.join(DIR, 'node-test-reporter.mjs')}`, `--test-reporter-destination=${file}`];
+    async function* events() {
+      yield { type: 'test:start', data: { file: pass, name: 'one', nesting: 0 } };
+      yield { type: 'test:pass', data: { file: pass, name: 'one', nesting: 0, details: { duration_ms: 1 } } };
+    }
+    for await (const _ of recordRun(events(), { execArgv, cwd: dir })) { /* it yields nothing */ }
+    const rec = parseRecord(fs.readFileSync(file, 'utf8'));
+    assert.equal(rec.complete, true, rec.why);
+    return rec.files.map((f) => f.waits_ms);
+  };
+  for (const isolation of [['--test-isolation', 'none'], ['--experimental-test-isolation=none']]) {
+    assert.deepEqual(await waitsUnder(isolation), [null],
+      `${MISMATCH}: the reporter read ${isolation.join(' ')}, so the tests ran in the runner's own process and the job's waits are unknown, whatever this process's own flags say`);
+  }
+  assert.deepEqual(await waitsUnder(['--test-isolation=process']), [0],
+    `${MISMATCH}: the reporter read process isolation, so the job's waits stay known, whatever this process's own flags say`);
 });

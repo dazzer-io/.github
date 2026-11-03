@@ -11,11 +11,17 @@
 //
 // Kinds are per file (kind_scope "file"): Node starts one child per test file and forwards its
 // `--import` to each, so the touch line of a child whose parent is this process names its file.
+//
+// A file that fails as a file (it throws on import, its process crashes, or it exits non-zero
+// after its tests) is the one top-level failure Node names after the file itself; a file whose
+// tests failed is not. Its record gets a failing test line named FILE_ITSELF (record.mjs),
+// with the file's own time, so the end line's count holds it.
 
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Recorder, markRunner, readTouch } from './record.mjs';
+import { decodeOut } from './touch.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 
@@ -42,7 +48,7 @@ export function nodeOptions(execArgv, cwd = process.cwd()) {
       const v = value();
       if (/touch\.mjs\?/.test(v)) {
         const q = /[?&]out=([^&]*)/.exec(v.slice(v.indexOf('?')));
-        if (q) touch = decodeURIComponent(q[1]);
+        if (q) touch = decodeOut(q[1]);
       }
     }
   }
@@ -80,7 +86,13 @@ export default async function* nodeTestReporter(source) {
       s[d.nesting] = d.name;
       stacks.set(d.file, s);
     } else if (ev.type === 'test:pass' || ev.type === 'test:fail') {
-      if (d.details?.type === 'suite' || fileItself(d)) continue;
+      if (fileItself(d)) {
+        if (ev.type === 'test:fail' && d.details?.error?.failureType !== 'subtestsFailed') {
+          rec.fileFailed({ file: d.file, ms: d.details?.duration_ms });
+        }
+        continue;
+      }
+      if (d.details?.type === 'suite') continue;
       const s = stacks.get(d.file) ?? [];
       const name = [...s.slice(0, d.nesting), d.name].join(' > ');
       const status = d.todo ? 'todo' : ev.type === 'test:fail' ? 'fail' : d.skip ? 'skip' : 'pass';

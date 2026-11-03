@@ -11,6 +11,14 @@
 // A file's ms is the sum of its test results' durations in its project, retries included:
 // Playwright reports no file time of its own, and its tests' durations include their hooks.
 // A file run in two projects has a file line for each, its group the project's name.
+//
+// workers is the project's own workers where it sets them, else the config's. fullyParallel is
+// not read: it says whether one file's tests may spread over several workers, while files run
+// side by side up to the workers count under either setting.
+//
+// A spec that fails to load is reported through onError with its location, before or after
+// onBegin, and runs no test. Its record gets a failing test line named FILE_ITSELF
+// (record.mjs), with no time and no project.
 
 import { Recorder, markRunner } from './record.mjs';
 
@@ -33,6 +41,7 @@ export default class PlaywrightTestTimes {
     this.file = options.file ?? null;
     this.rec = null;
     this.files = new Map();
+    this.failed = [];
   }
 
   printsToStdio() {
@@ -45,9 +54,20 @@ export default class PlaywrightTestTimes {
       return;
     }
     this.config = config;
+    this.begin();
+  }
+
+  begin() {
+    if (this.rec || this.done) return;
     markRunner();
     this.rec = new Recorder({ file: this.file, runnerKind: 'playwright' });
     this.rec.start({ kindScope: 'runner' });
+  }
+
+  // A spec that failed to load: its file, from the error's location.
+  onError(error) {
+    const file = error?.location?.file;
+    if (this.file && file && !this.failed.includes(file)) this.failed.push(file);
   }
 
   onTestEnd(test, result) {
@@ -64,7 +84,10 @@ export default class PlaywrightTestTimes {
   }
 
   onEnd(result) {
+    if (!this.file) return;
+    this.begin(); // a run that ended in load errors may never have begun
     if (!this.rec) return;
+    for (const file of this.failed) this.rec.fileFailed({ file });
     for (const f of this.files.values()) {
       // How many files the project ran side by side: its own workers where it sets them, else
       // the config's, as the run resolved them.
@@ -79,5 +102,6 @@ export default class PlaywrightTestTimes {
       why: complete ? null : s === 'timedout' ? 'the run timed out' : `the run was ${s ?? 'stopped'}`,
     });
     this.rec = null;
+    this.done = true;
   }
 }

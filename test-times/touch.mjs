@@ -23,9 +23,17 @@ import timersPromises from 'node:timers/promises';
 const MARK = Symbol.for('dazzer.test-times.touch'); // record.mjs TOUCH_MARK
 const ORDER = ['process', 'local-service', 'network'];
 
+// The output path as written in the import address. Each well-formed %XX run is decoded; a
+// raw % that starts none is kept as it is, so no path makes the preload or a reporter throw.
+export function decodeOut(s) {
+  return String(s).replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => {
+    try { return decodeURIComponent(run); } catch { return run; }
+  });
+}
+
 export function outOf(url) {
   const m = /[?&]out=([^&]*)/.exec(new URL(url).search);
-  return m ? decodeURIComponent(m[1]) : null;
+  return m ? decodeOut(m[1]) : null;
 }
 
 export function isLoopback(host) {
@@ -66,16 +74,21 @@ function delayOf(d) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-// Whether the call into `fn` came straight from Node's own internals, such as the test
-// harness's keep-alive interval on its way out (node:internal/test_runner/harness): those are
-// the runner's, never the file's.
-function fromNode(fn) {
+// Whether the call into `fn` came from someone else's code: straight from Node's own
+// internals, such as the test harness's keep-alive interval on its way out
+// (node:internal/test_runner/harness), or from code under node_modules, such as vitest's own
+// test and hook timeouts. Those are the runner's, never the file's.
+export function notOwnCaller(frame) {
+  return /^\s*at (?:.*\()?node:/.test(frame) || /[\\/]node_modules[\\/]/.test(frame);
+}
+
+function fromElsewhere(fn) {
   const limit = Error.stackTraceLimit;
   Error.stackTraceLimit = 1;
   const o = {};
   Error.captureStackTrace(o, fn);
   Error.stackTraceLimit = limit;
-  return /^\s*at (?:.*\()?node:/m.test(String(o.stack).split('\n')[1] ?? '');
+  return notOwnCaller(String(o.stack).split('\n')[1] ?? '');
 }
 
 function wrap(orig, before) {
@@ -97,7 +110,20 @@ function install(out) {
   const state = { runner: false, kinds: new Set(), waits: 0, unplaced: 0, written: false };
   globalThis[MARK] = state;
 
-  const started = () => state.kinds.add('process');
+  const append = (line) => {
+    let text = JSON.stringify(line) + '\n';
+    if (Buffer.byteLength(text) >= 4000) text = JSON.stringify({ ...line, file: null }) + '\n';
+    try { fs.appendFileSync(out, text); } catch { /* a lost line leaves the file's kinds empty */ }
+  };
+  const head = () => ({ pid: process.pid, ppid: process.ppid, file: process.argv[1] ? path.resolve(process.argv[1]) : null });
+  state.markRunner = () => append({ pid: process.pid, ppid: process.ppid, runner: true });
+  const seen = (k) => {
+    if (state.kinds.has(k)) return;
+    state.kinds.add(k);
+    if (!state.runner) append({ ...head(), kinds: [k], waits_ms: null });
+  };
+
+  const started = () => seen('process');
   for (const name of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork']) {
     if (typeof cp[name] === 'function') cp[name] = wrap(cp[name], started);
   }
@@ -109,20 +135,20 @@ function install(out) {
   net.Socket.prototype.connect = function (...args) {
     try {
       const k = connectKind(args);
-      if (k) state.kinds.add(k);
+      if (k) seen(k);
       else {
         state.unplaced++;
         this.once('lookup', (err, address) => {
           state.unplaced--;
-          state.kinds.add(!err && isLoopback(address) ? 'local-service' : 'network');
+          seen(!err && isLoopback(address) ? 'local-service' : 'network');
         });
       }
     } catch { /* watching never changes what the call does */ }
     return Reflect.apply(connect, this, args);
   };
 
-  const waited = (args, w) => { if (!fromNode(w)) state.waits += delayOf(args[1]); };
-  const waitedFirst = (args, w) => { if (!fromNode(w)) state.waits += delayOf(args[0]); };
+  const waited = (args, w) => { if (!fromElsewhere(w)) state.waits += delayOf(args[1]); };
+  const waitedFirst = (args, w) => { if (!fromElsewhere(w)) state.waits += delayOf(args[0]); };
   const setTimeoutW = wrap(timers.setTimeout, waited);
   const setIntervalW = wrap(timers.setInterval, waited);
   timers.setTimeout = setTimeoutW;
@@ -137,27 +163,14 @@ function install(out) {
   }
   syncBuiltinESMExports();
 
-  const report = () => {
+  // At exit, the waits total, with every kind seen. No signal listener: a process killed by a
+  // signal dies as it would have, having already said its kinds.
+  process.on('exit', () => {
     if (state.written) return;
     state.written = true;
     if (state.runner) return; // the runner's own process reports nothing for itself
     if (state.unplaced > 0) state.kinds.add('network');
-    const line = {
-      pid: process.pid, ppid: process.ppid,
-      file: process.argv[1] ? path.resolve(process.argv[1]) : null,
-      kinds: ORDER.filter((k) => state.kinds.has(k)),
-      waits_ms: Math.round(state.waits * 10) / 10,
-    };
-    let text = JSON.stringify(line) + '\n';
-    if (Buffer.byteLength(text) >= 4000) text = JSON.stringify({ ...line, file: null }) + '\n';
-    try { fs.appendFileSync(out, text); } catch { /* a lost line leaves the file's kinds empty */ }
-  };
-  process.on('exit', report);
-  // A pool that ends its workers with SIGTERM gives no exit event: write, then let the signal
-  // do what it would have done.
-  process.once('SIGTERM', () => {
-    report();
-    if (process.listenerCount('SIGTERM') === 0) process.kill(process.pid, 'SIGTERM');
+    append({ ...head(), kinds: ORDER.filter((k) => state.kinds.has(k)), waits_ms: Math.round(state.waits * 10) / 10 });
   });
 }
 

@@ -1,5 +1,5 @@
 {
- "note": "A stored Playwright run for test/test-times-record.test.mjs, in the objects Playwright's reporter interface documents (onBegin with a FullConfig, onTestEnd with a TestCase and TestResult, onEnd with a FullResult). The test builds each TestCase's parent suites (type describe, file, project) and their project() from these fields. File paths are this folder's real fixture files, so their blobs are real. One file runs in two projects, so it has a file line for each.",
+ "note": "A stored Playwright run for test/test-times-record.test.mjs, in the objects Playwright's reporter interface documents (onBegin with a FullConfig, onTestEnd with a TestCase and TestResult, onEnd with a FullResult). The test builds each TestCase's parent suites (type describe, file, project) and their project() from these fields. File paths are this folder's real fixture files, so their blobs are real. One file runs in two projects, so it has a file line for each. socket.test.mjs stands for a spec that failed to load: Playwright reports it through onError with its location and runs no test of it, so the record holds a failing test line for the file itself, with no time and no project.",
  "options": {},
  "config": { "workers": 3 },
  "projects": {
@@ -15,6 +15,7 @@
   ["onTestEnd", { "file": "test/fixtures/test-times/pass.test.mjs", "project": "webkit", "describes": ["a suite"], "title": "adds > one", "annotations": [], "result": { "status": "passed", "duration": 1800, "retry": 0 } }],
   ["onTestEnd", { "file": "test/fixtures/test-times/fail.test.mjs", "project": "chromium", "describes": [], "title": "times out", "annotations": [], "result": { "status": "timedOut", "duration": 30000, "retry": 0 } }],
   ["onTestEnd", { "file": "test/fixtures/test-times/fail.test.mjs", "project": "chromium", "describes": [], "title": "skipped here", "annotations": [{ "type": "skip" }], "result": { "status": "skipped", "duration": 0, "retry": 0 } }],
+  ["onError", { "message": "SyntaxError: Unexpected token", "location": { "file": "test/fixtures/test-times/socket.test.mjs", "line": 3, "column": 1 } }],
   ["onEnd", { "status": "failed" }]
  ],
  "expected": [
@@ -26,9 +27,11 @@
   {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"flaky","n":0,"ms":3000,"status":"fail","retry":0},
   {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"flaky","n":1,"ms":2500,"status":"pass","retry":1},
   {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"not yet","n":0,"ms":0,"status":"todo","retry":0},
-  {"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":"chromium","blob":"27181ef24a95d0e7fa9015669ff6e10b81c7da6c","ms":6700,"workers":3,"serial":false,"kinds":["browser"],"waits_ms":null},
+  {"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":"chromium","blob":"c39f2274f32dfa5a19607f0549e97412367d0a4e","ms":6700,"workers":3,"serial":false,"kinds":["browser"],"waits_ms":null},
   {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"a suite > adds > one","n":1,"ms":1800,"status":"pass","retry":0},
-  {"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":"webkit","blob":"27181ef24a95d0e7fa9015669ff6e10b81c7da6c","ms":1800,"workers":1,"serial":true,"kinds":["browser"],"waits_ms":null},
-  {"type":"end","tests":7,"files":3,"complete":true,"why":null}
+  {"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":"webkit","blob":"c39f2274f32dfa5a19607f0549e97412367d0a4e","ms":1800,"workers":1,"serial":true,"kinds":["browser"],"waits_ms":null},
+  {"type":"test","file":"test/fixtures/test-times/socket.test.mjs","name":"(the file itself)","n":0,"ms":null,"status":"fail","retry":0},
+  {"type":"file","file":"test/fixtures/test-times/socket.test.mjs","group":null,"blob":"856d0ae9d6b398ff16b8cb8dd4d332b72470d6e7","ms":null,"workers":null,"serial":null,"kinds":["browser"],"waits_ms":null},
+  {"type":"end","tests":8,"files":4,"complete":true,"why":null}
  ]
 }

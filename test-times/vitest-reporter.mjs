@@ -11,6 +11,10 @@
 // Kinds are per job (kind_scope "job"): vitest's pool processes each run several files, so
 // every file line carries the union of what the job's processes were seen to do, and its
 // waits_ms the job's sum.
+//
+// A module that failed to collect, or failed outside its tests, reports its errors on the
+// module (TestModule.errors()). Its record gets a failing test line named FILE_ITSELF
+// (record.mjs), with the module's own time. A test with no duration is recorded with ms null.
 
 import { Recorder, markRunner, readTouch } from './record.mjs';
 
@@ -68,7 +72,7 @@ export default class VitestTestTimes {
       file: testCase.module.moduleId,
       group: groupOf(testCase.project),
       name: titlePath(testCase),
-      ms: d?.duration ?? 0,
+      ms: d?.duration ?? null,
       status: status(testCase),
       retry: d?.retryCount ?? 0,
     });
@@ -77,13 +81,12 @@ export default class VitestTestTimes {
   onTestModuleEnd(testModule) {
     if (!this.rec) return;
     const workers = workersOf(testModule.project?.config);
-    this.rec.fileTime({
-      file: testModule.moduleId,
-      group: groupOf(testModule.project),
-      ms: moduleMs(testModule.diagnostic?.()),
-      workers,
-      serial: workers === 1,
-    });
+    const group = groupOf(testModule.project);
+    const ms = moduleMs(testModule.diagnostic?.());
+    let errors = [];
+    try { errors = testModule.errors?.() ?? []; } catch { /* a module that cannot say has none */ }
+    if (errors.length) this.rec.fileFailed({ file: testModule.moduleId, group, ms });
+    this.rec.fileTime({ file: testModule.moduleId, group, ms, workers, serial: workers === 1 });
   }
 
   onTestRunEnd(_testModules, _unhandledErrors, reason) {

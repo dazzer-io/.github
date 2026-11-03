@@ -60,6 +60,12 @@ before(async () => {
     if (!route) return send(404, { message: 'Not Found' });
     if (url.pathname.startsWith('/storage/')) {
       if (req.headers.authorization) return send(400, { message: 'storage refuses a token' });
+      if (route.cut) {
+        res.writeHead(200, { 'content-type': 'application/zip', 'content-length': '4096' });
+        res.write(Buffer.alloc(64));
+        setTimeout(() => res.destroy(), 50);
+        return undefined;
+      }
       if (route.bytes_base64) return send(200, Buffer.from(route.bytes_base64, 'base64'), 'application/zip');
       return send(200, zipOf(route.zip), 'application/zip');
     }
@@ -83,12 +89,22 @@ before(async () => {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
 });
-after(() => new Promise((resolve) => server.close(resolve)));
+const made = [];
+after(() => {
+  for (const d of made) fs.rmSync(d, { recursive: true, force: true });
+  return new Promise((resolve) => server.close(resolve));
+});
+function outFile() {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'test-times-read-'));
+  made.push(d);
+  return path.join(d, 'history.json');
+}
 
+// Only what a process needs to start, never this process's own environment.
+const KEEP_ENV = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'SystemRoot', 'SYSTEMROOT', 'USERPROFILE'];
 function read(args, env = {}) {
-  const e = { ...process.env };
-  for (const k of Object.keys(e)) if (k.startsWith('GITHUB_') || k.startsWith('GH_') || k.startsWith('TEST_TIMES_')) delete e[k];
-  delete e.NODE_TEST_CONTEXT;
+  const e = {};
+  for (const k of KEEP_ENV) if (process.env[k] !== undefined) e[k] = process.env[k];
   return new Promise((resolve) => {
     execFile(process.execPath, [READ, ...args], {
       env: { ...e, GITHUB_API_URL: base, GITHUB_TOKEN: 'stand-in-token', ...env }, encoding: 'utf8', timeout: 30000,
@@ -129,7 +145,7 @@ test('--require-complete reads only as many runs as --runs says', async () => {
 });
 
 test('--history writes the file a planner deals from, with medians over the successful runs', async () => {
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'test-times-read-')), 'history.json');
+  const out = outFile();
   const r = await read(['--repo', 'acme-labs/widget', ...BASE, '--history', '--out', out], { GITHUB_RUN_ATTEMPT: '3' });
   assert.equal(r.code, 0, show(r));
   assert.match(r.stdout, /^history: 4 files and 4 job groups from 2 runs/m);
@@ -142,10 +158,10 @@ test('--history writes the file a planner deals from, with medians over the succ
     runs: [{ id: 3003, attempt: 2, sha: 'e300000000000000000000000000000000000000' },
       { id: 3002, attempt: 1, sha: 'e200000000000000000000000000000000000000' }],
     files: {
-      'test/alpha.test.mjs': { ms: 33000, workers: 2, serial: false, group: null, n: 2 },
-      'test/beta.test.mjs': { ms: 53000, workers: 2, serial: false, group: null, n: 2 },
-      'test/db/store.test.mjs': { ms: 200000, workers: 2, serial: false, group: null, n: 2 },
-      'test/gamma.test.mjs': { ms: 42000, workers: 2, serial: false, group: null, n: 2 },
+      'test/alpha.test.mjs': [{ group: null, ms: 33000, workers: 2, serial: false, n: 2 }],
+      'test/beta.test.mjs': [{ group: null, ms: 53000, workers: 2, serial: false, n: 2 }],
+      'test/db/store.test.mjs': [{ group: null, ms: 200000, workers: 2, serial: false, n: 2 }],
+      'test/gamma.test.mjs': [{ group: null, ms: 42000, workers: 2, serial: false, n: 2 }],
     },
     jobs: {
       // db's time in run 3003 is its newest attempt's (5 min); its set-up is from the
@@ -159,7 +175,7 @@ test('--history writes the file a planner deals from, with medians over the succ
 });
 
 test('--history --job-prefix feeds files only from the jobs it names, and still holds every group', async () => {
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'test-times-read-')), 'history.json');
+  const out = outFile();
   const r = await read(['--repo', 'acme-labs/widget', ...BASE, '--history', '--out', out, '--job-prefix', 'unit']);
   assert.equal(r.code, 0, show(r));
   const h = JSON.parse(fs.readFileSync(out, 'utf8'));
@@ -174,14 +190,14 @@ test('a refused read exits 2 with could not read, and never passes', async () =>
     assert.equal(r.code, 2, show(r));
     assert.equal(r.stdout, 'could not read: GET /repos/acme-labs/sprocket/actions/runs/5001/jobs answered 403\n', show(r));
   }
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'test-times-read-')), 'history.json');
+  const out = outFile();
   const h = await read(['--repo', 'acme-labs/sprocket', ...BASE, '--history', '--out', out]);
   assert.equal(h.code, 2, show(h));
   assert.equal(fs.existsSync(out), false, 'without --allow-none a refused read writes no history file');
 });
 
 test('--history --allow-none still writes its file, saying none and why, and warns by name', async () => {
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'test-times-read-')), 'history.json');
+  const out = outFile();
   const r = await read(['--repo', 'acme-labs/sprocket', ...BASE, '--history', '--allow-none', '--out', out], { GITHUB_RUN_ATTEMPT: '2' });
   assert.equal(r.code, 0, show(r));
   const why = 'could not read: GET /repos/acme-labs/sprocket/actions/runs/5001/jobs answered 403';
@@ -244,4 +260,104 @@ test('the arguments it does not take are refused before any read', async () => {
     assert.equal(r.code, 2, show(r));
     assert.match(r.stdout, words, show(r));
   }
+});
+
+// acme-labs/gizmo: one run whose matrix legs share the name "unit". gh-zu-1 left a complete
+// record and ran 4 minutes; gh-zu-2 started first, ran 6 minutes and left a record with no end.
+test('matrix legs that share a name are separate jobs: an incomplete leg fails --require-complete', async () => {
+  const r = await read(['--repo', 'acme-labs/gizmo', ...BASE, '--require-complete']);
+  assert.equal(r.code, 1, show(r));
+  assert.deepEqual(r.stdout.trim().split('\n'), [
+    'unit: incomplete: unit on gh-zu-2: no end line: the runner stopped partway',
+    'no complete test-time record: unit',
+  ], show(r));
+});
+
+test('a group\'s time in a run is its longest job\'s, whatever its legs are named', async () => {
+  const r = await read(['--repo', 'acme-labs/gizmo', ...BASE, '--slowest', 'unit']);
+  assert.equal(r.code, 0, show(r));
+  assert.deepEqual(r.stdout.trim().split('\n'), [
+    'unit: 6.0 min over 1 runs', 'lint: 5.0 min over 1 runs', 'unit sets the wait: 6.0 min',
+  ], show(r));
+});
+
+test('--history holds one entry per group a path was recorded under, null first, and no single pick', async () => {
+  const out = outFile();
+  const r = await read(['--repo', 'acme-labs/gizmo', ...BASE, '--history', '--out', out]);
+  assert.equal(r.code, 0, show(r));
+  const h = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.deepEqual(h.files, {
+    'test/ui.spec.mjs': [
+      { group: null, ms: 20000, workers: 2, serial: false, n: 1 },
+      { group: 'chromium', ms: 30000, workers: 2, serial: false, n: 1 },
+      { group: 'webkit', ms: 50000, workers: 1, serial: true, n: 1 },
+    ],
+  }, show(r));
+  assert.deepEqual(h.jobs, {
+    lint: { ms: 300000, setup_ms: null, n: 1 },
+    // the longest leg's 6 minutes; set-up only from the leg that left a complete record
+    unit: { ms: 360000, setup_ms: 80000, n: 1 },
+  }, show(r));
+});
+
+// acme-labs/bolt: its one run file's download breaks off partway through the body.
+test('a run file whose download breaks off is a read that could not be made', async () => {
+  const r = await read(['--repo', 'acme-labs/bolt', ...BASE, '--require-complete']);
+  assert.equal(r.code, 2, show(r));
+  assert.match(r.stdout, /^could not read: the run file behind \/repos\/acme-labs\/bolt\/actions\/artifacts\/9201\/zip broke off: \S+$/m, show(r));
+  assert.equal(r.stdout.trim().split('\n').length, 1, show(r));
+});
+
+test('--history --allow-none never exits 2: any read error writes none with why, and warns', async () => {
+  for (const [repo, words] of [
+    ['acme-labs/bolt', /^could not read: the run file behind \/repos\/acme-labs\/bolt\/actions\/artifacts\/9201\/zip broke off: \S+$/],
+    ['acme-labs/nut', /^could not read: run file test-times-unit-1-gh-nu-1791021600000 expired$/],
+  ]) {
+    const out = outFile();
+    const r = await read(['--repo', repo, ...BASE, '--history', '--allow-none', '--out', out]);
+    assert.equal(r.code, 0, show(r));
+    const h = JSON.parse(fs.readFileSync(out, 'utf8'));
+    assert.equal(h.source, 'none', show(r));
+    assert.match(h.why, words, show(r));
+    assert.match(r.stdout, new RegExp(`^::warning title=test-times history::${h.why.replace(/[/.\\]/g, '\\$&')}$`, 'm'), show(r));
+  }
+});
+
+// acme-labs/nut: its one run file was kept past its retention, so GitHub lists it as expired.
+test('an expired run file is a run file that cannot be opened', async () => {
+  const r = await read(['--repo', 'acme-labs/nut', ...BASE, '--require-complete']);
+  assert.equal(r.code, 2, show(r));
+  assert.equal(r.stdout, 'could not read: run file test-times-unit-1-gh-nu-1791021600000 expired\n', show(r));
+});
+
+// The readers' contract, held in record.mjs so the scheduler's weekly reading and the main
+// product's share check import it rather than rebuild it.
+test('pairing, attempts, ran no test and job groups are exported from record.mjs', async () => {
+  const record = await import('../test-times/record.mjs');
+  for (const name of ['jobOf', 'pairRecords', 'jobsOfRun', 'ranNoTest', 'jobGroups', 'groupTimes']) {
+    assert.equal(typeof record[name], 'function', `record.mjs exports ${name}`);
+  }
+  assert.equal(record.KEEP_STEP, 'Keep the test times');
+  const steps = [{ name: record.KEEP_STEP, conclusion: 'success' }];
+  const listing = [
+    { id: 1, name: 'unit', run_attempt: 1, conclusion: 'success', started_at: '2026-10-01T08:00:00Z', completed_at: '2026-10-01T08:04:00Z', runner_name: 'a', steps },
+    { id: 2, name: 'unit', run_attempt: 1, conclusion: 'success', started_at: '2026-10-01T08:00:00Z', completed_at: '2026-10-01T08:05:00Z', runner_name: 'b', steps },
+    { id: 3, name: 'unit', run_attempt: 2, conclusion: 'success', started_at: '2026-10-01T09:00:00Z', completed_at: '2026-10-01T09:01:00Z', runner_name: 'c', steps },
+  ];
+  const run = (runner, start, end, endLine) => ({ v: 1, type: 'run', job_key: 'unit', runner_name: runner, run_attempt: runner === 'c' ? 2 : 1, started_at: start, ended_at: end, endLine });
+  const recordOf = (r) => record.parseRecord([JSON.stringify(r), JSON.stringify(r.endLine)].join('\n'));
+  const records = [
+    recordOf(run('a', '2026-10-01T08:01:00Z', '2026-10-01T08:03:00Z', { type: 'end', tests: 0, files: 0, complete: true, why: null })),
+    recordOf(run('b', '2026-10-01T08:01:00Z', '2026-10-01T08:04:00Z', { type: 'end', tests: 0, files: 0, complete: true, why: null })),
+    recordOf(run('c', '2026-10-01T09:00:10Z', '2026-10-01T09:00:20Z', { type: 'end', tests: 0, files: 0, complete: false, why: record.NEVER_STARTED })),
+  ];
+  const jobs = record.pairRecords(listing.map(record.jobOf), records);
+  assert.deepEqual(jobs.map((j) => j.record?.run.runner_name), ['a', 'b', 'c']);
+  assert.equal(record.ranNoTest(jobs[2]), true, 'a job that succeeded and never started its runner ran no test');
+  const [unit] = record.jobsOfRun(jobs);
+  assert.equal(unit.state.state, 'complete', 'attempt 2 ran no test, so attempt 1\'s two complete legs count');
+  assert.deepEqual(unit.state.legs.map((l) => l.job.runner), ['a', 'b']);
+  const perRun = record.jobGroups([{ run: { id: 1 }, jobs: [unit] }]);
+  assert.equal(perRun[0].jobs[0].group, 'unit');
+  assert.deepEqual([...record.groupTimes(perRun)], [['unit', [60000]]], 'the newest attempt that ran sets the time');
 });

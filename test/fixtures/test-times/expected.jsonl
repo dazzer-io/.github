@@ -10,7 +10,7 @@
 {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"later","n":0,"ms":0,"status":"todo","retry":0}
 {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"starts a child","n":0,"ms":52.6,"status":"pass","retry":0}
 {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"waits","n":0,"ms":5.9,"status":"pass","retry":0}
-{"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":null,"blob":"27181ef24a95d0e7fa9015669ff6e10b81c7da6c","ms":132.4,"workers":2,"serial":false,"kinds":["process"],"waits_ms":5}
+{"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":null,"blob":"c39f2274f32dfa5a19607f0549e97412367d0a4e","ms":132.4,"workers":2,"serial":false,"kinds":["process"],"waits_ms":5}
 {"type":"test","file":"test/fixtures/test-times/socket.test.mjs","name":"talks to a local server","n":0,"ms":7.7,"status":"pass","retry":0}
 {"type":"file","file":"test/fixtures/test-times/socket.test.mjs","group":null,"blob":"856d0ae9d6b398ff16b8cb8dd4d332b72470d6e7","ms":80.3,"workers":2,"serial":false,"kinds":["local-service"],"waits_ms":0}
 {"type":"end","tests":10,"files":3,"complete":true,"why":null}

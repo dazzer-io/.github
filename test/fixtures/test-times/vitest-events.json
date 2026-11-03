@@ -1,5 +1,5 @@
 {
- "note": "A stored vitest run for test/test-times-record.test.mjs, in the objects vitest's reporter interface documents (vitest 3 and later: onInit, onTestCaseResult with a TestCase, onTestModuleEnd with a TestModule, onTestRunEnd). The test builds each object's methods (result(), diagnostic(), parent, project) from these fields. Module paths are this folder's real fixture files, so their blobs are real. In \"touch\", self is the reporter's own process, parent its parent, and the other names stand for other processes: the grandchild's line is dropped, because neither its pid nor its ppid is the runner's.",
+ "note": "A stored vitest run for test/test-times-record.test.mjs, in the objects vitest's reporter interface documents (vitest 3 and later: onInit, onTestCaseResult with a TestCase, onTestModuleEnd with a TestModule, onTestRunEnd). The test builds each object's methods (result(), diagnostic(), state(), errors(), parent, project) from these fields. fail.test.mjs stands for a module that failed to collect: it has errors and no test, so the record holds a failing test line for the file itself. A skipped test has no duration, so its ms is null. Module paths are this folder's real fixture files, so their blobs are real. In \"touch\", self is the reporter's own process, parent its parent, and the other names stand for other processes: the grandchild's line is dropped, because neither its pid nor its ppid is the runner's.",
  "options": {},
  "runFacts": {
   "repo": "acme-labs/widget", "sha": "1111111111111111111111111111111111111111", "ref": "refs/pull/7/merge",
@@ -19,6 +19,7 @@
  },
  "events": [
   ["onInit"],
+  ["onTestModuleEnd", { "module": "test/fixtures/test-times/fail.test.mjs", "project": "unit", "state": "failed", "errors": [{ "message": "SyntaxError: Unexpected token" }], "diagnostic": { "environmentSetupDuration": 1, "prepareDuration": 4, "collectDuration": 7, "setupDuration": 0, "duration": 0 } }],
   ["onTestCaseResult", { "module": "test/fixtures/test-times/pass.test.mjs", "project": "unit", "suites": ["a suite"], "name": "adds > one", "state": "passed", "mode": "run", "diagnostic": { "duration": 2.5, "retryCount": 0 } }],
   ["onTestCaseResult", { "module": "test/fixtures/test-times/pass.test.mjs", "project": "unit", "suites": [], "name": "one title", "state": "passed", "mode": "run", "diagnostic": { "duration": 1.25, "retryCount": 0 } }],
   ["onTestCaseResult", { "module": "test/fixtures/test-times/pass.test.mjs", "project": "unit", "suites": [], "name": "one title", "state": "passed", "mode": "run", "diagnostic": { "duration": 1.5, "retryCount": 0 } }],
@@ -32,14 +33,16 @@
  "expected": [
   {"v":1,"type":"run","repo":"acme-labs/widget","sha":"1111111111111111111111111111111111111111","ref":"refs/pull/7/merge","event":"pull_request","run_id":7001,"run_attempt":1,"job_key":"lane","runner_name":"gh-lane-1","runner":{"os":"Linux","arch":"X64","cores":16,"label":"ubuntu24"},"runner_kind":"vitest","reference_ms":24.5,"kind_scope":"job","started_at":"2026-11-03T19:44:57.602Z","ended_at":"2026-11-03T19:44:57.603Z"},
   {"type":"deal","parts":2,"part":1,"files":["test/fixtures/test-times/pass.test.mjs"],"discovered":"2c1e0d6a9f0b4a37b1c8e5d6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6","discovered_count":2,"history":"9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0"},
+  {"type":"test","file":"test/fixtures/test-times/fail.test.mjs","name":"(the file itself)","n":0,"ms":12,"status":"fail","retry":0},
+  {"type":"file","file":"test/fixtures/test-times/fail.test.mjs","group":"unit","blob":"9067b23713e20f1bb5f7db5292e00b10f9970516","ms":12,"workers":4,"serial":false,"kinds":["process","local-service"],"waits_ms":253},
   {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"a suite > adds > one","n":0,"ms":2.5,"status":"pass","retry":0},
   {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"one title","n":0,"ms":1.3,"status":"pass","retry":0},
   {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"one title","n":1,"ms":1.5,"status":"pass","retry":0},
-  {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"skipped","n":0,"ms":0,"status":"skip","retry":0},
-  {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"later","n":0,"ms":0,"status":"todo","retry":0},
-  {"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":"unit","blob":"27181ef24a95d0e7fa9015669ff6e10b81c7da6c","ms":96,"workers":4,"serial":false,"kinds":["process","local-service"],"waits_ms":253},
+  {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"skipped","n":0,"ms":null,"status":"skip","retry":0},
+  {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"later","n":0,"ms":null,"status":"todo","retry":0},
+  {"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":"unit","blob":"c39f2274f32dfa5a19607f0549e97412367d0a4e","ms":96,"workers":4,"serial":false,"kinds":["process","local-service"],"waits_ms":253},
   {"type":"test","file":"test/fixtures/test-times/socket.test.mjs","name":"talks to a local server","n":0,"ms":900,"status":"fail","retry":2},
   {"type":"file","file":"test/fixtures/test-times/socket.test.mjs","group":"db","blob":"856d0ae9d6b398ff16b8cb8dd4d332b72470d6e7","ms":2727,"workers":1,"serial":true,"kinds":["process","local-service"],"waits_ms":253},
-  {"type":"end","tests":6,"files":2,"complete":true,"why":null}
+  {"type":"end","tests":7,"files":3,"complete":true,"why":null}
  ]
 }

@@ -10,7 +10,8 @@
 //                    a letter, digit or dash turned into a dash) and the moment of setup in ms.
 // and writes the run's GitHub and runner facts to <TEST_TIMES_FILE>.run.json while the job's
 // whole environment is present, so a runner that strips the environment still records them.
-// It also clears what an earlier setup in the same job left: the record, its touch and deal files.
+// It also clears what an earlier setup in the same job left: the record, its touch and deal
+// files, and the mark a runner leaves when it starts (record.mjs Recorder.start).
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -54,7 +55,7 @@ const facts = {
 };
 
 fs.mkdirSync(env.RUNNER_TEMP, { recursive: true });
-for (const stale of [file, `${file}.touch`, `${file}.deal`]) fs.rmSync(stale, { force: true });
+for (const stale of [file, `${file}.touch`, `${file}.deal`, `${file}.started`]) fs.rmSync(stale, { force: true });
 fs.writeFileSync(`${file}.run.json`, JSON.stringify(facts) + '\n');
 
 process.stdout.write(`TEST_TIMES_DIR=${dir}\nTEST_TIMES_FILE=${file}\nTEST_TIMES_ID=${id}\n`);

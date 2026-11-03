@@ -16,17 +16,17 @@
 // Token: GITHUB_TOKEN or GH_TOKEN, else `gh auth token`. It only reads. The API is
 // GITHUB_API_URL, else https://api.github.com.
 //
-// Which runs, attempts, pairing a record with its job, job groups: README.md beside this file.
+// Which runs: README.md beside this file. Attempts, pairing a record with its job, "ran no
+// test" and job groups are record.mjs's, exported there so every reader reads them one way.
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { readRunFile } from './record.mjs';
+import { KEEP_STEP, groupTimes, jobGroups, jobOf, jobsOfRun, pairRecords, readRunFile } from './record.mjs';
 
-export const KEEP_STEP = 'Keep the test times';
+export { KEEP_STEP };
 const WINDOW = 10; // the release door's own window (dev-cycle scripts/door-time.mjs)
 const AT_ONCE = 6;
-const SLACK_MS = 1000; // GitHub's job times are whole seconds; a record's are milliseconds
 
 class Refused extends Error {}
 
@@ -111,7 +111,9 @@ function client() {
         }
       }
       if (!res.ok) throw new Refused(`GET ${pathname} answered ${res.status}`);
-      return Buffer.from(await res.arrayBuffer());
+      try { return Buffer.from(await res.arrayBuffer()); } catch (err) {
+        throw new Refused(`the run file behind ${pathname} broke off: ${err.cause?.code ?? err.message}`);
+      }
     },
   };
 }
@@ -148,63 +150,21 @@ async function listRuns(gh, o, want, keep) {
     .slice(0, want);
 }
 
-// One run: its jobs of every attempt, each with the record paired to it.
+// One run: its jobs of every attempt, each with the record paired to it (record.mjs). A run
+// file GitHub lists as expired is a run file that cannot be opened.
 async function readRun(gh, o, run) {
   const jobs = await paged(gh, `/repos/${o.repo}/actions/runs/${run.id}/jobs`, { filter: 'all' }, 'jobs');
   const artifacts = await paged(gh, `/repos/${o.repo}/actions/runs/${run.id}/artifacts`, {}, 'artifacts');
-  const kept = artifacts.filter((a) => /^test-times-/.test(a.name) && !/^test-times-history-/.test(a.name) && !a.expired);
+  const kept = artifacts.filter((a) => /^test-times-/.test(a.name) && !/^test-times-history-/.test(a.name));
+  const expired = kept.find((a) => a.expired);
+  if (expired) throw new Refused(`run file ${expired.name} expired`);
   const records = await pool(kept, AT_ONCE, async (a) => {
     const bytes = await gh.bytes(`/repos/${o.repo}/actions/artifacts/${a.id}/zip`);
-    try { return { name: a.name, record: readRunFile(bytes) }; } catch (err) {
+    try { return readRunFile(bytes); } catch (err) {
       throw new Refused(`run file ${a.name} of run ${run.id}: ${err.message}`);
     }
   });
-  const js = jobs.map((j) => ({
-    id: j.id, name: j.name, attempt: j.run_attempt ?? 1, conclusion: j.conclusion,
-    start: time(j.started_at), end: time(j.completed_at), runner: j.runner_name ?? null,
-    keep: (j.steps ?? []).some((s) => s.name === KEEP_STEP && s.conclusion && s.conclusion !== 'skipped'),
-    record: null,
-  }));
-  for (const { record } of records) {
-    const head = record.run ?? record.head ?? {};
-    const rs = time(head.started_at); const re = time(head.ended_at);
-    const fits = js.filter((j) => !j.record && head.runner_name && j.runner === head.runner_name
-      && (head.run_attempt == null || j.attempt === head.run_attempt)
-      && (Number.isNaN(rs) || (j.start - SLACK_MS <= rs && (Number.isNaN(j.end) || rs <= j.end + SLACK_MS)))
-      && (Number.isNaN(re) || Number.isNaN(j.end) || re <= j.end + SLACK_MS));
-    fits.sort((a, b) => Math.abs(a.start - rs) - Math.abs(b.start - rs));
-    if (fits[0]) fits[0].record = record;
-  }
-  return { id: run.id, attempt: run.run_attempt ?? 1, sha: run.head_sha ?? null, jobs: js };
-}
-
-// Per job name in one run: the attempt whose times count (the newest that ran) and the state
-// of its record. The newest attempt that left a complete record counts; a later attempt that
-// left none never hides it.
-function jobsOf(run) {
-  const byName = new Map();
-  for (const j of run.jobs) {
-    if (!byName.has(j.name)) byName.set(j.name, []);
-    byName.get(j.name).push(j);
-  }
-  const out = [];
-  for (const [name, atts] of byName) {
-    atts.sort((a, b) => b.attempt - a.attempt || b.start - a.start);
-    const latest = atts.find((j) => j.conclusion !== 'skipped' && !Number.isNaN(j.start) && !Number.isNaN(j.end));
-    const key = atts.find((j) => j.record?.run?.job_key)?.record.run.job_key ?? null;
-    let state = null;
-    const complete = atts.find((j) => j.record?.complete);
-    const kept = atts.find((j) => j.keep);
-    if (complete) state = { state: 'complete', job: complete, record: complete.record };
-    else if (kept) {
-      const r = kept.record;
-      if (!r) state = { state: 'incomplete', why: 'no run file was kept', job: kept };
-      else if (r.neverStarted && kept.conclusion === 'success') state = { state: 'none', job: kept, record: r };
-      else state = { state: 'incomplete', why: r.why, job: kept, record: r };
-    }
-    out.push({ name, key, latest, state });
-  }
-  return out;
+  return { id: run.id, attempt: run.run_attempt ?? 1, sha: run.head_sha ?? null, jobs: pairRecords(jobs.map(jobOf), records) };
 }
 
 function median(xs) {
@@ -221,32 +181,10 @@ async function readWindow(o, want, keep) {
   const runs = await listRuns(gh, o, want, keep);
   const read = [];
   for (const r of runs) read.push(await readRun(gh, o, r));
-  // A job that kept no record is grouped by the job id its name carried in any run read, so
-  // one missing upload never splits a matrix into a group of its own; else by its name.
-  const nameToKey = new Map();
-  const perRun = read.map((run) => ({ run, jobs: jobsOf(run) }));
-  for (const { jobs } of perRun) for (const j of jobs) if (j.key) nameToKey.set(j.name, j.key);
-  for (const { jobs } of perRun) for (const j of jobs) j.group = j.key ?? nameToKey.get(j.name) ?? j.name;
-  return perRun;
+  return jobGroups(read.map((run) => ({ run, jobs: jobsOfRun(run.jobs) })));
 }
 
-// Each group's time in each run: its longest job's, from start to end.
-function groupTimes(perRun) {
-  const times = new Map();
-  for (const { jobs } of perRun) {
-    const longest = new Map();
-    for (const j of jobs) {
-      if (!j.latest) continue;
-      const ms = j.latest.end - j.latest.start;
-      if (ms >= 0) longest.set(j.group, Math.max(longest.get(j.group) ?? 0, ms));
-    }
-    for (const [g, ms] of longest) {
-      if (!times.has(g)) times.set(g, []);
-      times.get(g).push(ms);
-    }
-  }
-  return times;
-}
+const completeLegs = (j) => (j.state?.legs ?? []).filter((l) => l.state === 'complete');
 
 function groupState(jobs) {
   const owed = jobs.filter((j) => j.state);
@@ -256,12 +194,12 @@ function groupState(jobs) {
     const why = bad.map((j) => (owed.length > 1 ? `${j.name}: ${j.state.why}` : j.state.why)).join('; ');
     return { state: 'incomplete', why };
   }
-  const done = owed.filter((j) => j.state.state === 'complete');
+  const done = owed.flatMap(completeLegs);
   if (!done.length) return { state: 'none' };
   return {
     state: 'complete',
-    tests: done.reduce((n, j) => n + j.state.record.tests.length, 0),
-    files: done.reduce((n, j) => n + j.state.record.files.length, 0),
+    tests: done.reduce((n, l) => n + l.record.tests.length, 0),
+    files: done.reduce((n, l) => n + l.record.files.length, 0),
   };
 }
 
@@ -293,7 +231,7 @@ async function requireComplete(o) {
     if (!ok) missing.push(g);
   }
   const newest = perRun[0];
-  const newestHas = newest && newest.jobs.some((j) => j.state?.state === 'complete');
+  const newestHas = newest && newest.jobs.some((j) => completeLegs(j).length);
   if (!perRun.length) missing.push('no completed run was found');
   else if (!newestHas) missing.push(`the newest run (${newest.run.id}) left none`);
   for (const l of lines) console.log(l);
@@ -305,41 +243,40 @@ async function requireComplete(o) {
   return 0;
 }
 
+// The history file (spec-split.md, "The history file"): per test file, one entry for each
+// group it was recorded under, ordered by group with null first, each the median over the
+// complete records of that file in that group; per job group, its median time and set-up.
 function historyFrom(o, perRun) {
   const files = new Map(); // path -> group -> { samples, newest }
   const setup = new Map();
   for (const { jobs } of perRun) {
     for (const j of jobs) {
-      if (j.state?.state !== 'complete') continue;
-      const r = j.state.record;
-      const span = time(r.run.ended_at) - time(r.run.started_at);
-      const job = j.state.job;
-      const jobMs = job.end - job.start;
-      if (Number.isFinite(span) && Number.isFinite(jobMs)) {
-        if (!setup.has(j.group)) setup.set(j.group, []);
-        setup.get(j.group).push(Math.max(0, jobMs - span));
-      }
-      if (o.jobPrefix && !j.name.startsWith(o.jobPrefix)) continue;
-      for (const f of r.files) {
-        if (typeof f.ms !== 'number') continue;
-        if (!files.has(f.file)) files.set(f.file, new Map());
-        const byGroup = files.get(f.file);
-        const g = f.group ?? null;
-        if (!byGroup.has(g)) byGroup.set(g, { samples: [], newest: f });
-        byGroup.get(g).samples.push(f.ms);
+      for (const { job, record: r } of completeLegs(j)) {
+        const span = time(r.run.ended_at) - time(r.run.started_at);
+        const jobMs = job.end - job.start;
+        if (Number.isFinite(span) && Number.isFinite(jobMs)) {
+          if (!setup.has(j.group)) setup.set(j.group, []);
+          setup.get(j.group).push(Math.max(0, jobMs - span));
+        }
+        if (o.jobPrefix && !j.name.startsWith(o.jobPrefix)) continue;
+        for (const f of r.files) {
+          if (typeof f.ms !== 'number') continue;
+          if (!files.has(f.file)) files.set(f.file, new Map());
+          const byGroup = files.get(f.file);
+          const g = f.group ?? null;
+          if (!byGroup.has(g)) byGroup.set(g, { samples: [], newest: f });
+          byGroup.get(g).samples.push(f.ms);
+        }
       }
     }
   }
+  const byGroupName = ([a], [b]) => (a === b ? 0 : a === null ? -1 : b === null ? 1 : a < b ? -1 : 1);
   const outFiles = {};
   for (const p of [...files.keys()].sort()) {
-    const byGroup = files.get(p);
-    const entry = (e) => ({ ms: Math.round(median(e.samples)), workers: e.newest.workers ?? null,
-      serial: e.newest.serial ?? null, group: e.newest.group ?? null, n: e.samples.length });
-    const [first] = byGroup.values(); // the group of the file's newest record
-    outFiles[p] = entry(first);
-    if (byGroup.size > 1) {
-      outFiles[p].by_group = Object.fromEntries([...byGroup].map(([g, e]) => [g ?? '', entry(e)]));
-    }
+    outFiles[p] = [...files.get(p)].sort(byGroupName).map(([g, e]) => ({
+      group: g, ms: Math.round(median(e.samples)), workers: e.newest.workers ?? null,
+      serial: e.newest.serial ?? null, n: e.samples.length,
+    }));
   }
   const jobs = {};
   const times = groupTimes(perRun);
@@ -362,8 +299,9 @@ async function history(o) {
   try {
     perRun = await readWindow(o, want, (r) => r.conclusion === 'success');
   } catch (err) {
-    if (!(err instanceof Refused) || !o.allowNone) throw err;
-    const why = `could not read: ${err.message}`;
+    // Under --allow-none any read error, refused or not, writes `none` with why.
+    if (!o.allowNone) throw err;
+    const why = `could not read: ${err instanceof Refused ? err.message : err.message || String(err)}`;
     fs.writeFileSync(o.out, JSON.stringify({ ...historyHead(o), source: 'none', why, runs: [], files: {}, jobs: {} }) + '\n');
     console.log(`::warning title=test-times history::${why}`);
     console.log(`history: none, ${why} -> ${o.out}`);

@@ -6,6 +6,10 @@
 //
 // A record never holds a host, address, port, connection string or argument: the kinds are
 // four fixed words, and the run's facts are the GitHub and runner fields setup.mjs wrote.
+//
+// It also holds the readers' contract (spec-record.md, "Readers' contract"): pairing a record
+// with its job, attempts, "ran no test" and job groups, so read.mjs, the scheduler's weekly
+// reading and the main product's share check read GitHub's job listing one way.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -15,6 +19,11 @@ import zlib from 'node:zlib';
 
 export const VERSION = 1;
 export const NEVER_STARTED = 'the test runner never started';
+export const SECOND_RUNNER = 'a second test runner started in this job; a job keeps one runner\'s record';
+// The name of the test line that says a file failed as a file: it threw on import, its
+// process crashed or exited non-zero, or it failed to collect or to load. Its time is the
+// file's own, where the runner gives one.
+export const FILE_ITSELF = '(the file itself)';
 export const KINDS = ['process', 'local-service', 'network', 'browser'];
 // The touch preload keeps its state here, so a reporter in the same process can mark it the runner.
 export const TOUCH_MARK = Symbol.for('dazzer.test-times.touch');
@@ -88,24 +97,31 @@ export function readDeal(file) {
 }
 
 // The touch preload's lines this runner owns: its own process's and its direct children's.
+// A process that marked itself the runner (a line {"pid","ppid","runner":true}) keeps none of
+// its lines, whichever came first, so the runner's own starts and connections never count.
 export function readTouch(touchFile, pid = process.pid) {
   let text;
   try { text = fs.readFileSync(touchFile, 'utf8'); } catch { return []; }
-  const out = [];
+  const lines = [];
+  const runners = new Set();
   for (const l of text.split('\n')) {
     if (!l.trim()) continue;
     let t;
     try { t = JSON.parse(l); } catch { continue; }
-    if (t && (t.pid === pid || t.ppid === pid)) out.push(t);
+    if (!t || typeof t !== 'object') continue;
+    if (t.runner === true) runners.add(t.pid);
+    else lines.push(t);
   }
-  return out;
+  return lines.filter((t) => !runners.has(t.pid) && (t.pid === pid || t.ppid === pid));
 }
 
 // A reporter in the runner's main process marks the preload there, if it is loaded, as the
 // runner's own, so the runner's own process starts and connections never count as a test's.
 export function markRunner() {
   const s = globalThis[TOUCH_MARK];
-  if (s) s.runner = true;
+  if (!s) return;
+  s.runner = true;
+  try { s.markRunner?.(); } catch { /* a lost mark leaves the runner's own lines in */ }
 }
 
 const roots = new Map();
@@ -143,12 +159,24 @@ export class Recorder {
     this.fileTimes = new Map();
   }
 
+  // A job keeps one runner's record. A runner that starts where another already started (its
+  // run line is kept beside the record, in `<record file>.started`, because Node's runner
+  // empties its destination when it opens it) records nothing of its own and ends the job's
+  // record incomplete, saying so.
   start({ kindScope }) {
     this.facts = readRunFacts(this.file);
     this.kindScope = kindScope;
+    const marker = `${this.file}.started`;
+    if (fs.existsSync(marker)) {
+      this.second = true;
+      endSecond(this.file, marker);
+      return;
+    }
     this.referenceMs = referenceMs();
     this.startedAt = new Date().toISOString();
-    writeLines(this.file, [this.runLine(null)]);
+    const head = this.runLine(null);
+    fs.writeFileSync(marker, JSON.stringify(head) + '\n');
+    writeLines(this.file, [head]);
   }
 
   runLine(endedAt) {
@@ -162,7 +190,12 @@ export class Recorder {
 
   // One test result. `file` is the absolute path the runner gives.
   test({ file, group = null, name, ms, status, retry = 0 }) {
-    this.tests.push({ key: Recorder.key(file, group), file, name, ms: round1(ms), status, retry });
+    this.tests.push({ key: Recorder.key(file, group), file, group, name, ms: round1(ms), status, retry });
+  }
+
+  // A file that failed as a file: one failing test line for the file itself.
+  fileFailed({ file, group = null, ms = null }) {
+    this.test({ file, group, name: FILE_ITSELF, ms, status: 'fail', retry: 0 });
   }
 
   // One test file's own time, workers and serial flag, as the runner reports them.
@@ -172,43 +205,49 @@ export class Recorder {
   }
 
   // Kinds and waits per file, from the touch lines this runner owns (record.mjs readTouch).
+  // A process writes a line the moment it first sees each kind, with waits_ms null, and one
+  // more at its exit holding all its kinds and its waits. So a process killed by a signal still
+  // says what it touched, and its waits are unknown: waits_ms is null when no line said any.
   touchFor(touchLines) {
     if (this.kindScope === 'runner') return { scope: 'runner', of: () => ({ kinds: ['browser'], waits_ms: null }) };
     if (!touchLines.length) return { scope: 'job', of: () => ({ kinds: [], waits_ms: null }) };
+    const add = (e, t) => {
+      for (const k of t.kinds ?? []) e.kinds.add(k);
+      if (typeof t.waits_ms === 'number') { e.waits += t.waits_ms; e.known = true; }
+    };
+    const out = (e) => ({ kinds: orderKinds(e.kinds), waits_ms: e.known ? round1(e.waits) : null });
     if (this.kindScope === 'file') {
       const byFile = new Map();
       for (const t of touchLines) {
         if (!t.file) continue;
-        const e = byFile.get(t.file) ?? { kinds: new Set(), waits: 0 };
-        for (const k of t.kinds ?? []) e.kinds.add(k);
-        e.waits += Number(t.waits_ms) || 0;
+        const e = byFile.get(t.file) ?? { kinds: new Set(), waits: 0, known: false };
+        add(e, t);
         byFile.set(t.file, e);
       }
       return {
         scope: 'file',
         of: (abs) => {
           const e = byFile.get(abs);
-          return e ? { kinds: orderKinds(e.kinds), waits_ms: round1(e.waits) } : { kinds: [], waits_ms: null };
+          return e ? out(e) : { kinds: [], waits_ms: null };
         },
       };
     }
-    const all = new Set();
-    let waits = 0;
-    for (const t of touchLines) {
-      for (const k of t.kinds ?? []) all.add(k);
-      waits += Number(t.waits_ms) || 0;
-    }
-    const kinds = orderKinds(all);
-    return { scope: 'job', of: () => ({ kinds, waits_ms: round1(waits) }) };
+    const all = { kinds: new Set(), waits: 0, known: false };
+    for (const t of touchLines) add(all, t);
+    const job = out(all);
+    return { scope: 'job', of: () => job };
   }
 
   finish({ complete, why = null, touchLines = [] }) {
+    if (this.second) return null;
+    // A second runner that started while this one ran has already ended the job's record.
+    if (endsSecond(this.file)) { complete = false; why = SECOND_RUNNER; }
     const touch = this.touchFor(touchLines);
     this.kindScope = touch.scope;
     const files = new Map(this.fileTimes);
     for (const t of this.tests) {
       if (!files.has(t.key)) {
-        files.set(t.key, { file: t.file, group: null, ms: null, workers: null, serial: null });
+        files.set(t.key, { file: t.file, group: t.group, ms: null, workers: null, serial: null });
       }
     }
     const rel = new Map([...files].map(([k, f]) => [k, repoPath(f.file)]));
@@ -243,6 +282,37 @@ export class Recorder {
     writeLines(this.file, lines);
     return lines;
   }
+}
+
+function linesOf(text) {
+  const out = [];
+  for (const l of String(text ?? '').split('\n')) {
+    if (!l.trim()) continue;
+    try { const o = JSON.parse(l); if (o && typeof o === 'object') out.push(o); } catch { /* a torn line is dropped */ }
+  }
+  return out;
+}
+
+function endsSecond(file) {
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return false; }
+  const end = linesOf(text).findLast((l) => l.type === 'end');
+  return end?.why === SECOND_RUNNER;
+}
+
+// End the job's record incomplete because a second runner started: keep every line the first
+// runner wrote, or its run line alone when its runner emptied the file, and end it saying so.
+function endSecond(file, marker) {
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { /* emptied or gone */ }
+  let lines = linesOf(text).filter((l) => l.type !== 'end');
+  if (lines[0]?.type !== 'run') {
+    const head = linesOf(fs.readFileSync(marker, 'utf8'))[0];
+    lines = head ? [head, ...lines.filter((l) => l.type !== 'run')] : lines;
+  }
+  const tests = lines.filter((l) => l.type === 'test').length;
+  const files = lines.filter((l) => l.type === 'file').length;
+  writeLines(file, [...lines, { type: 'end', tests, files, complete: false, why: SECOND_RUNNER }]);
 }
 
 // The record finish.mjs writes when no runner wrote one.
@@ -371,4 +441,140 @@ export function compareRecords(expectedText, actualText) {
     }
   }
   return diffs;
+}
+
+// ---- The readers' contract (spec-record.md, "Readers' contract") ----
+//
+// Pure functions over GitHub's job listing and parsed records, so every reader pairs, counts
+// attempts and groups jobs the same way:
+//   jobOf(listed)               one job of GitHub's job listing, in the shape these read;
+//   pairRecords(jobs, records)  each record on the job it belongs to;
+//   ranNoTest(job)              whether a job ran no test and so owes no record;
+//   jobsOfRun(jobs)             per job name in one run: its legs, the attempt that counts, its time;
+//   jobGroups(perRun)           each job's group across the runs read;
+//   groupTimes(perRun)          each group's time in each run.
+
+export const KEEP_STEP = 'Keep the test times';
+// GitHub's job times are whole seconds; a record's are milliseconds.
+export const SLACK_MS = 1000;
+
+const timeOf = (s) => (s ? Date.parse(s) : NaN);
+
+export function jobOf(j) {
+  return {
+    id: j.id, name: j.name, attempt: j.run_attempt ?? 1, conclusion: j.conclusion ?? null,
+    start: timeOf(j.started_at), end: timeOf(j.completed_at), runner: j.runner_name ?? null,
+    keep: (j.steps ?? []).some((s) => s.name === KEEP_STEP && s.conclusion && s.conclusion !== 'skipped'),
+    record: null,
+  };
+}
+
+// A record belongs to the job whose runner name matches its runner_name, of its attempt, and
+// whose start and end hold its started_at and ended_at. Several jobs of one run may share a
+// name and a job id, as every leg of a matrix does; each is a job of its own, told apart by
+// its runner and its times. Answers new jobs; the ones given are not changed.
+export function pairRecords(jobs, records) {
+  const out = jobs.map((j) => ({ ...j, record: null }));
+  for (const record of records) {
+    const head = record?.run ?? record?.head ?? {};
+    const rs = timeOf(head.started_at); const re = timeOf(head.ended_at);
+    const fits = out.filter((j) => !j.record && head.runner_name && j.runner === head.runner_name
+      && (head.run_attempt == null || j.attempt === head.run_attempt)
+      && (Number.isNaN(rs) || (j.start - SLACK_MS <= rs && (Number.isNaN(j.end) || rs <= j.end + SLACK_MS)))
+      && (Number.isNaN(re) || Number.isNaN(j.end) || re <= j.end + SLACK_MS));
+    fits.sort((a, b) => Math.abs(a.start - rs) - Math.abs(b.start - rs));
+    if (fits[0]) fits[0].record = record;
+  }
+  return out;
+}
+
+// A job that succeeded and whose record says the runner never started ran no test, as when
+// the main product's unit tests are answered from turbo's cache. The same words in a job that
+// failed or was cancelled mean it stopped before its tests.
+export function ranNoTest(job) {
+  return !!job?.record?.neverStarted && job.conclusion === 'success';
+}
+
+// The state of one job's record: complete, none (it ran no test) or incomplete with why.
+// Null for a job in which no `Keep the test times` step ran, which owes no record.
+function legState(job) {
+  if (!job.keep) return null;
+  const r = job.record;
+  if (!r) return { state: 'incomplete', why: 'no run file was kept', job, record: null };
+  if (r.complete) return { state: 'complete', job, record: r };
+  if (ranNoTest(job)) return { state: 'none', job, record: r };
+  return { state: 'incomplete', why: r.why, job, record: r };
+}
+
+const ran = (j) => j.conclusion !== 'skipped' && !Number.isNaN(j.start) && !Number.isNaN(j.end);
+
+// Per job name in one run (attempts). The jobs of one attempt that share a name are its legs,
+// each a job of its own. An attempt is complete when no leg that owes a record left an
+// incomplete one and at least one left a complete one. The newest complete attempt counts; a
+// later attempt that left none, or ran no test, never hides it. Failing that, the newest
+// attempt that owed a record says the state. The name's time is its longest leg's in the
+// newest attempt that ran.
+//   { name, key, ms, state: null | { state, why, legs: [{ state, why, job, record }] } }
+export function jobsOfRun(jobs) {
+  const byName = new Map();
+  for (const j of jobs) {
+    if (!byName.has(j.name)) byName.set(j.name, new Map());
+    const atts = byName.get(j.name);
+    if (!atts.has(j.attempt)) atts.set(j.attempt, []);
+    atts.get(j.attempt).push(j);
+  }
+  const out = [];
+  for (const [name, atts] of byName) {
+    const attempts = [...atts.entries()].sort((a, b) => b[0] - a[0]).map(([, legs]) => legs);
+    const timed = attempts.find((legs) => legs.some(ran));
+    const ms = timed ? Math.max(...timed.filter(ran).map((j) => j.end - j.start)) : null;
+    const all = attempts.flat();
+    const key = all.find((j) => j.record?.run?.job_key)?.record.run.job_key ?? null;
+    const states = attempts.map((legs) => legs.map(legState).filter(Boolean)).filter((s) => s.length);
+    const sum = (legs) => {
+      const bad = legs.filter((l) => l.state === 'incomplete');
+      if (bad.length) return 'incomplete';
+      return legs.some((l) => l.state === 'complete') ? 'complete' : 'none';
+    };
+    const counted = states.find((legs) => sum(legs) === 'complete') ?? states[0];
+    let state = null;
+    if (counted) {
+      const s = sum(counted);
+      const label = (l) => (counted.length > 1 ? `${name} on ${l.job.runner ?? 'an unnamed runner'}: ${l.why}` : l.why);
+      state = { state: s, why: s === 'incomplete' ? counted.filter((l) => l.state === 'incomplete').map(label).join('; ') : null, legs: counted };
+    }
+    out.push({ name, key, ms: Number.isFinite(ms) && ms >= 0 ? ms : null, state });
+  }
+  return out;
+}
+
+// Job groups. A job that kept a record is grouped by its job id (job_key), so every machine
+// of one matrix is one group however its machines are named. A job that kept none is grouped
+// by the job id its name carried in any run read, so one missing upload never splits a
+// matrix; failing that, by its name. perRun is [{ run, jobs: jobsOfRun(...) }], newest first;
+// answers it with each job's `group` set.
+export function jobGroups(perRun) {
+  const nameToKey = new Map();
+  for (const { jobs } of perRun) for (const j of jobs) if (j.key) nameToKey.set(j.name, j.key);
+  return perRun.map(({ jobs, ...rest }) => ({
+    ...rest, jobs: jobs.map((j) => ({ ...j, group: j.key ?? nameToKey.get(j.name) ?? j.name })),
+  }));
+}
+
+// Each group's time in each run read: its longest job's, from that job's start to its end.
+// Answers Map group -> [ms, one per run in which it ran], newest run first.
+export function groupTimes(perRun) {
+  const times = new Map();
+  for (const { jobs } of perRun) {
+    const longest = new Map();
+    for (const j of jobs) {
+      if (j.ms === null || j.ms === undefined) continue;
+      longest.set(j.group, Math.max(longest.get(j.group) ?? 0, j.ms));
+    }
+    for (const [g, ms] of longest) {
+      if (!times.has(g)) times.set(g, []);
+      times.get(g).push(ms);
+    }
+  }
+  return times;
 }

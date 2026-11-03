@@ -11,7 +11,7 @@ name, result or record of any repository.
 
 | File | What it is |
 | --- | --- |
-| `record.mjs` | The format's writer and reader: `parseRecord`, `readRunFile` (unzips a downloaded run file with `node:zlib`, stored and deflated entries only), `compareRecords`, `gitBlob`, `Recorder`. Every other reader imports these. |
+| `record.mjs` | The format's writer and reader: `parseRecord`, `readRunFile` (unzips a downloaded run file with `node:zlib`, stored and deflated entries only), `compareRecords`, `gitBlob`, `Recorder`. And the readers' contract: `jobOf`, `pairRecords`, `ranNoTest`, `jobsOfRun` (attempts and matrix legs), `jobGroups`, `groupTimes`, `KEEP_STEP`. Every other reader imports these, so none rebuilds them. |
 | `read.mjs` | The reader's command line and its GitHub reads. |
 | `node-test-reporter.mjs`, `vitest-reporter.mjs`, `playwright-reporter.mjs` | The three adapters. |
 | `touch.mjs` | The touch preload. |
@@ -36,6 +36,16 @@ name, result or record of any repository.
 - **`name`** is the title path joined by ` > `, as given. `n` counts earlier tests in the record
   with the same file and name, so two tests with one title are both kept. That includes a
   retried attempt, and the same test in another project.
+- **A file that fails as a file** has a failing test line named `(the file itself)`
+  (`FILE_ITSELF` in record.mjs), so the record and its end line's count say the file failed:
+  - Node's runner: the file threw on import, its process crashed, or it exited non-zero after
+    its tests. Its `ms` is the file's own time;
+  - vitest: the module reported errors of its own, as when it fails to collect. Its `ms` is the
+    module's time;
+  - Playwright: the spec failed to load and was reported through `onError`. Its `ms` is null
+    and its group null, because no project ran it.
+- **A test's `ms`** is null where the runner gives no duration, as vitest does for a skipped
+  test.
 - **`kinds`** are `process`, `local-service` (loopback or a socket file), `network` (any other
   address) and `browser`. They are never a host, address, port or argument. An empty list means
   none of them was seen.
@@ -48,8 +58,15 @@ name, result or record of any repository.
   When no touch line came back, `kind_scope` falls back to `job`, `kinds` is empty and
   `waits_ms` is null, which means unknown, never "touched nothing".
 - **`waits_ms`** sums the delays a process asked for through `setTimeout`, `setInterval` and
-  their `node:timers/promises` forms, each call counted once. Calls made straight from Node's
-  own internals are left out, such as the test harness's keep-alive interval on its way out.
+  their `node:timers/promises` forms, each call counted once. Only the process's own code
+  counts. Calls made straight from Node's own internals are left out, such as the test
+  harness's keep-alive interval on its way out. So are calls from code under `node_modules`,
+  such as vitest's own per-test and per-hook timeouts, armed through its safe timers.
+- **The touch preload** writes a line the moment its process first does each kind, and one at
+  exit with its waits. It sets no signal listener, so a process dies exactly as it would
+  without it. A process killed by a signal has said its kinds, and its waits are unknown: a file
+  whose processes left no exit line has `waits_ms` null. The runner's own process marks itself,
+  and its lines are dropped.
 - **A file's `ms`:**
   - Node's runner: its own `test:complete` time;
   - vitest: its module's environment, prepare, collect, setup and test durations added
@@ -62,9 +79,15 @@ name, result or record of any repository.
   - a Playwright project's `workers`, else the config's.
 
   `serial` is true when that number is 1.
+  - Playwright's `fullyParallel` is not read, because it says whether one file's tests may spread over several workers, not how many files run side by side: files run side by side up to the workers count under either setting.
 - **Complete:** a record is complete only with an end line saying so whose counts match the
   lines it holds. A record with no end line stopped partway. Readers read only version 1, never
   take a time from an incomplete record, and count any other version as unreadable.
+- **One runner per job.** A runner leaves `<record file>.started` when it starts. A second
+  runner starting in the same job records nothing of its own and ends the job's record
+  incomplete: `a second test runner started in this job; a job keeps one runner's record`. The
+  first runner's lines are kept, or its run line alone when the second runner emptied the file,
+  as Node's runner does to its destination.
 - **`reference_ms`** is the time to SHA-256 64 MiB of zero bytes in 1 MiB pieces, in the
   reporter's own process before the first test. Only ratios between runs mean anything.
 
@@ -164,25 +187,34 @@ node read.mjs --repo <owner/name> --workflow <file> --event <push|pull_request> 
   history file a planner deals from, from the newest ten successful runs.
   - Its shape: `{"v":1,"repo","workflow","event","branch","attempt","read_at","source","why","runs","files","jobs"}`.
   - `attempt` is `GITHUB_RUN_ATTEMPT`, or 1 outside a workflow.
-  - `files[path]` holds `ms` (the median over complete records), with `workers`, `serial` and
-    `group` from its newest record, and `n`. A path recorded under more than one group also
-    carries `by_group`, each group's own entry, keyed by group name.
+  - `files[path]` is a list with one entry per group the path was recorded under, ordered by
+    group with null first: `{"group","ms","workers","serial","n"}`, where `ms` is the median
+    over the complete records of that file in that group, `workers` and `serial` come from its
+    newest record in that group, and `n` counts the records the median rests on. No single entry
+    is ever picked from several groups (spec-split.md, D12).
   - `jobs[group]` holds `ms` (the median of the group's longest job), `setup_ms` (the median of
     job time minus record span) and `n`.
   - `--job-prefix` limits which jobs feed `files`; `jobs` always holds every group.
-  - With `--allow-none`, a refused read still writes the file, with `"source":"none"` and why,
-    prints `::warning title=test-times history::could not read: ...`, and exits 0.
+  - With `--allow-none`, any read error, a refused call or a download that broke off alike,
+    still writes the file, with `"source":"none"` and why, prints
+    `::warning title=test-times history::could not read: ...`, and exits 0. It never exits 2.
 - **`--slowest <group>` and `--not-slowest <group>`, with `[--ignore <group>]...`,** compare each
   group's median time over the newest ten successful runs. The one that fails exits 1 with
   `<group> sets the wait: <x> min against <group> <y> min`.
+  - A named group with no job in the runs read fails either mode: `<group> has no job in the N runs read`.
+  - `--not-slowest` with no other group left, once the ignored ones are out, exits 1 with `<group> sets the wait: <x> min against no other group`, because a group alone is the longest.
 - **Exit 2** says `could not read: <what refused>`: GitHub refused a call, a run file could not
-  be opened, there was no token, or the arguments were wrong. A read that could not be made
-  never passes.
+  be opened or broke off while downloading, a run file had expired
+  (`could not read: run file <name> expired`), there was no token, or the arguments were wrong.
+  A read that could not be made never passes.
 
 **How it reads:**
 
 - **Attempts.** For each job, the newest attempt that left a complete record counts. A later
-  attempt that left none never hides it.
+  attempt that left none, or ran no test, never hides it.
+- **Matrix legs.** Jobs of one attempt that share a name, as a matrix's legs may, are separate
+  jobs. An attempt is complete only when none of its legs left an incomplete record, so one
+  incomplete leg fails `--require-complete`, saying `<name> on <runner>: <why>`.
 - **Ran no test.** A job that succeeded and whose record says `the test runner never started`
   ran no test and owes none.
 - **Pairing.** A record pairs with the job whose runner name and attempt match and whose start
@@ -191,11 +223,17 @@ node read.mjs --repo <owner/name> --workflow <file> --event <push|pull_request> 
   - A job that kept a record is grouped by its job id (`job_key`).
   - A job that kept none is grouped by the job id its name carried in any run read, so one
     missing upload never splits a matrix; failing that, by its name.
-  - A group's time in a run is its longest job's.
+  - A group's time in a run is its longest job's: the longest leg of the newest attempt that
+    ran, from that job's start to its end.
+- **The touch path** rides the preload's import address. Each well-formed `%XX` in it is
+  decoded and a raw `%` that starts none is kept as written, so no path makes a reporter or the
+  preload throw.
 - **Token.** `GITHUB_TOKEN` or `GH_TOKEN`, else `gh auth token`. It only reads (`actions: read`).
   The API is `GITHUB_API_URL`, else `https://api.github.com`. A run file's storage redirect is
   followed without the token.
 
 The tests in `test/test-times-record.test.mjs` and `test/test-times-read.test.mjs` prove each of
 these. Their fixtures under `test/fixtures/test-times/` lie outside `test/*.test.mjs`, and
-`fail.test.mjs` is meant to fail.
+`fail.test.mjs` is meant to fail. The files that fail as files are written by the test into a
+temporary folder. Each child the tests start gets an environment built from a short list, so
+the suite answers the same on a GitHub runner as on a laptop.

@@ -1,5 +1,5 @@
 {
- "note": "Stored GitHub API answers for test/test-times-read.test.mjs. Every repository, job and runner name is made up. Each route is a path GitHub answers; \"query\" is what the request must carry; \"zip\" entries are built into a run file when served; \"bytes_base64\" is served as it is; \"status\" 302 with \"location\" is a redirect to storage, which refuses a token.",
+ "note": "Stored GitHub API answers for test/test-times-read.test.mjs. Every repository, job and runner name is made up. Each route is a path GitHub answers; \"query\" is what the request must carry; \"zip\" entries are built into a run file when served; \"bytes_base64\" is served as it is; \"status\" 302 with \"location\" is a redirect to storage, which refuses a token. \"cut\" serves the start of a body and then breaks the connection.",
  "routes": {
   "/repos/acme-labs/widget/actions/workflows/checks.yml/runs": {
    "query": {
@@ -1568,6 +1568,359 @@
       "expired": false,
       "workflow_run": {
        "id": 6001
+      }
+     }
+    ]
+   }
+  },
+  "/repos/acme-labs/gizmo/actions/workflows/checks.yml/runs": {
+   "query": {
+    "status": "completed",
+    "event": "push",
+    "branch": "main"
+   },
+   "body": {
+    "total_count": 1,
+    "workflow_runs": [
+     {
+      "id": 8101,
+      "name": "Checks",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "event": "push",
+      "head_branch": "main",
+      "head_sha": "a810000000000000000000000000000000000000",
+      "created_at": "2026-10-03T08:00:00Z",
+      "run_started_at": "2026-10-03T08:00:00Z",
+      "updated_at": "2026-10-03T08:00:00Z"
+     }
+    ]
+   }
+  },
+  "/repos/acme-labs/gizmo/actions/runs/8101/jobs": {
+   "query": {
+    "filter": "all"
+   },
+   "body": {
+    "total_count": 3,
+    "jobs": [
+     {
+      "id": 7101,
+      "run_id": 8101,
+      "run_attempt": 1,
+      "name": "unit",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-03T08:00:10Z",
+      "completed_at": "2026-10-03T08:04:10Z",
+      "runner_name": "gh-zu-1",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1
+       },
+       {
+        "name": "Run the tests",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2
+       },
+       {
+        "name": "Keep the test times",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3
+       }
+      ]
+     },
+     {
+      "id": 7102,
+      "run_id": 8101,
+      "run_attempt": 1,
+      "name": "unit",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-03T08:00:00Z",
+      "completed_at": "2026-10-03T08:06:00Z",
+      "runner_name": "gh-zu-2",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1
+       },
+       {
+        "name": "Run the tests",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2
+       },
+       {
+        "name": "Keep the test times",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3
+       }
+      ]
+     },
+     {
+      "id": 7103,
+      "run_id": 8101,
+      "run_attempt": 1,
+      "name": "lint",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-03T08:00:00Z",
+      "completed_at": "2026-10-03T08:05:00Z",
+      "runner_name": "gh-zl",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1
+       },
+       {
+        "name": "Run the tests",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "/repos/acme-labs/gizmo/actions/runs/8101/artifacts": {
+   "body": {
+    "total_count": 2,
+    "artifacts": [
+     {
+      "id": 9101,
+      "name": "test-times-unit-1-gh-zu-1-1791014410000",
+      "size_in_bytes": 1000,
+      "expired": false,
+      "workflow_run": {
+       "id": 8101
+      }
+     },
+     {
+      "id": 9102,
+      "name": "test-times-unit-1-gh-zu-2-1791014400000",
+      "size_in_bytes": 1000,
+      "expired": false,
+      "workflow_run": {
+       "id": 8101
+      }
+     }
+    ]
+   }
+  },
+  "/repos/acme-labs/gizmo/actions/artifacts/9101/zip": {
+   "status": 302,
+   "location": "/storage/9101"
+  },
+  "/storage/9101": {
+   "zip": [
+    {
+     "name": "test-times.jsonl",
+     "method": "deflate",
+     "text": "{\"v\":1,\"type\":\"run\",\"repo\":\"acme-labs/gizmo\",\"sha\":\"a810000000000000000000000000000000000000\",\"ref\":\"refs/heads/main\",\"event\":\"push\",\"run_id\":8101,\"run_attempt\":1,\"job_key\":\"unit\",\"runner_name\":\"gh-zu-1\",\"runner\":{\"os\":\"Linux\",\"arch\":\"X64\",\"cores\":4,\"label\":\"ubuntu24\"},\"runner_kind\":\"playwright\",\"reference_ms\":140.2,\"kind_scope\":\"runner\",\"started_at\":\"2026-10-03T08:01:00.000Z\",\"ended_at\":\"2026-10-03T08:03:40.000Z\"}\n{\"type\":\"test\",\"file\":\"test/ui.spec.mjs\",\"name\":\"opens\",\"n\":0,\"ms\":50000,\"status\":\"pass\",\"retry\":0}\n{\"type\":\"file\",\"file\":\"test/ui.spec.mjs\",\"group\":\"webkit\",\"blob\":\"d100000000000000000000000000000000000000\",\"ms\":50000,\"workers\":1,\"serial\":true,\"kinds\":[\"browser\"],\"waits_ms\":null}\n{\"type\":\"test\",\"file\":\"test/ui.spec.mjs\",\"name\":\"opens\",\"n\":1,\"ms\":20000,\"status\":\"pass\",\"retry\":0}\n{\"type\":\"file\",\"file\":\"test/ui.spec.mjs\",\"group\":null,\"blob\":\"d100000000000000000000000000000000000000\",\"ms\":20000,\"workers\":2,\"serial\":false,\"kinds\":[\"browser\"],\"waits_ms\":null}\n{\"type\":\"test\",\"file\":\"test/ui.spec.mjs\",\"name\":\"opens\",\"n\":2,\"ms\":30000,\"status\":\"pass\",\"retry\":0}\n{\"type\":\"file\",\"file\":\"test/ui.spec.mjs\",\"group\":\"chromium\",\"blob\":\"d100000000000000000000000000000000000000\",\"ms\":30000,\"workers\":2,\"serial\":false,\"kinds\":[\"browser\"],\"waits_ms\":null}\n{\"type\":\"end\",\"tests\":3,\"files\":3,\"complete\":true,\"why\":null}\n"
+    }
+   ]
+  },
+  "/repos/acme-labs/gizmo/actions/artifacts/9102/zip": {
+   "status": 302,
+   "location": "/storage/9102"
+  },
+  "/storage/9102": {
+   "zip": [
+    {
+     "name": "test-times.jsonl",
+     "method": "deflate",
+     "text": "{\"v\":1,\"type\":\"run\",\"repo\":\"acme-labs/gizmo\",\"sha\":\"a810000000000000000000000000000000000000\",\"ref\":\"refs/heads/main\",\"event\":\"push\",\"run_id\":8101,\"run_attempt\":1,\"job_key\":\"unit\",\"runner_name\":\"gh-zu-2\",\"runner\":{\"os\":\"Linux\",\"arch\":\"X64\",\"cores\":4,\"label\":\"ubuntu24\"},\"runner_kind\":\"playwright\",\"reference_ms\":140.2,\"kind_scope\":\"runner\",\"started_at\":\"2026-10-03T08:01:00.000Z\",\"ended_at\":null}\n{\"type\":\"test\",\"file\":\"test/ui.spec.mjs\",\"name\":\"opens\",\"n\":0,\"ms\":90000,\"status\":\"pass\",\"retry\":0}\n"
+    }
+   ]
+  },
+  "/repos/acme-labs/bolt/actions/workflows/checks.yml/runs": {
+   "query": {
+    "status": "completed",
+    "event": "push",
+    "branch": "main"
+   },
+   "body": {
+    "total_count": 1,
+    "workflow_runs": [
+     {
+      "id": 8201,
+      "name": "Checks",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "event": "push",
+      "head_branch": "main",
+      "head_sha": "b820000000000000000000000000000000000000",
+      "created_at": "2026-10-03T09:00:00Z",
+      "run_started_at": "2026-10-03T09:00:00Z",
+      "updated_at": "2026-10-03T09:00:00Z"
+     }
+    ]
+   }
+  },
+  "/repos/acme-labs/bolt/actions/runs/8201/jobs": {
+   "query": {
+    "filter": "all"
+   },
+   "body": {
+    "total_count": 1,
+    "jobs": [
+     {
+      "id": 7201,
+      "run_id": 8201,
+      "run_attempt": 1,
+      "name": "unit",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-03T09:00:00Z",
+      "completed_at": "2026-10-03T09:03:00Z",
+      "runner_name": "gh-bu",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1
+       },
+       {
+        "name": "Run the tests",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2
+       },
+       {
+        "name": "Keep the test times",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "/repos/acme-labs/bolt/actions/runs/8201/artifacts": {
+   "body": {
+    "total_count": 1,
+    "artifacts": [
+     {
+      "id": 9201,
+      "name": "test-times-unit-1-gh-bu-1791018000000",
+      "size_in_bytes": 1000,
+      "expired": false,
+      "workflow_run": {
+       "id": 8201
+      }
+     }
+    ]
+   }
+  },
+  "/repos/acme-labs/bolt/actions/artifacts/9201/zip": {
+   "status": 302,
+   "location": "/storage/9201"
+  },
+  "/storage/9201": {
+   "cut": true
+  },
+  "/repos/acme-labs/nut/actions/workflows/checks.yml/runs": {
+   "query": {
+    "status": "completed",
+    "event": "push",
+    "branch": "main"
+   },
+   "body": {
+    "total_count": 1,
+    "workflow_runs": [
+     {
+      "id": 8301,
+      "name": "Checks",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success",
+      "event": "push",
+      "head_branch": "main",
+      "head_sha": "c830000000000000000000000000000000000000",
+      "created_at": "2026-10-03T10:00:00Z",
+      "run_started_at": "2026-10-03T10:00:00Z",
+      "updated_at": "2026-10-03T10:00:00Z"
+     }
+    ]
+   }
+  },
+  "/repos/acme-labs/nut/actions/runs/8301/jobs": {
+   "query": {
+    "filter": "all"
+   },
+   "body": {
+    "total_count": 1,
+    "jobs": [
+     {
+      "id": 7301,
+      "run_id": 8301,
+      "run_attempt": 1,
+      "name": "unit",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-03T10:00:00Z",
+      "completed_at": "2026-10-03T10:03:00Z",
+      "runner_name": "gh-nu",
+      "steps": [
+       {
+        "name": "Set up job",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 1
+       },
+       {
+        "name": "Run the tests",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 2
+       },
+       {
+        "name": "Keep the test times",
+        "status": "completed",
+        "conclusion": "success",
+        "number": 3
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "/repos/acme-labs/nut/actions/runs/8301/artifacts": {
+   "body": {
+    "total_count": 2,
+    "artifacts": [
+     {
+      "id": 9301,
+      "name": "test-times-unit-1-gh-nu-1791021600000",
+      "size_in_bytes": 1000,
+      "expired": true,
+      "workflow_run": {
+       "id": 8301
+      }
+     },
+     {
+      "id": 9302,
+      "name": "test-times-history-1",
+      "size_in_bytes": 1000,
+      "expired": true,
+      "workflow_run": {
+       "id": 8301
       }
      }
     ]

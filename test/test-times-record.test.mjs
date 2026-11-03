@@ -8,18 +8,24 @@
 //   interface documents, and must write the records stored beside those events.
 // Records are compared field by field (record.mjs compareRecords): the fields that vary by
 // machine and moment by type only, every other field exactly.
-import { test } from 'node:test';
+//
+// Every child starts from an environment this file builds from a short list, never from its
+// own, so the suite answers the same on a GitHub runner, whose ImageOS, GITHUB_* and RUNNER_*
+// would otherwise leak into setup.mjs, as on a laptop. Every temporary folder is removed.
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import * as record from '../test-times/record.mjs';
 import {
-  NEVER_STARTED, compareRecords, gitBlob, parseRecord, readRunFile, unzip,
+  NEVER_STARTED, Recorder, compareRecords, gitBlob, parseRecord, readRunFile, unzip,
 } from '../test-times/record.mjs';
-import { connectKind, isLoopback } from '../test-times/touch.mjs';
+import { connectKind, isLoopback, outOf } from '../test-times/touch.mjs';
+import { nodeOptions } from '../test-times/node-test-reporter.mjs';
 import VitestTestTimes from '../test-times/vitest-reporter.mjs';
 import PlaywrightTestTimes from '../test-times/playwright-reporter.mjs';
 
@@ -28,15 +34,20 @@ const DIR = path.join(ROOT, 'test-times');
 const FIX = path.join(ROOT, 'test', 'fixtures', 'test-times');
 const MISMATCH = 'record does not match';
 
+const made = [];
+after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'test-times-'));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'test-times-'));
+  made.push(d);
+  return d;
 }
 
-// A child's environment with no recorder variable and no parent test runner in it.
+// A child's environment: only what a process needs to start, never this process's own, so no
+// recorder variable, no parent test runner and nothing of a GitHub runner reaches it.
+const KEEP_ENV = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'SystemRoot', 'SYSTEMROOT', 'USERPROFILE'];
 function cleanEnv(extra = {}) {
-  const env = { ...process.env, ...extra };
-  for (const k of Object.keys(env)) if (k.startsWith('TEST_TIMES_') || k.startsWith('GITHUB_') || k.startsWith('RUNNER_')) delete env[k];
-  delete env.NODE_TEST_CONTEXT;
+  const env = {};
+  for (const k of KEEP_ENV) if (process.env[k] !== undefined) env[k] = process.env[k];
   return { ...env, ...extra };
 }
 
@@ -72,6 +83,50 @@ test('the Node adapter, under the real node --test, writes the expected record',
   assert.equal(parsed.complete, true, parsed.why);
   // the spec reporter beside it still prints what it prints today
   assert.match(r.stdout, /fails on purpose/);
+  // pass.test.mjs waits OWN_WAIT_MS before its first test, outside any test: its waits_ms holds
+  // it, and its own time holds it on top of its tests' times, which only the file's own
+  // test:complete reports
+  const own = Number(/OWN_WAIT_MS = (\d+)/.exec(fs.readFileSync(path.join(FIX, 'pass.test.mjs'), 'utf8'))[1]);
+  const pass = parsed.files.find((f) => f.file === 'test/fixtures/test-times/pass.test.mjs');
+  const sum = parsed.tests.filter((t) => t.file === pass.file).reduce((n, t) => n + (t.ms ?? 0), 0);
+  assert.ok(pass.waits_ms >= own + 5,
+    `pass.test.mjs asked for at least ${own + 5} ms of waits, but its waits_ms says ${pass.waits_ms}`);
+  assert.ok(pass.ms >= sum + own - 10,
+    `pass.test.mjs's own time, ${pass.ms} ms, is not its tests' ${sum} ms plus its ${own} ms outside them: it did not come from the file's own test:complete`);
+});
+
+// Three files that fail as files, written where a `.git` folder makes them repository files:
+// one throws on import, one ends its process in a test, one exits non-zero after its tests.
+test('a test file that fails as a file is recorded as failing, and the end line counts it', () => {
+  const t = tmp();
+  fs.mkdirSync(path.join(t, '.git'));
+  const src = {
+    'imports.test.mjs': "import { test } from 'node:test';\ntest('never counts', () => {});\nthrow new Error('this fixture fails on import');\n",
+    'crashes.test.mjs': "import { test } from 'node:test';\ntest('first', () => {});\ntest('ends the process', () => { process.exit(3); });\n",
+    'exits.test.mjs': "import { test } from 'node:test';\ntest('passes', () => {});\nprocess.on('exit', () => { process.exitCode = 4; });\n",
+    'clean.test.mjs': "import { test } from 'node:test';\ntest('passes', () => {});\n",
+  };
+  for (const [n, text] of Object.entries(src)) fs.writeFileSync(path.join(t, n), text);
+  const file = path.join(t, 'test-times.jsonl');
+  const r = spawnSync(process.execPath, [
+    `--import=${DIR}/touch.mjs?out=${file}.touch`, '--test', '--test-concurrency=2',
+    `--test-reporter=${DIR}/node-test-reporter.mjs`, `--test-reporter-destination=${file}`,
+    ...Object.keys(src),
+  ], { cwd: t, env: cleanEnv(), encoding: 'utf8', timeout: 60000 });
+  assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`);
+  const rec = parseRecord(fs.readFileSync(file, 'utf8'));
+  assert.equal(rec.complete, true, rec.why);
+  for (const n of ['imports.test.mjs', 'crashes.test.mjs', 'exits.test.mjs']) {
+    const own = rec.tests.filter((x) => x.file === n && x.name === record.FILE_ITSELF);
+    assert.equal(own.length, 1, `${MISMATCH}: ${n} failed as a file, but the record holds no failing line for it:\n${JSON.stringify(rec.tests)}`);
+    assert.equal(own[0].status, 'fail');
+    assert.equal(typeof own[0].ms, 'number');
+    assert.ok(rec.files.some((f) => f.file === n), `${n} keeps its file line`);
+  }
+  assert.equal(rec.tests.filter((x) => x.file === 'clean.test.mjs' && x.name === record.FILE_ITSELF).length, 0,
+    'a file that only passed has no line for itself');
+  assert.equal(rec.end.tests, rec.tests.length);
+  assert.ok(rec.tests.filter((x) => x.status === 'fail').length >= 3, 'the end line counts the files that failed as files');
 });
 
 test('without a file destination the Node adapter records nothing and the run is unchanged', () => {
@@ -96,7 +151,9 @@ function vitestObjects(fx) {
         options: { mode: a.mode }, result: () => ({ state: a.state, errors: [] }), diagnostic: () => a.diagnostic ?? undefined,
       }];
     }
-    if (name === 'onTestModuleEnd') return [{ ...mod(a.module, a.project), diagnostic: () => a.diagnostic }];
+    if (name === 'onTestModuleEnd') {
+      return [{ ...mod(a.module, a.project), diagnostic: () => a.diagnostic, state: () => a.state ?? 'passed', errors: () => a.errors ?? [] }];
+    }
     if (name === 'onTestRunEnd') return [[], [], a.reason];
     return [{ config: {} }];
   };
@@ -149,6 +206,7 @@ function playwrightObjects(fx) {
         a.result];
     }
     if (name === 'onEnd') return [{ status: a.status }];
+    if (name === 'onError') return [{ message: a.message, location: a.location && { ...a.location, file: path.join(ROOT, a.location.file) } }];
     return [{ workers: fx.config.workers, projects: Object.values(projects) }, {}];
   };
 }
@@ -324,4 +382,114 @@ test('the touch preload turns a connection into a kind and keeps no address', ()
 
 test('imported with no output in its address, the touch preload installs nothing', () => {
   assert.equal(globalThis[Symbol.for('dazzer.test-times.touch')], undefined);
+});
+
+test('a Playwright spec that fails to load before the run begins is still recorded as failing', () => {
+  const file = path.join(tmp(), 'test-times.jsonl');
+  const reporter = new PlaywrightTestTimes({ file });
+  reporter.onError({ message: 'SyntaxError', location: { file: path.join(FIX, 'socket.test.mjs'), line: 1, column: 1 } });
+  reporter.onEnd({ status: 'failed' });
+  const rec = parseRecord(fs.readFileSync(file, 'utf8'));
+  assert.equal(rec.complete, true, rec.why);
+  assert.deepEqual(rec.tests.map((x) => [x.file, x.name, x.status]),
+    [['test/fixtures/test-times/socket.test.mjs', record.FILE_ITSELF, 'fail']]);
+});
+
+test('a second test runner in a job that holds a record ends that record incomplete, saying so', () => {
+  const file = path.join(tmp(), 'test-times.jsonl');
+  const first = new Recorder({ file, runnerKind: 'node-test' });
+  first.start({ kindScope: 'job' });
+  first.test({ file: path.join(FIX, 'pass.test.mjs'), name: 'one', ms: 1, status: 'pass' });
+  first.finish({ complete: true });
+  const second = new Recorder({ file, runnerKind: 'vitest' });
+  second.start({ kindScope: 'job' });
+  let rec = parseRecord(fs.readFileSync(file, 'utf8'));
+  assert.equal(rec.complete, false, 'the job\'s record is no longer complete');
+  assert.equal(rec.why, record.SECOND_RUNNER);
+  assert.equal(rec.tests.length, 1, 'the first runner\'s lines are kept, never truncated');
+  second.test({ file: path.join(FIX, 'socket.test.mjs'), name: 'two', ms: 1, status: 'pass' });
+  second.finish({ complete: true });
+  rec = parseRecord(fs.readFileSync(file, 'utf8'));
+  assert.equal(rec.why, 'a second test runner started in this job; a job keeps one runner\'s record');
+  // a runner that empties its destination on opening, as Node's does, leaves the run line said
+  fs.writeFileSync(file, '');
+  const third = new Recorder({ file, runnerKind: 'node-test' });
+  third.start({ kindScope: 'job' });
+  rec = parseRecord(fs.readFileSync(file, 'utf8'));
+  assert.equal(rec.run?.type, 'run');
+  assert.equal(rec.why, record.SECOND_RUNNER);
+});
+
+test('a file line made from its tests alone keeps their group', () => {
+  const file = path.join(tmp(), 'test-times.jsonl');
+  const rec = new Recorder({ file, runnerKind: 'vitest' });
+  rec.start({ kindScope: 'job' });
+  rec.test({ file: path.join(FIX, 'pass.test.mjs'), group: 'unit', name: 'one', ms: 1, status: 'pass' });
+  rec.finish({ complete: true });
+  const r = parseRecord(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(r.files.map((f) => [f.file, f.group]), [['test/fixtures/test-times/pass.test.mjs', 'unit']]);
+});
+
+test('a raw % in the touch path never crashes the reporter or the preload', () => {
+  const o = nodeOptions(['--import=/x/touch.mjs?out=/tmp/a%zz.touch', '--test-reporter=spec']);
+  assert.equal(o.touch, '/tmp/a%zz.touch');
+  assert.equal(outOf('file:///x/touch.mjs?out=/tmp/50%25%off.touch'), '/tmp/50%%off.touch');
+  assert.equal(nodeOptions(['--import=/x/touch.mjs?out=/tmp/a%20b.touch']).touch, '/tmp/a b.touch');
+});
+
+// A stand-in for a test runner's own code: a module under node_modules that arms a timer, as
+// vitest's per-test and per-hook timeouts do through its safe timers.
+test('waits_ms counts only the delays a test\'s own code asks for, never a runner\'s from node_modules', () => {
+  const t = tmp();
+  fs.mkdirSync(path.join(t, 'node_modules', 'stand-in-runner'), { recursive: true });
+  fs.writeFileSync(path.join(t, 'node_modules', 'stand-in-runner', 'index.mjs'),
+    'export function arm() { const h = setTimeout(() => {}, 5000); clearTimeout(h); const i = setInterval(() => {}, 10000); clearInterval(i); }\n');
+  fs.writeFileSync(path.join(t, 'main.mjs'),
+    "import { arm } from './node_modules/stand-in-runner/index.mjs';\narm();\nawait new Promise((resolve) => setTimeout(resolve, 7));\n");
+  const out = path.join(t, 'touch.jsonl');
+  const r = spawnSync(process.execPath, [`--import=${DIR}/touch.mjs?out=${out}`, path.join(t, 'main.mjs')],
+    { cwd: t, env: cleanEnv(), encoding: 'utf8', timeout: 30000 });
+  assert.equal(r.status, 0, r.stderr);
+  const ls = fs.readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const waits = ls.filter((l) => typeof l.waits_ms === 'number').map((l) => l.waits_ms);
+  assert.deepEqual(waits, [7], `only main.mjs's own 7 ms counts:\n${ls.map((l) => JSON.stringify(l)).join('\n')}`);
+});
+
+test('the touch preload never changes how a process dies, and says a kind the moment it is seen', async () => {
+  const t = tmp();
+  fs.writeFileSync(path.join(t, 'stuck.mjs'),
+    "import { spawnSync } from 'node:child_process';\nspawnSync(process.execPath, ['-e', '']);\nprocess.stdout.write('ready\\n');\nfor (;;) {}\n");
+  const out = path.join(t, 'touch.jsonl');
+  const child = spawn(process.execPath, [`--import=${DIR}/touch.mjs?out=${out}`, path.join(t, 'stuck.mjs')],
+    { cwd: t, env: cleanEnv(), stdio: ['ignore', 'pipe', 'inherit'] });
+  const ended = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+  await new Promise((resolve) => child.stdout.on('data', (b) => { if (String(b).includes('ready')) resolve(); }));
+  child.kill('SIGTERM');
+  const killed = setTimeout(() => child.kill('SIGKILL'), 5000);
+  const end = await ended;
+  clearTimeout(killed);
+  assert.equal(end.signal, 'SIGTERM', `a process stuck in its own code dies on SIGTERM, as it would with no preload; it ended ${JSON.stringify(end)}`);
+  const text = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : '';
+  const ls = text.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.ok(ls.some((l) => l.pid === child.pid && (l.kinds ?? []).includes('process')),
+    `the child process it started was written down when it started, before any exit:\n${text}`);
+});
+
+test('the runner\'s own process is never counted as a test file\'s, whenever it marks itself', () => {
+  const t = tmp();
+  const out = path.join(t, 'touch.jsonl');
+  fs.writeFileSync(out, [
+    { pid: 10, ppid: 1, file: '/runner/bin.js', kinds: ['process'], waits_ms: null },
+    { pid: 10, ppid: 1, runner: true },
+    { pid: 11, ppid: 10, file: '/repo/a.test.mjs', kinds: ['network'], waits_ms: null },
+    { pid: 11, ppid: 10, file: '/repo/a.test.mjs', kinds: ['network'], waits_ms: 4 },
+    { pid: 12, ppid: 11, file: '/repo/helper.mjs', kinds: ['process'], waits_ms: 9 },
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  assert.deepEqual(record.readTouch(out, 10).map((l) => l.pid), [11, 11]);
+});
+
+test('the README says why fullyParallel is not read and what --not-slowest does with no other group', () => {
+  const readme = fs.readFileSync(path.join(DIR, 'README.md'), 'utf8');
+  assert.match(readme, /`fullyParallel`[^\n]*not read/, 'the README says fullyParallel is not read, and why');
+  assert.match(readme, /`--not-slowest`[^\n]*no other group/, 'the README says what --not-slowest does with no other group');
 });

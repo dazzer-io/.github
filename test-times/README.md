@@ -11,7 +11,7 @@ name, result or record of any repository.
 
 | File | What it is |
 | --- | --- |
-| `record.mjs` | The format's writer and reader: `parseRecord`, `readRunFile` (unzips a downloaded run file with `node:zlib`, stored and deflated entries only), `compareRecords`, `gitBlob`, `Recorder`. And the readers' contract: `jobOf`, `pairRecords`, `ranNoTest`, `jobsOfRun` (attempts and matrix legs), `jobGroups`, `groupTimes`, `KEEP_STEP`. Every other reader imports these, so none rebuilds them. |
+| `record.mjs` | The format's writer and reader: `parseRecord`, `readRunFile` (unzips a downloaded run file with `node:zlib`, stored and deflated entries only), `compareRecords`, `gitBlob`, `Recorder`. And the readers' contract: `jobOf`, `pairRecords`, `ranNoTest`, `jobsOfRun` (attempts and matrix legs), `jobGroups`, `groupTimes`, `KEEP_STEP`, and `median`, the one median every reader takes. Every other reader imports these, so none rebuilds them. |
 | `read.mjs` | The reader's command line and its GitHub reads. |
 | `plan.mjs` | The planner: deals test files into parts by their recorded time, and counts parts. A module (`deal`, `count`, `weigh`, `checkDeal`, `loadHistory`, `dealLine`) and a command line. |
 | `node-test-reporter.mjs`, `vitest-reporter.mjs`, `playwright-reporter.mjs` | The three adapters. |
@@ -71,6 +71,8 @@ name, result or record of any repository.
   and its lines are dropped. So under `node --test --test-isolation=none` (Node 22:
   `--experimental-test-isolation=none`), where the tests run in the runner's own process,
   `waits_ms` is null: the tests' own waits never reach the record (record.mjs `testsInRunner`).
+  Their kinds are lost the same way: `kinds` there holds only what the processes the tests
+  started were seen to touch, and reads as if it were whole.
 - **A file's `ms`:**
   - Node's runner: its own `test:complete` time;
   - vitest: its module's environment, prepare, collect, setup and test durations added
@@ -267,13 +269,23 @@ node plan.mjs --history <file or folder> --count --group <name> --under <ms>
 ```
 
 `--files` holds every test file the runner discovered at the run's commit, one `<path>\t<group>`
-per line; a line with no tab, or an empty group, is a file of no group. A file listed twice is
-refused: `a file was discovered twice: <file>`.
+per line; a line with no tab, or an empty group, is a file of no group.
+
+- **Paths are repository-relative, with forward slashes,** the form the record writes them in
+  (record.mjs `repoPath`), such as `test/cart.test.mjs`. A history entry is found by that exact
+  path and group, so a listing's absolute paths, or paths relative to a runner's own test folder,
+  must be made repository-relative first. When the history holds files and no discovered file
+  matched any, the deal still goes, by count, and prints
+  `::warning title=test-times plan::none of the <n> discovered files matched any of the history's <m> files, ...`.
+- A file listed twice is refused: `a file was discovered twice: <file>`. A list with no file at
+  all is refused, exit 1: `no test file was discovered: a lane always holds at least one`, since
+  a listing that broke would otherwise deal nothing and pass.
 
 - **The history.** `--history` is the file `read.mjs --history` wrote, or a folder of them at
   any depth, as `actions/download-artifact` leaves them by pattern. From a folder it takes the
   one whose `attempt` is the highest not above `GITHUB_RUN_ATTEMPT` (with none set, the
-  highest), so a part re-run alone deals the deal its first attempt dealt. None fitting is
+  highest), so a part re-run alone deals the deal its first attempt dealt. Only the command line
+  reads that variable: `loadHistory(where, attempt)` given no attempt caps nothing. None fitting is
   refused, and so are two different files of one attempt.
 - **The deal**, `deal({ files, history, parts, lane })`:
   - **weights:** a file is matched to the history entry with its own path and group; it weighs
@@ -296,21 +308,35 @@ refused: `a file was discovered twice: <file>`.
   of its own SHA-256 and its path, or `none` and why), then per part its file count, its
   predicted time and how many of its files have history, then `deal <hash>`. A part holding one
   file that is the slowest part says `<file> alone sets the wait`.
-- **What it writes,** with `--part <i>`: to `--out`, part i's paths, one per line, each path once;
-  to `--deal`, the record's deal line, `{"type":"deal","parts","part","files","discovered",
-  "discovered_count","history"}`, where `files` holds one path per dealt file, `discovered` is
+- **What it writes,** with `--part <i>`, every file in the line form of `--files` (its path, and
+  a tab and its group when it has one), so no group is dropped and a path dealt under two groups
+  to two parts is two different files; a file of no group is its path alone, so a runner with no
+  groups reads plain paths. To `--out`, part i's files, one per line. To `--deal`, the record's
+  deal line, `{"type":"deal","parts","part","files","discovered",
+  "discovered_count","history"}`, where `files` holds one line per dealt file, `discovered` is
   the SHA-256 of every discovered `[path, group]`, sorted, as JSON, and `history` the SHA-256 of
   the history file's bytes. A part passes `<record file>.deal` as `--deal`, and the adapter copies
-  the line into the record.
+  the line into the record. With `$GITHUB_OUTPUT` set it also appends `run=true` or `run=false`
+  and `files=<n>`.
+- **A part dealt nothing runs no test.** It prints `part <i>/<n>: run no test`, its `--out` is
+  empty, its deal line holds no file, and it writes `run=false`. Its workflow skips the runner on
+  `run=false` and never hands it the empty list: `node --test`, vitest and Playwright given no
+  file run every file they find. This happens when a branch deletes files the count was made for,
+  so it is not refused.
 - **How many parts**, `--count --lane <job group> [--ignore <job group>]...`: the smallest count
   whose predicted slowest part, set-up included where it is recorded, is no longer than the
   longest median of the other job groups in `history.jobs`, leaving out the lane's own and those
   ignored. The lane's files are every file in the history, so the plan job limits them to the
-  lane's jobs with `read.mjs --job-prefix`. With no history, or no other group, one.
+  lane's jobs with `read.mjs --job-prefix`. With no history, or no other group, one. A lane
+  whose set-up alone is not under the figure stays at one part, saying
+  `the lane's set-up alone, <x> min, is not under <group> <y> min, and every part pays it`,
+  because no split brings it under.
 - **How many shares**, `--count --group <name> --under <ms>`: the smallest count whose slowest
   share of that group's recorded files is no longer than `--under`.
 - Where no count gets under its figure, the count stops at the smallest one at the lowest slowest
-  part, and says `<file> alone sets the wait`. The counts print the count and the slowest part
+  part, and says `<file> alone sets the wait`. No count is ever above 256, GitHub's limit on the
+  jobs one matrix makes; reaching it, the count stops at the lowest slowest part up to it, and
+  says so. The counts print the count and the slowest part
   against the figure it was held to, and append `count=<n>` and `parts=[1,…,n]` to
   `$GITHUB_OUTPUT` when that is set.
 - **Exit codes:** 0 dealt or counted; 1 refused, saying why; 2 `plan.mjs: <what is wrong>` for

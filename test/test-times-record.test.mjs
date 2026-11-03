@@ -581,20 +581,27 @@ test('under node --test with no isolation the job\'s waits are unknown, never a 
 
 test('a Recorder for node --test with no isolation records the job\'s waits as unknown, whatever its helpers\' exit lines say', () => {
   const helper = [{ pid: 41, ppid: process.pid, file: null, kinds: [], waits_ms: 0 }];
-  for (const flag of ['--test-isolation=none', '--experimental-test-isolation=none']) {
+  const waitsOf = (opts) => {
     const file = path.join(tmp(), 'test-times.jsonl');
-    const rec = new Recorder({ file, runnerKind: 'node-test', execArgv: ['--test', flag] });
+    const rec = new Recorder({ file, runnerKind: 'node-test', ...opts });
     rec.start({ kindScope: 'job' });
     rec.test({ file: path.join(FIX, 'pass.test.mjs'), name: 'one', ms: 1, status: 'pass' });
     rec.finish({ complete: true, touchLines: helper });
-    assert.deepEqual(parseRecord(fs.readFileSync(file, 'utf8')).files.map((f) => f.waits_ms), [null],
-      `${MISMATCH}: under ${flag} the tests ran in the runner's own process, so the job's waits are unknown`);
+    return parseRecord(fs.readFileSync(file, 'utf8')).files.map((f) => f.waits_ms);
+  };
+  const none = [
+    { execArgv: ['--test', '--test-isolation=none'] },
+    { execArgv: ['--test', '--experimental-test-isolation=none'] },
+    { execArgv: ['--test', '--test-isolation', 'none'] },
+    { execArgv: ['--test', '--experimental-test-isolation', 'none'] },
+    { isolation: 'none', execArgv: ['--test'] },
+  ];
+  for (const opts of none) {
+    assert.deepEqual(waitsOf(opts), [null],
+      `${MISMATCH}: under ${JSON.stringify(opts)} the tests ran in the runner's own process, so the job's waits are unknown`);
   }
-  const file = path.join(tmp(), 'test-times.jsonl');
-  const isolated = new Recorder({ file, runnerKind: 'node-test', execArgv: ['--test', '--test-isolation=process'] });
-  isolated.start({ kindScope: 'job' });
-  isolated.test({ file: path.join(FIX, 'pass.test.mjs'), name: 'one', ms: 1, status: 'pass' });
-  isolated.finish({ complete: true, touchLines: helper });
-  assert.deepEqual(parseRecord(fs.readFileSync(file, 'utf8')).files.map((f) => f.waits_ms), [0],
+  assert.deepEqual(waitsOf({ execArgv: ['--test', '--test-isolation=process'] }), [0],
     'with process isolation the job\'s waits stay known');
+  assert.deepEqual(waitsOf({ isolation: 'process', execArgv: ['--test', '--test-isolation', 'none'] }), [0],
+    'the isolation its adapter read is the one that counts');
 });

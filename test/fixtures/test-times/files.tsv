@@ -8,5 +8,5 @@ test/golf.test.mjs
 test/hotel.test.mjs	
 e2e/basket.spec.ts	chromium
 e2e/basket.spec.ts	firefox
-int/locks-a.int.ts	lock-order
-int/locks-b.int.ts	lock-order
+int/locks-a.int.ts	serial-locks
+int/locks-b.int.ts	serial-locks

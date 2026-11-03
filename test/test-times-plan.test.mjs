@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import {
   MATRIX_LIMIT, NONE_DISCOVERED, NOT_EXACTLY_ONCE, PlanError, checkDeal, count, deal, loadHistory, readFilesList, weigh,
 } from '../test-times/plan.mjs';
-import { readDeal } from '../test-times/record.mjs';
+import { parseRecord, ranNoTest, readDeal } from '../test-times/record.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PLAN = path.join(ROOT, 'test-times', 'plan.mjs');
@@ -120,6 +120,15 @@ test('a deal that does not hold every file exactly once is refused, naming the f
     (err) => err instanceof PlanError && err.message === NONE_DISCOVERED, 'no discovered file is never a lane');
 });
 
+// deal() runs no check of its own (plan.mjs, deal): its placement holds each file once by
+// construction, so it is proved here, at every count from one part to more parts than files.
+test('every count deals every discovered file exactly once', () => {
+  for (let parts = 1; parts <= FILES.length + 2; parts++) {
+    const d = deal({ files: FILES, history: HISTORY, parts, lane: 'unit-tests' });
+    assert.doesNotThrow(() => checkDeal(FILES, d.parts.map((p) => p.files)), `at ${parts} parts`);
+  }
+});
+
 // Worked by hand: the lane's fourteen recorded files total 34.7 s; its set-up is 30 s.
 test('a lane\'s count is the smallest whose slowest part no longer sets the wait', () => {
   const two = count({ history: HISTORY, lane: 'unit-tests', ignore: ['Merge Check'] });
@@ -134,15 +143,37 @@ test('a lane\'s count is the smallest whose slowest part no longer sets the wait
   assert.deepEqual([alone.count, alone.why], [1, 'no other job group to hold unit-tests to'], 'a lane alone stays one part');
 });
 
-// Every part pays the whole set-up, so a lane whose set-up alone is over the figure is never
-// split on it: 300 serial files of 1 s, 60 s of set-up, held to 50 s.
-test('a lane no count holds under stays at one part when its set-up alone is over, and never passes the matrix limit', () => {
-  const files = {};
-  for (let i = 0; i < 300; i++) files[`test/many-${String(i).padStart(3, '0')}.test.mjs`] = [{ group: null, ms: 1000, workers: 1, serial: true, n: 3 }];
+// 300 serial files of 1 s, held to docs-site's 50 s, with the lane's set-up given.
+const SERIAL_300 = {};
+for (let i = 0; i < 300; i++) SERIAL_300[`test/many-${String(i).padStart(3, '0')}.test.mjs`] = [{ group: null, ms: 1000, workers: 1, serial: true, n: 3 }];
+const held = (setup) => count({ history: { ...HISTORY, files: SERIAL_300,
+  jobs: { 'unit-tests': { ms: 400000, setup_ms: setup, n: 3 }, 'docs-site': { ms: 50000, setup_ms: 5000, n: 3 } } }, lane: 'unit-tests' });
+
+// D15: where no count holds the slowest part under the figure, the count is the smallest whose
+// slowest part's own tests, the part less the lane's recorded set-up, are under it. Six parts of
+// fifty 1 s files hold the tests to 50 s, so 1 ms of set-up either side of the figure, or ten
+// seconds over it, gives the same count.
+test('where the set-up keeps a lane over, the count holds its slowest part\'s own tests under, and 1 ms of set-up never swings it', () => {
+  const at = held(50000);
+  const below = held(49999);
+  assert.equal(below.count, at.count, `a set-up of 49 999 ms gives ${below.count} parts and one of 50 000 ms ${at.count}: 1 ms of set-up swings the count`);
+  for (const [c, setup] of [[at, 50000], [below, 49999], [held(60000), 60000]]) {
+    assert.deepEqual([c.count, c.tests_ms, c.slowest_ms, c.setup_over, c.alone, c.capped], [6, 50000, 50000 + setup, true, null, false],
+      `with ${setup} ms of set-up, six parts of fifty 1 s files hold the tests to docs-site's 50 s, and the set-up keeps the lane over`);
+  }
+});
+
+test('a lane whose set-up is well under its figure still takes the first rule', () => {
+  // With 5 s of set-up, six parts are 55 s, over 50 s, though their own tests, 50 s, are not;
+  // seven parts of at most 43 files are 48 s. So the count is seven, and the set-up does not keep it over.
+  const c = held(5000);
+  assert.deepEqual([c.count, c.slowest_ms, c.tests_ms, c.setup_over], [7, 48000, 43000, false],
+    'a lane whose slowest part, set-up included, gets under the figure at some count takes that count');
+});
+
+test('a lane no count holds under stops where its heaviest file stands alone, and never passes the matrix limit', () => {
+  const files = SERIAL_300;
   const base = { ...HISTORY, files };
-  const over = count({ history: { ...base, jobs: { 'unit-tests': { ms: 70000, setup_ms: 60000, n: 3 }, 'docs-site': { ms: 50000, setup_ms: 5000, n: 3 } } }, lane: 'unit-tests' });
-  assert.deepEqual([over.count, over.setup_over, over.alone, over.slowest_ms], [1, true, null, 360000],
-    'the set-up alone, 60 s, is over docs-site\'s 50 s, so the count stays at one and names no file');
   const many = {};
   for (let i = 0; i < 600; i++) many[`test/many-${String(i).padStart(3, '0')}.test.mjs`] = [{ group: null, ms: 1000, workers: 1, serial: true, n: 3 }];
   const capped = count({ history: { ...base, files: many, jobs: { 'unit-tests': { ms: 600000, setup_ms: 0, n: 3 }, 'docs-site': { ms: 1000, setup_ms: 0, n: 3 } } }, lane: 'unit-tests' });
@@ -151,7 +182,8 @@ test('a lane no count holds under stays at one part when its set-up alone is ove
     'six hundred 1 s files under 1 s needs 600 parts; up to 256 the lowest slowest part, 3 s, comes first at 200');
   const heavy = count({ history: { ...base, files: { ...files, 'test/huge.test.mjs': [{ group: null, ms: 80000, workers: 1, serial: true, n: 3 }] },
     jobs: { 'unit-tests': { ms: 400000, setup_ms: 1000, n: 3 }, 'docs-site': { ms: 50000, setup_ms: 5000, n: 3 } } }, lane: 'unit-tests' });
-  assert.deepEqual([heavy.setup_over, heavy.alone], [false, 'test/huge.test.mjs'], 'one 80 s file alone sets the wait over 50 s');
+  assert.deepEqual([heavy.count, heavy.setup_over, heavy.alone], [5, false, 'test/huge.test.mjs'],
+    'one 80 s file is over 50 s even without the set-up; at five parts it stands alone, the other four holding 75 s each');
 });
 
 test('one group\'s share count is the smallest under the figure given, and a file alone heavier says so', () => {
@@ -237,26 +269,38 @@ test('its counts print the figure they were held to and write count and parts to
   fs.writeFileSync(slow, JSON.stringify({ ...HISTORY, jobs: { ...HISTORY.jobs, 'unit-tests': { ms: 420000, setup_ms: 60000, n: 3 } } }));
   const over = plan(['--history', slow, '--count', '--lane', 'unit-tests', '--ignore', 'Merge Check']);
   assert.equal(over.status, 0, over.stdout);
-  assert.ok(over.stdout.includes('no count holds it under: the lane\'s set-up alone, 1.0 min, is not under build-docs 0.8 min, and every part pays it\n'), over.stdout);
-  assert.ok(over.stdout.includes('count 1: '), over.stdout);
+  assert.ok(over.stdout.includes('count 1: slowest part 1.6 min with 1.0 min set-up against build-docs 0.8 min\n'), over.stdout);
+  assert.ok(over.stdout.includes('no count holds it under: the lane\'s set-up, 1.0 min, keeps it over build-docs 0.8 min, and every part pays it: the count holds the slowest part\'s own tests, 0.6 min, under it\n'), over.stdout);
 });
 
-test('a part dealt nothing says it runs no test, and no discovered file is refused', () => {
+test('a part dealt nothing says it runs no test, its record carries its deal line of no file, and no discovered file is refused', () => {
   const dir = tmp();
   const files = path.join(dir, 'files.tsv');
   fs.writeFileSync(files, 'test/alpha.test.mjs\ntest/bravo.test.mjs\n');
   const output = path.join(dir, 'github-output');
-  const run = (part) => plan(['--history', path.join(FIX, 'history.json'), '--files', files, '--parts', '3', '--part', String(part),
-    '--out', path.join(dir, `part-${part}.txt`), '--deal', path.join(dir, `part-${part}.deal`)], { GITHUB_OUTPUT: output });
+  const record = (part) => path.join(dir, `part-${part}`, 'test-times.jsonl');
+  const run = (part) => {
+    fs.mkdirSync(path.dirname(record(part)), { recursive: true });
+    return plan(['--history', path.join(FIX, 'history.json'), '--files', files, '--parts', '3', '--part', String(part),
+      '--out', path.join(dir, `part-${part}.txt`), '--deal', `${record(part)}.deal`], { GITHUB_OUTPUT: output });
+  };
   const first = run(1);
   assert.equal(first.status, 0, first.stdout);
   const third = run(3);
   assert.equal(third.status, 0, third.stdout);
   assert.ok(third.stdout.includes('part 3/3: run no test\n'), third.stdout);
-  assert.equal(fs.readFileSync(output, 'utf8'), 'run=true\nfiles=1\nrun=false\nfiles=0\n',
-    'GITHUB_OUTPUT says whether the part runs any test, so a runner is never handed an empty list');
+  assert.equal(fs.readFileSync(output, 'utf8'), 'run=true\nfile_count=1\nrun=false\nfile_count=0\n',
+    'GITHUB_OUTPUT says whether the part runs any test, so a runner is never handed an empty list, and its count of files as file_count, never read as the list');
   assert.equal(fs.readFileSync(path.join(dir, 'part-3.txt'), 'utf8'), '');
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'part-3.deal'), 'utf8')).files, [], 'its deal line still says what it was dealt');
+  // The part skips its runner, so finish.mjs writes its record: the never-started one, carrying
+  // the deal line plan.mjs wrote beside it, so a reader sees the part was planned and ran no test.
+  const finish = spawnSync(process.execPath, [path.join(ROOT, 'test-times', 'finish.mjs')], {
+    env: cleanEnv({ TEST_TIMES_FILE: record(3), TEST_TIMES_ID: 'unit-3-gh-3-1700000000000' }), encoding: 'utf8', timeout: 30000 });
+  assert.equal(finish.status, 0, finish.stderr);
+  const kept = parseRecord(fs.readFileSync(record(3), 'utf8'));
+  assert.deepEqual(kept.deal, readDeal(record(3)), 'the record a part dealt nothing leaves carries its deal line');
+  assert.deepEqual([kept.deal?.part, kept.deal?.files], [3, []], 'its deal line is part 3\'s and holds no file');
+  assert.equal(ranNoTest({ record: kept, conclusion: 'success' }), true, 'a reader counts it as planned and run, having run no test');
   const empty = path.join(dir, 'empty.tsv');
   fs.writeFileSync(empty, '\n');
   const none = plan(['--history', path.join(FIX, 'history.json'), '--files', empty, '--parts', '2']);

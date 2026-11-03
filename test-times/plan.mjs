@@ -13,15 +13,16 @@
 //
 // A part dealt nothing runs no test: it prints `part <i>/<n>: run no test`, writes `run=false`
 // to $GITHUB_OUTPUT, and its caller never hands its runner the empty list, since a runner
-// given no file runs every file it finds.
+// given no file runs every file it finds. Its record is the never-started one finish.mjs
+// writes, carrying its deal line of no file, so a reader counts it as planned and run.
 //
 // The history file is read.mjs --history's (README.md beside this file). Handed a folder, the
 // planner reads every history file in it at any depth and takes the one whose `attempt` is the
 // highest not above GITHUB_RUN_ATTEMPT, so a part re-run alone deals the deal its first attempt
 // dealt. Every part computes the whole deal itself from that one file and takes its own share.
 //
-// Exit codes: 0 dealt or counted; 1 refused, saying why (among them `the deal does not hold
-// every file exactly once: <file>`); 2 `plan.mjs: <what is wrong>` for arguments it does not take.
+// Exit codes: 0 dealt or counted; 1 refused, saying why (among them `a file was discovered
+// twice: <file>`); 2 `plan.mjs: <what is wrong>` for arguments it does not take.
 //
 // The spec is work/release-stays-fast/spec-split.md in dev-cycle, "The planner, shared".
 
@@ -134,6 +135,11 @@ export function hashDiscovered(files) {
 // ties to the lower part. Each part's prediction is its total plus the lane's median set-up
 // (history.jobs[lane].setup_ms); with none, the set-up is unknown and the prediction is the
 // total alone. The same inputs, in any order, always give the same deal.
+//
+// It runs no checkDeal of its own: the placement puts each discovered file into exactly one
+// part by construction, after normalise has refused a file discovered twice, so such a check
+// could never fire. The tests prove the placement at every count against checkDeal, which
+// stays for a caller holding a deal it did not make.
 export function deal({ files, history, parts, lane = null }) {
   if (!Number.isInteger(parts) || parts < 1) throw new PlanError(`parts is a whole number above 0, not ${parts}`);
   if (Array.isArray(files) && !files.length) throw new PlanError(NONE_DISCOVERED);
@@ -148,7 +154,6 @@ export function deal({ files, history, parts, lane = null }) {
     lists[at].push(f);
   }
   for (const list of lists) list.sort(byPath);
-  checkDeal(weighed, lists);
   const setup = lane !== null && typeof history?.jobs?.[lane]?.setup_ms === 'number' ? history.jobs[lane].setup_ms : null;
   const out = lists.map((list, i) => ({
     part: i + 1,
@@ -168,23 +173,36 @@ function heaviest(weighed) {
   return [...weighed].sort((a, b) => b.weight - a.weight || byPath(a, b))[0] ?? null;
 }
 
-// The smallest count whose slowest part is no longer than the figure it is held to, counting
-// no higher than GitHub's matrix limit. Where no count gets there, the smallest count at the
-// lowest slowest part: where one file alone sets it (`alone`), or the limit (`capped`).
-// `entries` come from the history itself.
+// The count, by one rule from recorded figures only (D15, spec-split.md "How many parts"),
+// counting no higher than GitHub's matrix limit. The first of these that some count meets
+// decides, and the count is the smallest that meets it:
+//   1. its slowest part, set-up included where it is recorded, is no longer than the figure;
+//   2. where a set-up is recorded, its slowest part's own tests, the part less the set-up, are
+//      no longer than the figure: the set-up keeps the lane over (`setup_over`);
+//   3. the heaviest file stands alone and sets the wait, its part the slowest (`alone`).
+// Where none is met up to the limit, the smallest count at the lowest slowest part (`capped`).
+// So 1 ms of set-up either side of the figure never swings the count. `entries` come from the
+// history itself.
 function smallest({ entries, history, lane, against, addSetup }) {
   const { files: weighed } = weigh({ files: entries, history });
   const top = heaviest(weighed);
   const most = Math.min(entries.length, MATRIX_LIMIT);
-  let best = null;
+  let own = null; let alone = null; let best = null;
   for (let n = 1; n <= most; n++) {
     const d = deal({ files: entries, history, parts: n, lane: addSetup ? lane : null });
     const slowest = Math.max(...d.parts.map((p) => p.predicted_ms));
-    if (slowest <= against) return { count: n, slowest_ms: slowest, alone: null, capped: false, setup_ms: d.setup_ms };
-    if (!best || slowest < best.slowest_ms) best = { count: n, slowest_ms: slowest, setup_ms: d.setup_ms };
-    if (slowest <= Math.round(top.weight + (d.setup_ms ?? 0))) return { ...best, alone: label(top), capped: false };
+    const tests = Math.max(...d.parts.map((p) => p.total_ms));
+    const at = { count: n, slowest_ms: slowest, tests_ms: tests, setup_ms: d.setup_ms };
+    if (slowest <= against) return { ...at, alone: null, capped: false, setup_over: false };
+    if (!own && d.setup_ms !== null && tests <= against) own = at;
+    if (!best || slowest < best.slowest_ms) best = at;
+    // Standing alone, the heaviest file sets the lowest slowest part any count reaches, so rule
+    // 1 is out of reach from here on, and so is rule 2 if it has not been met.
+    if (tests <= Math.round(top.weight)) { alone = at; break; }
   }
-  return { ...best, alone: null, capped: true };
+  if (own) return { ...own, alone: null, capped: false, setup_over: true };
+  if (alone) return { ...alone, alone: label(top), capped: false, setup_over: false };
+  return { ...best, alone: null, capped: true, setup_over: false };
 }
 
 const historyEntries = (history, keep = () => true) => {
@@ -207,12 +225,12 @@ const historyEntries = (history, keep = () => true) => {
 //     jobs with read.mjs --job-prefix.
 //   count({ history, group, under })  one group's share count: the smallest count whose
 //     slowest share of that group's files is no longer than `under` ms.
-// With no history, or no other job group to hold a lane to, one. A lane whose set-up alone is
-// not under its figure stays at one part (`setup_over`), since every part pays the whole set-up
-// and no split brings it under. No count is ever above MATRIX_LIMIT.
-// Answers { count, slowest_ms, against_ms, against, setup_ms, alone, capped, setup_over, why }.
+// With no history, or no other job group to hold a lane to, one. Where no count holds the
+// slowest part under, `smallest` above says which count, by one rule; no count is ever above
+// MATRIX_LIMIT. `tests_ms` is the slowest part's own tests, the part less the set-up.
+// Answers { count, slowest_ms, tests_ms, against_ms, against, setup_ms, alone, capped, setup_over, why }.
 export function count({ history, lane = null, ignore = [], group, under } = {}) {
-  const one = (why, extra = {}) => ({ count: 1, slowest_ms: null, against_ms: null, against: null, setup_ms: null,
+  const one = (why, extra = {}) => ({ count: 1, slowest_ms: null, tests_ms: null, against_ms: null, against: null, setup_ms: null,
     alone: null, capped: false, setup_over: false, why, ...extra });
   const byGroup = group !== undefined;
   if (byGroup && !(typeof under === 'number' && Number.isFinite(under) && under > 0)) throw new PlanError(`under is a time in ms above 0, not ${under}`);
@@ -229,14 +247,8 @@ export function count({ history, lane = null, ignore = [], group, under } = {}) 
     .sort(([ga, a], [gb, b]) => b.ms - a.ms || (ga < gb ? -1 : 1));
   if (!others.length) return one(`no other job group to hold ${lane} to`);
   const [against, { ms: againstMs }] = others[0];
-  const setup = history.jobs?.[lane]?.setup_ms;
-  if (typeof setup === 'number' && setup >= againstMs) {
-    const d = deal({ files: entries, history, parts: 1, lane });
-    return { count: 1, slowest_ms: d.parts[0].predicted_ms, against_ms: againstMs, against, setup_ms: setup,
-      alone: null, capped: false, setup_over: true, why: null };
-  }
   const r = smallest({ entries, history, lane, against: againstMs, addSetup: true });
-  return { ...r, against_ms: againstMs, against, setup_over: false, why: null };
+  return { ...r, against_ms: againstMs, against, why: null };
 }
 
 function isHistory(doc) {
@@ -394,7 +406,7 @@ export function main(argv) {
         const set = o.group !== undefined ? '' : c.setup_ms === null ? ', set-up unknown' : ` with ${minutes(c.setup_ms)} set-up`;
         const fig = o.group !== undefined ? `the ${minutes(c.against_ms)} given` : `${c.against} ${minutes(c.against_ms)}`;
         console.log(`count ${c.count}: ${what} ${minutes(c.slowest_ms)}${set} against ${fig}`);
-        if (c.setup_over) console.log(`no count holds it under: the lane's set-up alone, ${minutes(c.setup_ms)}, is not under ${fig}, and every part pays it`);
+        if (c.setup_over) console.log(`no count holds it under: the lane's set-up, ${minutes(c.setup_ms)}, keeps it over ${fig}, and every part pays it: the count holds the slowest part's own tests, ${minutes(c.tests_ms)}, under it`);
         if (c.alone) console.log(`no count holds it under: ${c.alone} alone sets the wait`);
         if (c.capped) console.log(`no count up to GitHub's ${MATRIX_LIMIT}-job matrix limit holds it under: the count stops at ${c.count}`);
       }
@@ -413,7 +425,7 @@ export function main(argv) {
       const mine = dealt.parts[o.part - 1].files;
       if (o.out) fs.writeFileSync(o.out, mine.map((f) => `${lineOf(f)}\n`).join(''));
       if (o.deal) fs.writeFileSync(o.deal, JSON.stringify(dealLine({ dealt, part: o.part, files, historyHash: h.hash })) + '\n');
-      if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `run=${mine.length > 0}\nfiles=${mine.length}\n`);
+      if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `run=${mine.length > 0}\nfile_count=${mine.length}\n`);
     }
     return 0;
   } catch (err) {

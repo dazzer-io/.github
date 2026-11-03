@@ -1,0 +1,34 @@
+{
+ "note": "A stored Playwright run for test/test-times-record.test.mjs, in the objects Playwright's reporter interface documents (onBegin with a FullConfig, onTestEnd with a TestCase and TestResult, onEnd with a FullResult). The test builds each TestCase's parent suites (type describe, file, project) and their project() from these fields. File paths are this folder's real fixture files, so their blobs are real. One file runs in two projects, so it has a file line for each.",
+ "options": {},
+ "config": { "workers": 3 },
+ "projects": {
+  "chromium": { "name": "chromium" },
+  "webkit": { "name": "webkit", "workers": 1 }
+ },
+ "events": [
+  ["onBegin"],
+  ["onTestEnd", { "file": "test/fixtures/test-times/pass.test.mjs", "project": "chromium", "describes": ["a suite"], "title": "adds > one", "annotations": [], "result": { "status": "passed", "duration": 1200, "retry": 0 } }],
+  ["onTestEnd", { "file": "test/fixtures/test-times/pass.test.mjs", "project": "chromium", "describes": [], "title": "flaky", "annotations": [], "result": { "status": "failed", "duration": 3000, "retry": 0 } }],
+  ["onTestEnd", { "file": "test/fixtures/test-times/pass.test.mjs", "project": "chromium", "describes": [], "title": "flaky", "annotations": [], "result": { "status": "passed", "duration": 2500, "retry": 1 } }],
+  ["onTestEnd", { "file": "test/fixtures/test-times/pass.test.mjs", "project": "chromium", "describes": [], "title": "not yet", "annotations": [{ "type": "fixme" }], "result": { "status": "skipped", "duration": 0, "retry": 0 } }],
+  ["onTestEnd", { "file": "test/fixtures/test-times/pass.test.mjs", "project": "webkit", "describes": ["a suite"], "title": "adds > one", "annotations": [], "result": { "status": "passed", "duration": 1800, "retry": 0 } }],
+  ["onTestEnd", { "file": "test/fixtures/test-times/fail.test.mjs", "project": "chromium", "describes": [], "title": "times out", "annotations": [], "result": { "status": "timedOut", "duration": 30000, "retry": 0 } }],
+  ["onTestEnd", { "file": "test/fixtures/test-times/fail.test.mjs", "project": "chromium", "describes": [], "title": "skipped here", "annotations": [{ "type": "skip" }], "result": { "status": "skipped", "duration": 0, "retry": 0 } }],
+  ["onEnd", { "status": "failed" }]
+ ],
+ "expected": [
+  {"v":1,"type":"run","repo":null,"sha":null,"ref":null,"event":"local","run_id":null,"run_attempt":null,"job_key":null,"runner_name":null,"runner":{"os":null,"arch":null,"cores":null,"label":null},"runner_kind":"playwright","reference_ms":24.2,"kind_scope":"runner","started_at":"2026-11-03T19:44:57.654Z","ended_at":"2026-11-03T19:44:57.654Z"},
+  {"type":"test","file":"test/fixtures/test-times/fail.test.mjs","name":"times out","n":0,"ms":30000,"status":"fail","retry":0},
+  {"type":"test","file":"test/fixtures/test-times/fail.test.mjs","name":"skipped here","n":0,"ms":0,"status":"skip","retry":0},
+  {"type":"file","file":"test/fixtures/test-times/fail.test.mjs","group":"chromium","blob":"9067b23713e20f1bb5f7db5292e00b10f9970516","ms":30000,"workers":3,"serial":false,"kinds":["browser"],"waits_ms":null},
+  {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"a suite > adds > one","n":0,"ms":1200,"status":"pass","retry":0},
+  {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"flaky","n":0,"ms":3000,"status":"fail","retry":0},
+  {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"flaky","n":1,"ms":2500,"status":"pass","retry":1},
+  {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"not yet","n":0,"ms":0,"status":"todo","retry":0},
+  {"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":"chromium","blob":"27181ef24a95d0e7fa9015669ff6e10b81c7da6c","ms":6700,"workers":3,"serial":false,"kinds":["browser"],"waits_ms":null},
+  {"type":"test","file":"test/fixtures/test-times/pass.test.mjs","name":"a suite > adds > one","n":1,"ms":1800,"status":"pass","retry":0},
+  {"type":"file","file":"test/fixtures/test-times/pass.test.mjs","group":"webkit","blob":"27181ef24a95d0e7fa9015669ff6e10b81c7da6c","ms":1800,"workers":1,"serial":true,"kinds":["browser"],"waits_ms":null},
+  {"type":"end","tests":7,"files":3,"complete":true,"why":null}
+ ]
+}

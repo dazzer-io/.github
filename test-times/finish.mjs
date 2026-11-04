@@ -4,14 +4,16 @@
 //   node "$TEST_TIMES_DIR/finish.mjs" >> "$GITHUB_OUTPUT"
 //   node "$TEST_TIMES_DIR/finish.mjs" --kind history --file "$RUNNER_TEMP/history.json" >> "$GITHUB_OUTPUT"
 //
-// For a record: when no runner wrote one, it writes a two-line record whose end says
-// "complete":false,"why":"the test runner never started". A record that exists and has no
+// For a record: when no runner wrote one, it writes the never-started record, whose end says
+// "complete":false,"why":"the test runner never started". A dealt part's deal line, left in
+// `<TEST_TIMES_FILE>.deal`, goes in after its run line, as the adapter writes it, so a part dealt
+// nothing, which skips its runner, still says what it was dealt. A record that exists and has no
 // end is left as it is: the runner stopped partway. It prints `name=test-times-<TEST_TIMES_ID>`.
 // For a plan job's history file it prints `name=test-times-history-<run attempt>`.
 // What it saw goes to stderr, so stdout holds only the line for $GITHUB_OUTPUT.
 
 import fs from 'node:fs';
-import { NEVER_STARTED, neverStartedRecord, parseRecord, readRunFacts } from './record.mjs';
+import { NEVER_STARTED, neverStartedRecord, parseRecord, readDeal, readRunFacts } from './record.mjs';
 
 const env = process.env;
 const args = process.argv.slice(2);
@@ -45,8 +47,10 @@ try { text = fs.readFileSync(file, 'utf8'); } catch { /* no record */ }
 if (text === null || !text.trim()) {
   const why = text === null ? NEVER_STARTED : 'the record was empty: the runner stopped before its reporter wrote';
   const lines = neverStartedRecord({ facts: readRunFacts(file), why });
+  const deal = readDeal(file);
+  if (deal) lines.splice(1, 0, deal);
   fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
-  say(`no record was written, so it says "${why}"`);
+  say(`no record was written, so it says "${why}"${deal ? `, with its deal line of ${deal.files?.length ?? 0} files` : ''}`);
 } else {
   const r = parseRecord(text);
   say(r.complete ? `complete, ${r.tests.length} tests in ${r.files.length} files` : `incomplete: ${r.why}`);

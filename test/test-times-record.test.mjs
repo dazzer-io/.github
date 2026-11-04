@@ -25,7 +25,7 @@ import {
   NEVER_STARTED, Recorder, compareRecords, gitBlob, parseRecord, readRunFile, unzip,
 } from '../test-times/record.mjs';
 import { connectKind, isLoopback, outOf } from '../test-times/touch.mjs';
-import { nodeOptions } from '../test-times/node-test-reporter.mjs';
+import { nodeOptions, recordRun } from '../test-times/node-test-reporter.mjs';
 import VitestTestTimes from '../test-times/vitest-reporter.mjs';
 import PlaywrightTestTimes from '../test-times/playwright-reporter.mjs';
 
@@ -514,4 +514,123 @@ test('in job scope the job\'s waits_ms is null unless every process that wrote a
   both.finish({ complete: true, touchLines: [...exited, killed, { ...killed, waits_ms: 30 }] });
   assert.deepEqual(parseRecord(fs.readFileSync(whole, 'utf8')).files.map((f) => f.waits_ms), [130],
     'with both exit lines the job\'s waits are their sum');
+});
+
+// File scope (Node's runner, one child per file): a.test.mjs's own process 31 said a kind and
+// was killed before its exit line, while a helper it started, 33, exited having asked 5 ms; so
+// its waits are unknown. b.test.mjs's process 32 exited having asked 12 ms.
+test('in file scope a file\'s waits_ms is null when one of its processes left no exit line', () => {
+  const file = path.join(tmp(), 'test-times.jsonl');
+  const rec = new Recorder({ file, runnerKind: 'node-test', execArgv: [] });
+  rec.start({ kindScope: 'file' });
+  const a = path.join(FIX, 'pass.test.mjs');
+  const b = path.join(FIX, 'socket.test.mjs');
+  rec.test({ file: a, name: 'one', ms: 1, status: 'pass' });
+  rec.test({ file: b, name: 'two', ms: 1, status: 'pass' });
+  rec.finish({ complete: true, touchLines: [
+    { pid: 31, ppid: process.pid, file: a, kinds: ['process'], waits_ms: null },
+    { pid: 33, ppid: process.pid, file: a, kinds: [], waits_ms: 5 },
+    { pid: 32, ppid: process.pid, file: b, kinds: ['local-service'], waits_ms: null },
+    { pid: 32, ppid: process.pid, file: b, kinds: ['local-service'], waits_ms: 12 },
+  ] });
+  const r = parseRecord(fs.readFileSync(file, 'utf8'));
+  assert.equal(r.run.kind_scope, 'file');
+  assert.deepEqual(r.files.map((f) => [f.file, f.kinds, f.waits_ms]), [
+    ['test/fixtures/test-times/pass.test.mjs', ['process'], null],
+    ['test/fixtures/test-times/socket.test.mjs', ['local-service'], 12],
+  ], `${MISMATCH}: pass.test.mjs's process 31 left no exit line, so its waits are unknown, whatever its helper's exit line says`);
+});
+
+// Under --test-isolation=none (Node 22 names it --experimental-test-isolation) the tests run in
+// the runner's own process, whose touch lines are dropped once it marks itself. A helper the
+// test starts exits with 0 ms of waits, while the test itself waits 25 ms in the runner's
+// process: a known job total would leave that out. Node 25 marks the runner before its exit and
+// recorded 0 here; Node 22.14 never marks it, and the runner's own exit line comes after the
+// record, so there the waits were already unknown. The Recorder test after this one holds the
+// rule on any version.
+test('under node --test with no isolation the job\'s waits are unknown, never a total that leaves out the runner\'s own process', () => {
+  const t = tmp();
+  fs.mkdirSync(path.join(t, '.git'));
+  const file = path.join(t, 'test-times.jsonl');
+  const touch = `--import=${DIR}/touch.mjs?out=${file}.touch`;
+  fs.writeFileSync(path.join(t, 'waits.test.mjs'), [
+    "import { test } from 'node:test';",
+    "import { spawnSync } from 'node:child_process';",
+    "test('waits in the runner process', async () => {",
+    `  const r = spawnSync(process.execPath, [${JSON.stringify(touch)}, '-e', '']);`,
+    "  if (r.status !== 0) throw new Error('the helper did not run');",
+    '  await new Promise((resolve) => setTimeout(resolve, 25));',
+    '});',
+    '',
+  ].join('\n'));
+  const r = spawnSync(process.execPath, [
+    touch, '--test', '--experimental-test-isolation=none',
+    `--test-reporter=${DIR}/node-test-reporter.mjs`, `--test-reporter-destination=${file}`,
+    'waits.test.mjs',
+  ], { cwd: t, env: cleanEnv(), encoding: 'utf8', timeout: 60000 });
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  const helper = fs.readFileSync(`${file}.touch`, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    .filter((l) => l.waits_ms === 0);
+  assert.equal(helper.length, 1, 'the helper wrote its exit line with 0 ms of waits');
+  const rec = parseRecord(fs.readFileSync(file, 'utf8'));
+  assert.equal(rec.complete, true, rec.why);
+  assert.equal(rec.run.kind_scope, 'job');
+  assert.deepEqual(rec.files.map((f) => [f.file, f.waits_ms]), [['waits.test.mjs', null]],
+    `${MISMATCH}: with no isolation the tests ran in the runner's own process, so the job's waits are unknown:\n${JSON.stringify(rec.files)}`);
+});
+
+test('a Recorder for node --test with no isolation records the job\'s waits as unknown, whatever its helpers\' exit lines say', () => {
+  const helper = [{ pid: 41, ppid: process.pid, file: null, kinds: [], waits_ms: 0 }];
+  const waitsOf = (opts) => {
+    const file = path.join(tmp(), 'test-times.jsonl');
+    const rec = new Recorder({ file, runnerKind: 'node-test', ...opts });
+    rec.start({ kindScope: 'job' });
+    rec.test({ file: path.join(FIX, 'pass.test.mjs'), name: 'one', ms: 1, status: 'pass' });
+    rec.finish({ complete: true, touchLines: helper });
+    return parseRecord(fs.readFileSync(file, 'utf8')).files.map((f) => f.waits_ms);
+  };
+  const none = [
+    { execArgv: ['--test', '--test-isolation=none'] },
+    { execArgv: ['--test', '--experimental-test-isolation=none'] },
+    { execArgv: ['--test', '--test-isolation', 'none'] },
+    { execArgv: ['--test', '--experimental-test-isolation', 'none'] },
+    { isolation: 'none', execArgv: ['--test'] },
+  ];
+  for (const opts of none) {
+    assert.deepEqual(waitsOf(opts), [null],
+      `${MISMATCH}: under ${JSON.stringify(opts)} the tests ran in the runner's own process, so the job's waits are unknown`);
+  }
+  assert.deepEqual(waitsOf({ execArgv: ['--test', '--test-isolation=process'] }), [0],
+    'with process isolation the job\'s waits stay known');
+  assert.deepEqual(waitsOf({ isolation: 'process', execArgv: ['--test', '--test-isolation', 'none'] }), [0],
+    'the isolation its adapter read is the one that counts');
+});
+
+// The Node adapter reads its command line once (nodeOptions) and hands the Recorder the
+// isolation it read. Driven here with a command line of its own, never this process's, it must
+// record the waits its own isolation says. One of its two isolations differs from this
+// process's own flags, however this suite is run, so a Recorder that read them would be caught.
+test('the Node adapter hands the Recorder the isolation it read, and the record\'s waits follow it', async () => {
+  const pass = path.join(FIX, 'pass.test.mjs');
+  const waitsUnder = async (isolation) => {
+    const dir = tmp();
+    const file = path.join(dir, 'test-times.jsonl');
+    fs.writeFileSync(`${file}.touch`, `${JSON.stringify({ pid: 41, ppid: process.pid, file: null, kinds: [], waits_ms: 0 })}\n`);
+    const execArgv = ['--test', ...isolation, '--test-concurrency=2',
+      `--test-reporter=${path.join(DIR, 'node-test-reporter.mjs')}`, `--test-reporter-destination=${file}`];
+    async function* events() {
+      yield { type: 'test:start', data: { file: pass, name: 'one', nesting: 0 } };
+      yield { type: 'test:pass', data: { file: pass, name: 'one', nesting: 0, details: { duration_ms: 1 } } };
+    }
+    for await (const _ of recordRun(events(), { execArgv, cwd: dir })) { /* it yields nothing */ }
+    const rec = parseRecord(fs.readFileSync(file, 'utf8'));
+    assert.equal(rec.complete, true, rec.why);
+    return rec.files.map((f) => f.waits_ms);
+  };
+  for (const isolation of [['--test-isolation', 'none'], ['--experimental-test-isolation=none']]) {
+    assert.deepEqual(await waitsUnder(isolation), [null],
+      `${MISMATCH}: the reporter read ${isolation.join(' ')}, so the tests ran in the runner's own process and the job's waits are unknown, whatever this process's own flags say`);
+  }
+  assert.deepEqual(await waitsUnder(['--test-isolation=process']), [0],
+    `${MISMATCH}: the reporter read process isolation, so the job's waits stay known, whatever this process's own flags say`);
 });

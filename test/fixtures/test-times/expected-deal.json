@@ -1,0 +1,39 @@
+{
+ "lane": "unit-tests",
+ "parts": [
+  {
+   "part": 1,
+   "files": [
+    ["test/charlie.test.mjs", null],
+    ["test/delta.test.mjs", null],
+    ["test/golf.test.mjs", null]
+   ],
+   "total_ms": 9700,
+   "predicted_ms": 39700
+  },
+  {
+   "part": 2,
+   "files": [
+    ["int/locks-a.int.ts", "serial-locks"],
+    ["test/echo.test.mjs", null],
+    ["test/foxtrot.test.mjs", null],
+    ["test/hotel.test.mjs", null]
+   ],
+   "total_ms": 9850,
+   "predicted_ms": 39850
+  },
+  {
+   "part": 3,
+   "files": [
+    ["e2e/basket.spec.ts", "chromium"],
+    ["e2e/basket.spec.ts", "firefox"],
+    ["int/locks-b.int.ts", "serial-locks"],
+    ["test/alpha.test.mjs", null],
+    ["test/bravo.test.mjs", null]
+   ],
+   "total_ms": 9950,
+   "predicted_ms": 39950
+  }
+ ],
+ "hash": "388374df491737caa36b7a2d969c93413e393d883965e57dabfc053fcb3c6866"
+}

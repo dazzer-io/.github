@@ -1,0 +1,12 @@
+test/alpha.test.mjs	
+test/bravo.test.mjs	
+test/charlie.test.mjs	
+test/delta.test.mjs	
+test/echo.test.mjs	
+test/foxtrot.test.mjs	
+test/golf.test.mjs	
+test/hotel.test.mjs	
+e2e/basket.spec.ts	chromium
+e2e/basket.spec.ts	firefox
+int/locks-a.int.ts	serial-locks
+int/locks-b.int.ts	serial-locks

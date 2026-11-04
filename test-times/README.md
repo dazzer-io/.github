@@ -302,10 +302,13 @@ per line; a line with no tab, or an empty group, is a file of no group.
     `--lane`, or none recorded, the set-up is unknown;
   - **every file exactly once:** the placement puts each discovered file into exactly one part,
     once a file discovered twice has been refused, so `deal` runs no check that could never
-    fire. `checkDeal(files, parts)` checks a deal a caller holds against the discovered files
-    and refuses one that misses a file, holds one twice or holds one never discovered:
-    `the deal does not hold every file exactly once: <file>`. The tests check every count's deal
-    with it.
+    fire. `checkDeal(files, parts)` is the planner's test oracle: the tests check every count's
+    deal with it, and it refuses one that misses a file, holds one twice or holds one never
+    discovered: `the deal does not hold every file exactly once: <file>`. No gate calls it. CI
+    Gate holds the shares' records, not the discovered list `checkDeal` takes, and makes its own
+    check from them, in its own words: their `discovered` and `history` hashes, their file lists
+    and `discovered_count` (spec-split.md in dev-cycle, "CI Gate checks every file ran exactly
+    once").
 
   The same inputs, in any order, give the same deal, so every part computes the whole deal from
   the one history file and takes its own share.
@@ -323,8 +326,10 @@ per line; a line with no tab, or an empty group, is a file of no group.
   "discovered_count","history"}`, where `files` holds one line per dealt file, `discovered` is
   the SHA-256 of every discovered `[path, group]`, sorted, as JSON, and `history` the SHA-256 of
   the history file's bytes. A part passes `<record file>.deal` as `--deal`, and the adapter copies
-  the line into the record, or finish.mjs does when the runner never started. With `$GITHUB_OUTPUT` set it also appends `run=true` or `run=false`
-  and `file_count=<n>`, the count of part i's files (the files themselves are in `--out`).
+  the line into the record, or finish.mjs does when the runner never started; either way it is
+  the record's second line, after the run line, since the record compare reads lines in order.
+  With `$GITHUB_OUTPUT` set it also appends `run=true` or `run=false` and `file_count=<n>`, the
+  count of part i's files (the files themselves are in `--out`).
 - **A part dealt nothing runs no test.** It prints `part <i>/<n>: run no test`, its `--out` is
   empty, its deal line holds no file, and it writes `run=false`. Its workflow skips the runner on
   `run=false` and never hands it the empty list: `node --test`, vitest and Playwright given no
@@ -341,8 +346,7 @@ per line; a line with no tab, or an empty group, is a file of no group.
   lane's jobs with `read.mjs --job-prefix`. With no history, or no other group, one.
 - **How many shares**, `--count --group <name> --under <ms>`: the smallest count whose slowest
   share of that group's recorded files is no longer than `--under`.
-- **Where no count gets under its figure,** one rule from recorded figures only decides, so 1 ms
-  of set-up either side of the figure never swings the count:
+- **Where no count gets under its figure,** one rule from recorded figures only decides:
   - the smallest count whose slowest part's own tests, the part less the lane's recorded
     set-up, are no longer than the figure, saying
     `the lane's set-up, <x> min, keeps it over <group> <y> min, and every part pays it: the count holds the slowest part's own tests, <z> min, under it`;
@@ -352,6 +356,15 @@ per line; a line with no tab, or an empty group, is a file of no group.
     the count stops at the smallest one at the lowest slowest part up to it, and says so.
 
   A share count has no set-up, so for it the first of these never applies.
+
+  At the figure itself 1 ms of set-up either side never swings the count: 300 serial 1 s files
+  held to 50 000 ms take 6 parts at 49 999 ms of set-up and at 50 000. **The count still jumps**
+  where the figure stops being reachable at any count up to 256, at a set-up of the figure less
+  the lowest slowest part's own tests. Those 300 files take 150 parts at 48 000 ms of set-up,
+  two files each, 2 000 + 48 000 = 50 000. At 48 001 no count up to 256 gets under, so the
+  first of the rules above gives 6 parts, the slowest 98 001 ms: 1 ms of set-up, or of the
+  figure's median, trades 150 parts at 50 s for 6 at 98 s. Before that edge the count also
+  steps as it gets under: 47 000 ms gives 100 parts, 47 001 gives 150.
 - The counts print the count and the slowest part against the figure it was held to, and
   append `count=<n>` and `parts=[1,…,n]` to `$GITHUB_OUTPUT` when that is set.
 - **Exit codes:** 0 dealt or counted; 1 refused, saying why; 2 `plan.mjs: <what is wrong>` for

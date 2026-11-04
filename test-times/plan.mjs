@@ -105,7 +105,8 @@ export function weigh({ files, history }) {
 }
 
 // Whether the parts hold every discovered file exactly once and nothing else. Throws naming the
-// first file that is missing, dealt twice or never discovered.
+// first file that is missing, dealt twice or never discovered. The planner's test oracle (deal,
+// below): no gate calls it.
 export function checkDeal(files, partLists) {
   const want = new Map(normalise(files).map((f) => [keyOf(f), f]));
   const got = new Map();
@@ -138,8 +139,11 @@ export function hashDiscovered(files) {
 //
 // It runs no checkDeal of its own: the placement puts each discovered file into exactly one
 // part by construction, after normalise has refused a file discovered twice, so such a check
-// could never fire. The tests prove the placement at every count against checkDeal, which
-// stays for a caller holding a deal it did not make.
+// could never fire. checkDeal is the planner's test oracle: the tests prove the placement
+// against it at every count. CI Gate does not call it. It holds the shares' records, not the
+// discovered list checkDeal takes, and checks them itself, in its own words: their `discovered`
+// and `history` hashes, their file lists and `discovered_count` (spec-split.md in dev-cycle,
+// "CI Gate checks every file ran exactly once").
 export function deal({ files, history, parts, lane = null }) {
   if (!Number.isInteger(parts) || parts < 1) throw new PlanError(`parts is a whole number above 0, not ${parts}`);
   if (Array.isArray(files) && !files.length) throw new PlanError(NONE_DISCOVERED);
@@ -181,8 +185,13 @@ function heaviest(weighed) {
 //      no longer than the figure: the set-up keeps the lane over (`setup_over`);
 //   3. the heaviest file stands alone and sets the wait, its part the slowest (`alone`).
 // Where none is met up to the limit, the smallest count at the lowest slowest part (`capped`).
-// So 1 ms of set-up either side of the figure never swings the count. `entries` come from the
-// history itself.
+// At the figure itself 1 ms of set-up either side never swings the count: 300 serial 1 s files
+// held to 50 000 ms take 6 parts at 49 999 ms of set-up and at 50 000. The count still jumps
+// where the figure stops being reachable at any count up to the limit, at a set-up of the
+// figure less the lowest slowest part's own tests: those 300 files take rule 1 at 150 parts with
+// 48 000 ms of set-up (two files each, 2 000 + 48 000 = 50 000), and with 48 001 no count up to
+// the limit meets it, so rule 2 gives 6 parts, the slowest 98 001 ms. Rule 1 also steps on its
+// own: 47 000 ms gives 100 parts, 47 001 gives 150. `entries` come from the history itself.
 function smallest({ entries, history, lane, against, addSetup }) {
   const { files: weighed } = weigh({ files: entries, history });
   const top = heaviest(weighed);
@@ -193,6 +202,8 @@ function smallest({ entries, history, lane, against, addSetup }) {
     const slowest = Math.max(...d.parts.map((p) => p.predicted_ms));
     const tests = Math.max(...d.parts.map((p) => p.total_ms));
     const at = { count: n, slowest_ms: slowest, tests_ms: tests, setup_ms: d.setup_ms };
+    // Rule 1 returns at once and rule 2 waits its turn, so the first set-up at which rule 1 is out
+    // of reach at every count drops the count to rule 2's, which can be far smaller (above).
     if (slowest <= against) return { ...at, alone: null, capped: false, setup_over: false };
     if (!own && d.setup_ms !== null && tests <= against) own = at;
     if (!best || slowest < best.slowest_ms) best = at;

@@ -305,10 +305,10 @@ per line; a line with no tab, or an empty group, is a file of no group.
     fire. `checkDeal(files, parts)` is the planner's test oracle: the tests check every count's
     deal with it, and it refuses one that misses a file, holds one twice or holds one never
     discovered: `the deal does not hold every file exactly once: <file>`. No gate calls it. CI
-    Gate holds the shares' records, not the discovered list `checkDeal` takes, and makes its own
-    check from them, in its own words: their `discovered` and `history` hashes, their file lists
-    and `discovered_count` (spec-split.md in dev-cycle, "CI Gate checks every file ran exactly
-    once").
+    Gate, not built yet, is to hold the shares' records, not the discovered list `checkDeal`
+    takes, and is to make its own check from them, in its own words: their `discovered` and
+    `history` hashes, their file lists and `discovered_count` (spec-split.md in dev-cycle, "CI
+    Gate checks every file ran exactly once").
 
   The same inputs, in any order, give the same deal, so every part computes the whole deal from
   the one history file and takes its own share.
@@ -327,7 +327,8 @@ per line; a line with no tab, or an empty group, is a file of no group.
   the SHA-256 of every discovered `[path, group]`, sorted, as JSON, and `history` the SHA-256 of
   the history file's bytes. A part passes `<record file>.deal` as `--deal`, and the adapter copies
   the line into the record, or finish.mjs does when the runner never started; either way it is
-  the record's second line, after the run line, since the record compare reads lines in order.
+  the record's second line, after the run line, since `compareRecords` (record.mjs), the tests'
+  compare of a written record against a stored one, reads lines in order.
   With `$GITHUB_OUTPUT` set it also appends `run=true` or `run=false` and `file_count=<n>`, the
   count of part i's files (the files themselves are in `--out`).
 - **A part dealt nothing runs no test.** It prints `part <i>/<n>: run no test`, its `--out` is
@@ -362,9 +363,11 @@ per line; a line with no tab, or an empty group, is a file of no group.
   where the figure stops being reachable at any count up to 256, at a set-up of the figure less
   the lowest slowest part's own tests. Those 300 files take 150 parts at 48 000 ms of set-up,
   two files each, 2 000 + 48 000 = 50 000. At 48 001 no count up to 256 gets under, so the
-  first of the rules above gives 6 parts, the slowest 98 001 ms: 1 ms of set-up, or of the
-  figure's median, trades 150 parts at 50 s for 6 at 98 s. Before that edge the count also
-  steps as it gets under: 47 000 ms gives 100 parts, 47 001 gives 150.
+  first of the rules above gives 6 parts, the slowest 98 001 ms: 1 ms of set-up trades 150 parts
+  at 50 s for 6 at 98 s. 1 ms off the figure's median jumps it as far at that edge: held to
+  49 999 ms with 48 000 ms of set-up, no count gets under, and the same rule gives 7 parts, at
+  most 43 000 ms of tests each, the slowest 91 000 ms. Before that edge the count also steps as
+  it gets under: 47 000 ms gives 100 parts, 47 001 gives 150.
 - The counts print the count and the slowest part against the figure it was held to, and
   append `count=<n>` and `parts=[1,…,n]` to `$GITHUB_OUTPUT` when that is set.
 - **Exit codes:** 0 dealt or counted; 1 refused, saying why; 2 `plan.mjs: <what is wrong>` for

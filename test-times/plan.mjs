@@ -140,10 +140,10 @@ export function hashDiscovered(files) {
 // It runs no checkDeal of its own: the placement puts each discovered file into exactly one
 // part by construction, after normalise has refused a file discovered twice, so such a check
 // could never fire. checkDeal is the planner's test oracle: the tests prove the placement
-// against it at every count. CI Gate does not call it. It holds the shares' records, not the
-// discovered list checkDeal takes, and checks them itself, in its own words: their `discovered`
-// and `history` hashes, their file lists and `discovered_count` (spec-split.md in dev-cycle,
-// "CI Gate checks every file ran exactly once").
+// against it at every count. CI Gate, not built yet, is not to call it. It is to hold the
+// shares' records, not the discovered list checkDeal takes, and is to make its own check from
+// them, in its own words: their `discovered` and `history` hashes, their file lists and
+// `discovered_count` (spec-split.md in dev-cycle, "CI Gate checks every file ran exactly once").
 export function deal({ files, history, parts, lane = null }) {
   if (!Number.isInteger(parts) || parts < 1) throw new PlanError(`parts is a whole number above 0, not ${parts}`);
   if (Array.isArray(files) && !files.length) throw new PlanError(NONE_DISCOVERED);

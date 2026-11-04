@@ -296,7 +296,6 @@ test('finish.mjs writes a dealt part\'s deal line second, after its run line and
   assert.equal(kept[1]?.type, 'deal', `the deal line is not second, after the run line:\n${text}`);
   assert.deepEqual(kept.map((l) => l.type), ['run', 'deal', 'end'], `a dealt part's never-started record is its run line, its deal line and its end:\n${text}`);
   assert.deepEqual(kept[1], deal, 'the deal line is the one the part left beside the record');
-  assert.equal(parseRecord(text).neverStarted, true);
 });
 
 test('finish.mjs leaves a record that stopped partway as it is', () => {

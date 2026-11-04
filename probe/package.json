@@ -1,0 +1,5 @@
+{
+  "name": "probe-scan-blocks",
+  "private": true,
+  "dependencies": { "lodash": "4.17.15" }
+}

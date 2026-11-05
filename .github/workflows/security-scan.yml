@@ -31,6 +31,34 @@
 # checkout before scanning, osv-scanner reads an empty config the workflow writes and
 # scans lockfiles .gitignore would skip, and Semgrep scans files .gitignore lists.
 # The organisation and repositories come from the run's own context, never from this file.
+#
+# Every job runs where the setting SCAN_RUNNER_2 points, GitHub's own computers while it is
+# empty: the scan machines (decision 93). On the machines that run each change's own checks, a
+# job of the change could reach a scan beside it on the same machine and quiet it. The scan
+# machines hold no change's own code only while the scan runner group admits only the scan
+# workflows (decision 98): a workflow lives in the repository it checks, so a pull request in a
+# repository the group admits can add a workflow of its own naming the scan label, and only the
+# group's workflow list keeps that job off the scan machines; nothing in this file can. No job
+# here holds a write token today (each, person-tokens too, takes the workflow's contents: read and
+# sets no permissions of its own), so none has to stay on GitHub's computers by the repository's
+# rule for write tokens. test/runs-on.test.mjs holds each read-only job here that names its machine
+# to that setting; each write-token job (one granted a write, or left with the repository's default
+# token) to reading no CHECKS_, SCAN_ or LOCKED_ setting and, where it names its machine, to
+# GitHub's own labels, written as a literal label; and each job that calls a workflow (uses: at
+# the job's level, naming no machine) to a workflow in this repository's own folder (./), judged
+# in its own file.
+# It reads this file only in the plain subset of YAML its header lists line shape by line shape:
+# plain keys, plain, quoted or block values, - items and one-line flow lists, with no anchor,
+# alias or tag outside a quoted value or a block's body and no backslash in a double-quoted value;
+# it refuses any other line.
+#
+# That setting is the organisation's unless a repository sets a variable of the same name: this
+# workflow runs in each gated repository's own context, where GitHub reads a repository variable
+# SCAN_RUNNER_2 ahead of the organisation's, so a repository's admin can point that repository's
+# scan at any label. What keeps a repository from moving its scan onto machines that run changes'
+# own code is the runner groups' repository lists, and nothing in this file: a label reaches only
+# a set whose group admits the repository, so the scan stays apart only while no group admitting
+# a gated repository offers it a change-check set's label. CHECKS_RUNNER_2 overrides the same way.
 name: Security scan
 
 on:
@@ -47,7 +75,7 @@ env:
 jobs:
   plan:
     name: Read the switches
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
     # Advisory only when the variable reads advisory (GitHub compares without case); the
     # final job still runs and counts every output this leaves missing.
@@ -101,7 +129,7 @@ jobs:
     name: Dependency review
     needs: plan
     if: needs.plan.outputs.native == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 10
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     steps:
@@ -140,7 +168,7 @@ jobs:
     name: Dependency audit (osv-scanner)
     needs: plan
     if: needs.plan.outputs.native != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 15
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
@@ -210,7 +238,7 @@ jobs:
     name: Secret detection (gitleaks)
     needs: plan
     if: needs.plan.outputs.native != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 10
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
@@ -278,7 +306,7 @@ jobs:
     name: Static analysis (Semgrep)
     needs: plan
     if: needs.plan.outputs.native != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 20
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
@@ -342,7 +370,7 @@ jobs:
 
   person-tokens:
     name: Person tokens in workflows
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     steps:
@@ -399,7 +427,7 @@ jobs:
     name: security-scan
     needs: [plan, dependency-review, osv-scanner, gitleaks, semgrep, person-tokens]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - name: Name this workflow's own repository and commit

@@ -5,6 +5,11 @@
 # check is this job's check run, so the job's name must stay exactly "decide-tests"
 # (test/decide-tests-workflow.test.mjs holds it there). The tests read fixtures only:
 # no network, no secrets, read-only token.
+#
+# It runs where the organisation's change-check setting CHECKS_RUNNER_2 points, GitHub's own
+# computers while it is empty, and asks setup-node for Node 24, the Node the change-check
+# image keeps in its tool cache, so nothing is downloaded (test/runs-on.test.mjs holds the
+# machine line).
 name: Decide tests
 
 on:
@@ -17,7 +22,7 @@ permissions:
 jobs:
   decide-tests:
     name: decide-tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CHECKS_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - name: Check out this repository
@@ -28,7 +33,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Run the tests
         run: node --test test/*.test.mjs

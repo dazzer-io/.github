@@ -26,6 +26,13 @@
 # checkout before scanning, osv-scanner reads an empty config the workflow writes and
 # scans lockfiles .gitignore would skip, and Semgrep scans files .gitignore lists.
 # The organisation and repositories come from the run's own context, never from this file.
+#
+# Every job runs where the organisation setting SCAN_RUNNER_2 points, GitHub's own computers
+# while it is empty: the scan machines, where no change's own code runs. On the machines that
+# run each change's own checks, a job of the change could reach a scan beside it on the same
+# machine and quiet it; on the scan machines nothing of the change runs beside the scan. No job
+# here holds a write token, so none has to stay on GitHub's computers by decision 36
+# (test/runs-on.test.mjs holds every job to this).
 name: Security scan
 
 on:
@@ -42,7 +49,7 @@ env:
 jobs:
   plan:
     name: Read the switches
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
     # Advisory only when the variable reads advisory (GitHub compares without case); the
     # final job still runs and counts every output this leaves missing.
@@ -96,7 +103,7 @@ jobs:
     name: Dependency review
     needs: plan
     if: needs.plan.outputs.native == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 10
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     steps:
@@ -135,7 +142,7 @@ jobs:
     name: Dependency audit (osv-scanner)
     needs: plan
     if: needs.plan.outputs.native != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 15
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
@@ -205,7 +212,7 @@ jobs:
     name: Secret detection (gitleaks)
     needs: plan
     if: needs.plan.outputs.native != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 10
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
@@ -273,7 +280,7 @@ jobs:
     name: Static analysis (Semgrep)
     needs: plan
     if: needs.plan.outputs.native != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 20
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
@@ -339,7 +346,7 @@ jobs:
     name: security-scan
     needs: [plan, dependency-review, osv-scanner, gitleaks, semgrep]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - name: Name this workflow's own repository and commit

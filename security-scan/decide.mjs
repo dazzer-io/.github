@@ -11,6 +11,10 @@
 //     deletes or renames listed beside it, so no change hides its dependencies by removing
 //     them; gitleaks over the pull request's commits; and Semgrep's open-source engine against
 //     the base commit.
+// On both branches the person-token check (person-tokens.mjs) reads the workflow files the change
+// changes: a use of a person's GitHub token kept as a repository secret is one high finding,
+// allowed only through the calling repository's .github/person-token-exceptions.json on the base
+// branch, never through the accepted list.
 //
 // The mode is the variable SECURITY_SCAN_MODE, read on every run: "advisory" records every
 // finding and passes, ending with the annotation "security-scan would block: N"; "blocking"
@@ -32,6 +36,10 @@ export const MODES = ['advisory', 'blocking'];
 export const RECORD_PREFIX = 'records/risk-acceptance/';
 export const NATIVE_OUTPUTS = ['dependency-review'];
 export const OPEN_SOURCE_OUTPUTS = ['osv-head', 'osv-base', 'osv-removed', 'gitleaks', 'semgrep'];
+// Required on both branches: the person-token check is not a scanner GitHub's licence replaces.
+export const EVERY_BRANCH_OUTPUTS = ['person-tokens'];
+export const PERSON_TOKEN = 'person-token:';
+export const PERSON_TOKENS_SCANNER = 'person tokens';
 export const LOCKFILE_REMOVED = 'lockfile-removed:';
 // The fixed id of the finding "the change removes every dependency file its base had".
 export const DEPENDENCY_FILES_REMOVED = 'dependency-files-removed';
@@ -80,7 +88,7 @@ export function readNative(raw) {
 }
 
 export function requiredOutputs(native) {
-  return native ? [...NATIVE_OUTPUTS] : [...OPEN_SOURCE_OUTPUTS];
+  return [...(native ? NATIVE_OUTPUTS : OPEN_SOURCE_OUTPUTS), ...EVERY_BRANCH_OUTPUTS];
 }
 
 // ---------- the accepted list (.github/security-accepted.json at the change's head) ----------
@@ -357,6 +365,44 @@ export function readSemgrep(output) {
   return { findings, notes };
 }
 
+// The person-token check (person-tokens.mjs scan): its JSON and its exit code. Each use it
+// found in a workflow the change changes is one finding, high and runtime, counted as the
+// change's own because the change touches its file. Whether it is allowed is the check's own
+// reading of .github/person-token-exceptions.json on the base branch, so the accepted list
+// never accepts one: the finding carries its acceptance already. An exceptions file the change
+// writes that cannot be read is an error, like a malformed accepted list.
+export function readPersonTokens(output) {
+  const name = 'person-token check';
+  if (!output) return { error: `${name} wrote no output` };
+  const exit = String(output.exit ?? '').trim();
+  if (exit !== '0') return { error: `${name} ended with exit ${exit || 'unknown'}, not a finished check` };
+  const p = parseJson(name, output.text);
+  if (p.error) return { error: p.error };
+  const v = p.value;
+  if (!v || !Array.isArray(v.uses) || !Array.isArray(v.looked_at)) return { error: `${name} output has no uses list` };
+  const findings = [];
+  for (const u of v.uses) {
+    if (!u || typeof u.file !== 'string' || typeof u.secret !== 'string' || !Number.isInteger(u.line)) {
+      return { error: `${name} output holds a use with no file, line or secret` };
+    }
+    const id = `${PERSON_TOKEN}${u.file}:${u.secret}`;
+    const allowed = u.allowed === true && u.exception && typeof u.exception.until === 'string';
+    findings.push({
+      scanner: PERSON_TOKENS_SCANNER, id, ids: [id], severity: 'high', scope: 'runtime',
+      where: `${u.file}:${u.line}`, file: u.file, line: u.line,
+      words: String(u.words || `${u.secret} signs in to GitHub`),
+      message: String(u.message || u.words || `${u.file} line ${u.line} uses the repository secret ${u.secret} to sign in to GitHub`),
+      isNew: true, note: null,
+      accepted: allowed ? `exception until ${u.exception.until}: ${u.exception.reason}` : null,
+    });
+  }
+  const read = v.looked_at.length === 0
+    ? 'person tokens: the change touches no workflow file'
+    : `person tokens: read the ${v.looked_at.length} workflow file(s) the change touches`;
+  const notes = [read, ...(Array.isArray(v.notes) ? v.notes : []).map((n) => `person tokens: ${n}`)];
+  return { findings, notes, errors: v.error ? [`${name}: ${v.error}`] : [] };
+}
+
 // ---------- the decision ----------
 
 // A dependency counts as runtime unless its scanner says development: an unknown scope blocks.
@@ -372,15 +418,21 @@ export function decide(input) {
   const outputs = input.outputs || {};
   const notes = [modeNote, nativeNote, ...accepted.notes].filter(Boolean);
   const errors = accepted.error ? [accepted.error] : [];
-  const reads = native
-    ? [readDependencyReview(outputs['dependency-review'])]
-    : [readOsv(outputs['osv-head'], outputs['osv-base'], outputs['osv-removed']), readGitleaks(outputs.gitleaks), readSemgrep(outputs.semgrep)];
+  const reads = [
+    ...(native
+      ? [readDependencyReview(outputs['dependency-review'])]
+      : [readOsv(outputs['osv-head'], outputs['osv-base'], outputs['osv-removed']), readGitleaks(outputs.gitleaks), readSemgrep(outputs.semgrep)]),
+    readPersonTokens(outputs['person-tokens']),
+  ];
   const findings = [];
   for (const r of reads) {
     if (r.error) { errors.push(r.error); continue; }
+    errors.push(...(r.errors || []));
     notes.push(...(r.notes || []));
     for (const f of r.findings) {
-      const record = acceptedRecord(accepted, f.ids);
+      // A finding its reader already settled (a person token) keeps that; the rest are read
+      // against the accepted list.
+      const record = 'accepted' in f ? f.accepted : acceptedRecord(accepted, f.ids);
       findings.push({ ...f, accepted: record });
     }
   }
@@ -412,7 +464,7 @@ export function summary(d) {
   const lines = ['## Security scan', ''];
   lines.push(`Mode **${d.mode}**; branch **${d.branch}** (${d.native
     ? 'GitHub dependency review; CodeQL and push protection run on their own'
-    : 'osv-scanner, gitleaks, Semgrep'}).`);
+    : 'osv-scanner, gitleaks, Semgrep'}), and the person-token check on every branch.`);
   for (const n of d.notes) lines.push(`- ${cell(n)}`);
   lines.push('');
   if (d.errors.length > 0) {
@@ -431,6 +483,14 @@ export function summary(d) {
       lines.push(`| ${cell(f.scanner)} | ${cell(f.severity)}${f.note ? ` (${cell(f.note)})` : ''} | ${cell(f.scope)} | ${f.isNew ? 'yes' : 'no, on the base already'} | ${f.accepted ? cell(f.accepted) : 'no'} | ${cell(f.id)} | ${cell(f.where)} | ${cell(f.words)} | ${f.blocks ? 'yes' : 'no'} |`);
     }
   }
+  if (d.findings.some((f) => f.scanner === PERSON_TOKENS_SCANNER && f.blocks)) {
+    lines.push('', '### Person tokens', '',
+      'A workflow this change touches signs in to GitHub with a GitHub token kept as a repository secret: a person\'s own token, so the automation acts as that person. Use the workflow\'s own token (`${{ github.token }}`, with a `permissions` block granting what the job needs), or a GitHub App token minted in the job by `actions/create-github-app-token` (`${{ steps.<id>.outputs.token }}`). A use that was there before this check can be listed, with a one-line reason and an end date, in `.github/person-token-exceptions.json`; exceptions are read from the base branch, so a change never lets itself in.');
+    // A list item, not a table cell: the whole sentence, on one line.
+    for (const f of d.findings.filter((x) => x.scanner === PERSON_TOKENS_SCANNER && x.blocks)) {
+      lines.push('', `- ${String(f.message).replace(/\s*[\r\n]+\s*/g, ' ')}`);
+    }
+  }
   lines.push('', `**${d.annotation}**`, '');
   return lines.join('\n');
 }
@@ -440,11 +500,21 @@ export function escapeData(s) {
   return String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
 }
 
+// An annotation's property (file=, line=), escaped so no value can end it early.
+export function escapeProperty(s) {
+  return escapeData(s).replace(/:/g, '%3A').replace(/,/g, '%2C');
+}
+
 // The lines the step prints for GitHub to read as annotations; the last is the verdict.
 export function annotations(d) {
   const out = d.notes
     .filter((n) => /^SECURITY_SCAN_/.test(n))
     .map((n) => `::warning title=${ANNOTATION_TITLE}::${escapeData(n)}`);
+  // Each person token that blocks points at its line, so the pull request shows it there.
+  const at = d.mode === 'advisory' ? 'warning' : 'error';
+  for (const f of d.findings.filter((x) => x.scanner === PERSON_TOKENS_SCANNER && x.blocks)) {
+    out.push(`::${at} file=${escapeProperty(f.file)},line=${escapeProperty(f.line)},title=${ANNOTATION_TITLE}::${escapeData(f.message)}`);
+  }
   const level = d.mode === 'advisory' ? 'warning' : (d.result === 'fail' ? 'error' : 'notice');
   out.push(`::${level} title=${ANNOTATION_TITLE}::${d.annotation}`);
   return out;
@@ -459,7 +529,7 @@ function argValue(argv, name) {
 
 export function readOutputs(fs, path, dir) {
   const outputs = {};
-  for (const name of [...NATIVE_OUTPUTS, ...OPEN_SOURCE_OUTPUTS]) {
+  for (const name of [...NATIVE_OUTPUTS, ...OPEN_SOURCE_OUTPUTS, ...EVERY_BRANCH_OUTPUTS]) {
     const exitFile = path.join(dir, `${name}.exit`);
     if (!fs.existsSync(exitFile)) continue;
     const outFile = path.join(dir, `${name}.out`);

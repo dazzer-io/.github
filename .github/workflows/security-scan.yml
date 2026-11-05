@@ -27,12 +27,20 @@
 # scans lockfiles .gitignore would skip, and Semgrep scans files .gitignore lists.
 # The organisation and repositories come from the run's own context, never from this file.
 #
-# Every job runs where the organisation setting SCAN_RUNNER_2 points, GitHub's own computers
-# while it is empty: the scan machines, where no change's own code runs. On the machines that
-# run each change's own checks, a job of the change could reach a scan beside it on the same
-# machine and quiet it; on the scan machines nothing of the change runs beside the scan. No job
-# here holds a write token, so none has to stay on GitHub's computers by decision 36
-# (test/runs-on.test.mjs holds every job to this).
+# Every job runs where the setting SCAN_RUNNER_2 points, GitHub's own computers while it is
+# empty: the scan machines, where no change's own code runs. On the machines that run each
+# change's own checks, a job of the change could reach a scan beside it on the same machine and
+# quiet it; on the scan machines nothing of the change runs beside the scan. No job here holds a
+# write token, so none has to stay on GitHub's computers by decision 36 (test/runs-on.test.mjs
+# holds every job to this).
+#
+# That setting is the organisation's unless a repository sets a variable of the same name: this
+# workflow runs in each gated repository's own context, where GitHub reads a repository variable
+# SCAN_RUNNER_2 ahead of the organisation's, so a repository's admin can point that repository's
+# scan at any label. What keeps a repository from moving its scan onto machines that run changes'
+# own code is the runner groups' repository lists, and nothing in this file: a label reaches only
+# a set whose group admits the repository, so the scan stays apart only while no group admitting
+# a gated repository offers it a change-check set's label. CHECKS_RUNNER_2 overrides the same way.
 name: Security scan
 
 on:

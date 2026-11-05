@@ -1,16 +1,17 @@
-// Every job of every workflow here names its machine by what it holds and what starts it, never
-// by its name (decisions 36 and 93 of the checks-on-google job, which moved the checks off GitHub's
+// Every job of every workflow here names its machine by what it holds, never by its name
+// (decisions 36 and 93 of the checks-on-google job, which moved the checks off GitHub's
 // computers):
 //
-//   - A WRITE TOKEN ON PULL REQUESTS. A job of a workflow started by pull_request,
-//     pull_request_target, issue_comment, pull_request_review or merge_group that is granted any
-//     write (`<scope>: write`, or `write-all`) by its workflow's `permissions:` or its own, or whose
-//     workflow and job write no `permissions:` key at all (the repository's default token, which may
-//     be read-write), runs on one of GitHub's standard machines written as a literal label, and
-//     reads no CHECKS_, SCAN_ or LOCKED_ setting anywhere in the job or the workflow's top: on a
-//     machine of ours that token is within reach of whatever ran there before it. A workflow's grant
-//     counts even where the job's own permissions would replace it, so the reading errs toward
-//     GitHub's machines. engineer-review.yml is such a job (statuses: write).
+//   - A WRITE TOKEN. A job granted any write by its workflow's `permissions:` or its own (any
+//     access other than read or none, or `write-all`), or whose workflow and job write no
+//     `permissions:` key at all (the repository's default token, which may be read-write), runs
+//     on one of GitHub's standard machines written as a literal label, and reads no CHECKS_,
+//     SCAN_ or LOCKED_ setting anywhere in the job or the workflow's top. This holds whatever
+//     starts the workflow, pull_request, workflow_call, workflow_run, a push or anything else:
+//     on a machine of ours that token is within reach of whatever ran there before it, and that
+//     reason does not depend on the trigger. A workflow's grant counts even where the job's own
+//     permissions would replace it, so the reading errs toward GitHub's machines.
+//     engineer-review.yml is such a job (statuses: write).
 //   - THE SECURITY SCAN. Every other job of .github/workflows/security-scan.yml, the file the
 //     organisation ruleset security-scan-required runs on every gated repository, reads exactly
 //     ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}: the scan machines, where no change's own code
@@ -19,8 +20,8 @@
 //     organisation's change-check machines.
 // Either setting empty sends its jobs back to GitHub's computers, which is how the fallback
 // watcher stops the work from ever waiting on our machines. A job that calls a reusable workflow
-// (`uses:` at the job's level) has no machine of its own and is accepted; the called workflow's jobs
-// are judged where they are written.
+// (`uses:` at the job's level) has no machine of its own and is accepted; a called workflow in
+// this folder is judged in its own file by the same rules, one in another repository is not read.
 //
 // GitHub's standard machines are the labels dazzer's check-runner-setting gate takes for them
 // (GITHUB_STANDARD_CORES in its scripts/checks/check-test-width-matches-the-machine.mjs):
@@ -31,11 +32,17 @@
 // them, in the block layout every workflow here is written in. Its limits, stated:
 //   - top keys at column zero (a quoted `"on":` is read as on), `jobs:` among them; each job id two
 //     spaces in, plain (`  <id>:` with nothing after it but a comment); each job key four spaces in;
+//     a key is plain or quoted, and its quotes are taken off;
 //   - a value is the text after `<key>:` on its line, a trailing ` # comment` dropped; a key with
 //     nothing after it holds the more-indented lines below it (a list, a mapping);
-//   - `on:` as one trigger, a flow list `[a, b]`, or the keys or `- ` items of the first indent
-//     below it; `permissions:` as one word (read-all, write-all), a flow mapping `{ a: write }`, or
-//     `<scope>: <access>` lines below it; any other spelling of permissions counts as a write;
+//   - `on:` as one trigger, a flow list `[a, b]` closed on its own line, or the keys or `- ` items
+//     of the first indent below it; the triggers are read only to be named, since no rule turns on
+//     them;
+//   - `permissions:` as one word (read-all, write-all), `{}`, a flow mapping `{ a: read }` on one
+//     line, or `<scope>: <access>` lines at the first indent below it, each key and access with
+//     its quotes taken off; an access is read only when it is exactly read or none, so an anchor
+//     (`&w write`), an alias (`*w`), an empty value, a value continued on the lines below and any
+//     other word count as a write, as does any other spelling of the whole permissions value;
 //   - a setting is read where a line that is not a whole-line comment holds `vars.CHECKS_`,
 //     `vars.SCAN_` or `vars.LOCKED_` (or `vars['...']`, in any case); a setting named by a value
 //     worked out as the run goes (`vars[format(...)]`) is not seen;
@@ -43,7 +50,13 @@
 //     fallback is another machine line, and refused;
 //   - what it cannot read is refused rather than passed: no workflow file, no `jobs:` at column
 //     zero or `jobs:` written on one line, a job id that is not plain, a tab in an indent, a
-//     workflow with no trigger it can read, and a reading that found no job at all.
+//     workflow with no trigger it can read, an `on:` written as a flow mapping (`{ ... }`) or as a
+//     flow list not closed on its own line, a `permissions:` line below the key that is not a
+//     plain `<scope>: <access>` at the first indent, a flow-mapping pair that is not `<scope>:
+//     <access>`, a line at the top or job-key indent that is not a key (an explicit key written
+//     `? key`, a stray line, a line at an odd indent) unless it is a `- ` item directly under a
+//     key with nothing after it, a merge key (`<<`) at either of those indents, and a reading that
+//     found no job at all.
 // It does not run GitHub's own parser; a file another reader takes differently inside this
 // layout would not be seen.
 import { test } from 'node:test';
@@ -57,11 +70,12 @@ const SCAN_WORKFLOW = 'security-scan.yml';
 const CHECKS = "${{ vars.CHECKS_RUNNER_2 || 'ubuntu-latest' }}";
 const SCAN = "${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}";
 const GITHUB_STANDARD = ['ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04'];
-const PULL_REQUEST_TRIGGERS = ['pull_request', 'pull_request_target', 'issue_comment', 'pull_request_review', 'merge_group'];
+const READ_ONLY = ['read', 'none'];
 const OUR_SETTING = /\bvars\s*(?:\.\s*|\[\s*['"])\s*(CHECKS|SCAN|LOCKED)_\w*/i;
 
 const isComment = (line) => /^\s*(#.*)?$/.test(line);
 const indentOf = (line) => line.match(/^ */)[0].length;
+const isItem = (line) => /^\s*-(\s|$)/.test(line);
 
 // The value after a key: a quoted value up to its closing quote, a plain one up to ` #`.
 function valueOf(rest) {
@@ -90,46 +104,98 @@ function unquote(v) {
 const KEY = /^(\S[^:]*?)\s*:(?=\s|$)(.*)$/;
 
 // A block's entries at one indent: { key, value, body, line }, body the deeper lines under it.
+// A line that is not a key at that indent, or a deeper line before any entry, is an entry with
+// key null, for oddKeys to judge.
 function entries(lines, indent, firstLine) {
   const out = [];
   lines.forEach((l, i) => {
+    if (isComment(l)) { if (out.length) out.at(-1).body.push(l); return; }
     const ind = indentOf(l);
-    if (isComment(l) || ind > indent) { if (out.length) out.at(-1).body.push(l); return; }
+    if (ind > indent && out.length) { out.at(-1).body.push(l); return; }
     const m = ind === indent ? l.slice(indent).match(KEY) : null;
     out.push({ key: m ? unquote(m[1]) : null, raw: l, value: m ? valueOf(m[2]) : '', body: [], line: firstLine + i });
   });
   return out;
 }
 
-function readTriggers(on) {
-  if (!on) return [];
-  if (on.value.startsWith('[')) return on.value.replace(/^\[|\]$/g, '').split(',').map((s) => unquote(s.trim())).filter(Boolean);
-  if (on.value) return [unquote(on.value)];
-  const body = on.body.filter((l) => !isComment(l));
-  if (!body.length) return [];
-  const indent = indentOf(body[0]);
+// Refusals for the entries at the top or job-key indent this reader cannot follow: a merge key,
+// and a line that is not a key, unless it is a `- ` item directly under a key with nothing after it.
+function oddKeys(list, where, level) {
   const out = [];
-  for (const l of body) {
-    if (indentOf(l) !== indent) continue;
-    const item = l.slice(indent).match(/^-\s+(.*)$/);
-    if (item) { out.push(unquote(valueOf(item[1]))); continue; }
-    const m = l.slice(indent).match(KEY);
-    if (m) out.push(unquote(m[1]));
-  }
+  list.forEach((e, i) => {
+    if (e.key === '<<') {
+      out.push(`Could not find plain keys ${level} of ${where}: line ${e.line} is a merge key (${e.raw.trim()}), whose keys this reader does not follow`);
+      return;
+    }
+    if (e.key !== null) return;
+    if (level === 'at the top' && i === 0 && e.raw.trim() === '---') return;
+    let k = i - 1;
+    while (k >= 0 && list[k].key === null && isItem(list[k].raw)) k--;
+    const owner = list[k];
+    const underKey = isItem(e.raw) && owner && owner.key !== null && owner.value === '' && !owner.body.some((l) => !isComment(l));
+    if (!underKey) out.push(`Could not find plain keys ${level} of ${where}: line ${e.line} reads ${e.raw.trim()}, which is not a key this reader reads (an explicit key, a stray line or an odd indent)`);
+  });
   return out;
 }
 
-// What a permissions: key grants: { set, write, how }.
+// What starts the workflow, read only to be named: { triggers, unread }.
+function readTriggers(on) {
+  if (!on) return { triggers: [] };
+  const body = on.body.filter((l) => !isComment(l));
+  const v = on.value;
+  if (v.startsWith('{')) return { triggers: [], unread: `on: is written as a flow mapping (${v}), which this reader does not read` };
+  if (v.startsWith('[')) {
+    if (!v.endsWith(']') || /[[\]{}]/.test(v.slice(1, -1)) || body.length) {
+      return { triggers: [], unread: `on: is a flow list this reader does not read (${[v, ...body.map((l) => l.trim())].join(' ')}); it reads one closed on its own line` };
+    }
+    return { triggers: v.slice(1, -1).split(',').map((s) => unquote(s.trim())).filter(Boolean) };
+  }
+  if (v && body.length) return { triggers: [], unread: `on: holds ${v} and lines below it, which this reader does not read` };
+  if (v) return { triggers: [unquote(v)] };
+  if (!body.length) return { triggers: [] };
+  const indent = indentOf(body[0]);
+  const triggers = [];
+  for (const l of body) {
+    const ind = indentOf(l);
+    if (ind > indent) continue;
+    const item = ind === indent ? l.slice(indent).match(/^-\s+(.*)$/) : null;
+    if (item) { triggers.push(unquote(valueOf(item[1]))); continue; }
+    const m = ind === indent ? l.slice(indent).match(KEY) : null;
+    if (!m) return { triggers: [], unread: `on: holds the line ${l.trim()}, which is not a trigger this reader reads at the first indent below it` };
+    triggers.push(unquote(m[1]));
+  }
+  return { triggers };
+}
+
+// What a permissions: key grants: { set, write, how, unread }. Any access other than read or none
+// is a write; a line below the key this reader cannot read is refused.
 function readGrant(entry, where) {
   if (!entry) return { set: false, write: false };
   const v = unquote(entry.value);
+  const body = entry.body.filter((l) => !isComment(l));
+  const asWrite = (why) => ({ set: true, write: true, how: `${where} permissions: ${why}, a spelling this reader counts as a write` });
+  if (v && body.length) return asWrite(`${entry.value} with lines below it`);
   if (v === 'read-all' || v === '{}') return { set: true, write: false };
   if (v === 'write-all') return { set: true, write: true, how: `${where} permissions: write-all` };
-  let pairs;
-  if (v.startsWith('{') && v.endsWith('}')) pairs = v.slice(1, -1).split(',').map((p) => p.split(':').map((s) => unquote(s.trim())));
-  else if (v === '') pairs = entry.body.filter((l) => !isComment(l)).map((l) => valueOf(l).split(':').map((s) => unquote(s.trim())));
-  else return { set: true, write: true, how: `${where} permissions: ${v}, a spelling this reader counts as a write` };
-  const writes = pairs.filter(([scope, access]) => access === 'write').map(([scope]) => `${scope}: write`);
+  const pairs = [];
+  if (v.startsWith('{') && v.endsWith('}')) {
+    for (const p of v.slice(1, -1).split(',').map((s) => s.trim()).filter(Boolean)) {
+      const m = p.match(KEY);
+      if (!m) return { set: true, write: true, how: `${where} permissions ${v}`, unread: `${where} permissions: ${v} holds ${p}, which is not a <scope>: <access> pair this reader reads` };
+      pairs.push([unquote(m[1]), unquote(valueOf(m[2]))]);
+    }
+  } else if (v === '') {
+    if (!body.length) return asWrite('with nothing after it or below it');
+    const indent = indentOf(body[0]);
+    for (const l of body) {
+      const ind = indentOf(l);
+      if (ind > indent) { pairs.at(-1)[1] = `${pairs.at(-1)[1]} continued below as ${l.trim()}`.trim(); continue; }
+      const m = ind === indent ? l.slice(indent).match(KEY) : null;
+      if (!m) return { set: true, write: true, how: `${where} permissions`, unread: `${where} permissions: holds the line ${l.trim()}, which is not a <scope>: <access> line this reader reads at the first indent below it` };
+      pairs.push([unquote(m[1]), unquote(valueOf(m[2]))]);
+    }
+  } else return asWrite(v);
+  const writes = pairs.filter(([, access]) => !READ_ONLY.includes(access)).map(([scope, access]) => `${scope}: ${access || '(empty)'}`);
   return writes.length ? { set: true, write: true, how: `${where} permissions ${writes.join(', ')}` } : { set: true, write: false };
 }
 
@@ -140,9 +206,10 @@ function readWorkflow(file) {
   const tab = lines.findIndex((l) => /^ *\t/.test(l));
   if (tab >= 0) refusals.push(`Could not find a plain indent in ${where}: line ${tab + 1} indents with a tab, which this reader does not read`);
   const top = entries(lines, 0, 1);
-  const on = top.find((e) => e.key === 'on' || e.key === 'true');
-  const triggers = readTriggers(on);
-  if (!triggers.length) refusals.push(`Could not find the triggers of ${where}: no on: key this reader reads at column zero`);
+  refusals.push(...oddKeys(top, where, 'at the top'));
+  const { triggers, unread } = readTriggers(top.find((e) => e.key === 'on' || e.key === 'true'));
+  if (unread) refusals.push(`Could not find the triggers of ${where}: ${unread}`);
+  else if (!triggers.length) refusals.push(`Could not find the triggers of ${where}: no on: key this reader reads at column zero`);
   const jobsEntry = top.find((e) => e.key === 'jobs');
   if (!jobsEntry || jobsEntry.value) {
     refusals.push(`Could not find the jobs of ${where}: ${jobsEntry ? 'jobs: is written on one line' : 'no jobs: key at column zero'}, where each job id must sit two spaces in`);
@@ -150,6 +217,7 @@ function readWorkflow(file) {
   }
   const topText = top.filter((e) => e !== jobsEntry).flatMap((e) => [e.raw, ...e.body]).filter((l) => !isComment(l));
   const workflowGrant = readGrant(top.find((e) => e.key === 'permissions'), 'the workflow\'s');
+  if (workflowGrant.unread) refusals.push(`Could not find what ${where} grants: ${workflowGrant.unread}`);
   const jobs = [];
   for (const j of entries(jobsEntry.body, 2, jobsEntry.line + 1)) {
     const id = j.raw.match(/^ {2}([A-Za-z_][A-Za-z0-9_-]*):\s*(#.*)?$/)?.[1];
@@ -158,10 +226,12 @@ function readWorkflow(file) {
       continue;
     }
     const keys = entries(j.body, 4, j.line + 1);
+    refusals.push(...oddKeys(keys, where, `in job ${id}`));
     const key = (k) => keys.find((e) => e.key === k);
+    const grant = readGrant(key('permissions'), `the job's`);
+    if (grant.unread) refusals.push(`Could not find what job ${id} of ${where} grants: ${grant.unread}`);
     jobs.push({
-      id, line: j.line, runsOn: key('runs-on'), uses: key('uses'), steps: key('steps'),
-      grant: readGrant(key('permissions'), `the job's`),
+      id, line: j.line, runsOn: key('runs-on'), uses: key('uses'), steps: key('steps'), grant,
       text: [j.raw, ...j.body].filter((l) => !isComment(l)),
     });
   }
@@ -182,19 +252,19 @@ function machineOf(runsOn) {
 
 function judge(wf) {
   const refusals = [...wf.refusals];
-  const pullRequest = wf.triggers.filter((t) => PULL_REQUEST_TRIGGERS.includes(t));
+  const started = wf.triggers.length ? `, started by ${wf.triggers.join(', ')}` : '';
   for (const job of wf.jobs) {
     if (job.uses) continue;
     const named = `job ${job.id} of ${wf.where}`;
     const value = job.runsOn && !job.runsOn.body.some((l) => !isComment(l)) ? job.runsOn.value : null;
     const defaultToken = !wf.workflowGrant.set && !job.grant.set;
     const write = defaultToken || wf.workflowGrant.write || job.grant.write;
-    if (pullRequest.length && write) {
+    if (write) {
       const how = [wf.workflowGrant.how, job.grant.how].filter(Boolean).join(' and ')
         || 'no permissions: key in the workflow or the job, so the repository\'s default token, which may write';
-      const why = `holds a write token on ${pullRequest.join(', ')} (${how})`;
+      const why = `holds a write token (${how})${started}`;
       if (value === null || !GITHUB_STANDARD.includes(unquote(value))) {
-        refusals.push(`Could not find one of GitHub's standard machines (${GITHUB_STANDARD.join(', ')}) as the machine of ${named}: it ${why} and reads ${machineOf(job.runsOn)}. On a machine of ours that token is within reach of whatever ran there before it (decision 36).`);
+        refusals.push(`Could not find one of GitHub's standard machines (${GITHUB_STANDARD.join(', ')}) as the machine of ${named}: it ${why} and reads ${machineOf(job.runsOn)}. On a machine of ours that token is within reach of whatever ran there before it, whatever started the run (decision 36).`);
       }
       for (const [lines, part] of [[job.text, 'the job'], [wf.topText, 'the workflow\'s top']]) {
         const hit = lines.map((l) => l.match(OUR_SETTING)).find(Boolean);
@@ -221,7 +291,7 @@ test('the workflow folder holds workflows to read', () => {
 });
 
 for (const file of files) {
-  test(`every job of ${file} names its machine by what it holds and what starts it`, () => {
+  test(`every job of ${file} names its machine by what it holds`, () => {
     const refusals = judge(readWorkflow(file));
     assert.ok(refusals.length === 0, refusals.join('\n'));
   });

@@ -39,7 +39,8 @@
 # workflows (decision 98): a workflow lives in the repository it checks, so a pull request in a
 # repository the group admits can add a workflow of its own naming the scan label, and only the
 # group's workflow list keeps that job off the scan machines; nothing in this file can. No job
-# here holds a write token, so none has to stay on GitHub's computers by the repository's rule
+# here holds a write token (each, person-tokens too, takes the workflow's contents: read and sets
+# no permissions of its own), so none has to stay on GitHub's computers by the repository's rule
 # for write tokens. test/runs-on.test.mjs holds every job to this, and reads this file only in
 # the plain subset of YAML its header lists line shape by line shape: plain keys, plain, quoted
 # or block values, - items and one-line flow lists, with no anchor, alias or tag outside a quoted
@@ -363,7 +364,7 @@ jobs:
 
   person-tokens:
     name: Person tokens in workflows
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     steps:

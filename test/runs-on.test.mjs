@@ -1,4 +1,5 @@
-// Every job of every workflow here names its machine by what it holds, never by its name:
+// Every job of every workflow here names its machine by what it holds and the workflow it sits in,
+// never by the job's name:
 //
 //   - A WRITE TOKEN. A job granted any write by its workflow's `permissions:` or its own (any
 //     access other than read or none, or `write-all`), or whose workflow and job write no
@@ -21,12 +22,21 @@
 //     (decision 98): a workflow lives in the repository it checks, so a pull request in a
 //     repository the group admits can add a workflow of its own naming the scan label, and only
 //     the group's workflow list keeps it off. This test cannot see that list.
-//   - EVERY OTHER JOB reads exactly ${{ vars.CHECKS_RUNNER_2 || 'ubuntu-latest' }}, the
-//     organisation's change-check machines.
-// Either setting empty sends its jobs back to GitHub's computers, which is how the fallback
-// watcher stops the work from ever waiting on our machines. A job that calls a reusable workflow
-// (`uses:` at the job's level) has no machine of its own and is accepted; a called workflow in
-// this folder is judged in its own file by the same rules, one in another repository is not read.
+//   - EVERY OTHER JOB, in any workflow but security-scan.yml, runs on one of GitHub's standard
+//     machines written as a literal label and reads no CHECKS_, SCAN_ or LOCKED_ setting anywhere
+//     in the job or the workflow's top, whatever it holds (decision 104). The fallback watcher,
+//     which sends a job waiting on our machines back to GitHub's, does not read this repository's
+//     runs, and CHECKS_RUNNER_2 is visible to every repository, so a job here reading it would sit
+//     on the change-check machines with nothing to send it back if they stalled. This changes
+//     once the watcher reads .github's runs: such a job may then read
+//     ${{ vars.CHECKS_RUNNER_2 || 'ubuntu-latest' }}, as the other repositories' checks do.
+// The scan setting empty sends the scan's jobs back to GitHub's computers, which is how the
+// fallback watcher keeps the scan from ever waiting on our machines; by decision 98 that setting
+// is visible only to the repositories the watcher reads, so elsewhere, here among them, the scan
+// stays on GitHub's computers. This test cannot see who the setting is visible to.
+// A job that calls a reusable workflow (`uses:` at the job's level) has no machine of its own and
+// is accepted; a called workflow in this folder is judged in its own file by the same rules, one
+// in another repository is not read.
 //
 // GitHub's standard machines are the labels dazzer's check-runner-setting gate takes for them
 // (GITHUB_STANDARD_CORES in its scripts/checks/check-test-width-matches-the-machine.mjs):
@@ -35,9 +45,10 @@
 // THE READER. This repository has no YAML package and adds none (decision 99), so a workflow is
 // read only if it is written in a closed plain subset of YAML, and any line outside it is refused
 // with its line number and the plain spelling to use. Before anything else is read:
-//   - the file holds no carriage return except directly before a line feed, no U+0085, U+2028 or
-//     U+2029, no byte-order mark and no other control character but the line feed, so a line is
-//     exactly what a line feed ends;
+//   - the file holds no U+2028, U+2029 or byte-order mark, and no control character (C0, DEL or
+//     C1, U+0085 among them) but the line feed, a carriage return directly before it, and the tab
+//     inside a block's body (a tab elsewhere is refused by shape, below), so a line is exactly what
+//     a line feed ends;
 //   - every line is one of these shapes, and nothing else:
 //       an empty line, or a comment (`# ...` after any spaces);
 //       `---` as line 1 only;
@@ -92,7 +103,9 @@
 //     it can read, a line at the top or job-key indent at an odd indent, and a reading that found
 //     no job at all.
 // It does not run GitHub's own parser; a file another reader takes differently inside this
-// subset would not be seen. The kept cases at the end hold each refused spelling and controls.
+// subset would not be seen. The kept cases at the end hold each spelling a review found hiding a
+// write token, each spelling round 2 planted and each case round 4 added, with controls that
+// must pass; a refusal above with no kept case of its own is held only by its code.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -364,9 +377,11 @@ function readGrant(entry, where) {
   return writes.length ? { set: true, write: true, how: `${where} permissions ${writes.join(', ')}` } : { set: true, write: false };
 }
 
-// The characters YAML may read as a line break, or as no character at all, inside a line.
-const ODD_CHARACTER = new RegExp('[\\r\\u0085\\u2028\\u2029\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F\\uFEFF]');
+// The characters YAML may read as a line break inside a line, the byte-order mark, and every
+// other control character but the line feed and the tab (C0, DEL and C1, U+0080 to U+009F).
+const ODD_CHARACTER = new RegExp('[\\r\\u2028\\u2029\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F\\uFEFF]');
 const ODD_NAMES = { 13: 'a carriage return not directly before a line feed', 0x85: 'U+0085 (next line)', 0x2028: 'U+2028 (line separator)', 0x2029: 'U+2029 (paragraph separator)' };
+const hex = (code) => `U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
 
 // A workflow's text, read: { where, file, triggers, refusals, jobs, topText, workflowGrant }.
 function readText(text, file) {
@@ -377,8 +392,9 @@ function readText(text, file) {
     const odd = (l.endsWith('\r') ? l.slice(0, -1) : l).match(ODD_CHARACTER);
     if (!odd) return;
     const code = odd[0].charCodeAt(0);
-    const name = ODD_NAMES[code] ?? `the character U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
-    refusals.push(`Could not find a line this reader reads in ${where}: line ${i + 1} holds ${name}, which YAML may read as a line break or as no character at all; ${SPELL.break}, and no other control character.`);
+    const what = ODD_NAMES[code] ? `${ODD_NAMES[code]}, which YAML may read as a line break`
+      : `the ${code === 0xFEFF ? 'byte-order mark' : 'control character'} ${hex(code)}, which YAML may refuse or read as no character at all`;
+    refusals.push(`Could not find a line this reader reads in ${where}: line ${i + 1} holds ${what}; ${SPELL.break}, and no other control character.`);
   });
   if (refusals.length) return { where, file, triggers: [], refusals, jobs: [] };
   const lines = raw.map((l) => l.replace(/\r$/, ''));
@@ -438,6 +454,7 @@ function machineOf(runsOn) {
 }
 
 const STRICTER = 'this repository\'s own stricter rule, built on decision 36\'s reason: on a machine of ours that token is within reach of whatever ran there before it, whatever started the run';
+const UNWATCHED = `this repository's rule until the fallback watcher reads .github's runs (decision 104): CHECKS_RUNNER_2 is visible to every repository, and a job here waiting on machines of ours would never be sent back to GitHub's if they stalled`;
 
 function judge(wf) {
   const refusals = [...wf.refusals];
@@ -448,24 +465,27 @@ function judge(wf) {
     const value = job.runsOn && !job.runsOn.body.some((l) => !isComment(l)) ? job.runsOn.value : null;
     const defaultToken = !wf.workflowGrant.set && !job.grant.set;
     const write = defaultToken || wf.workflowGrant.write || job.grant.write;
-    if (write) {
-      const how = [wf.workflowGrant.how, job.grant.how].filter(Boolean).join(' and ')
-        || 'no permissions: key in the workflow or the job, so the repository\'s default token, which may write';
-      const why = `holds a write token (${how})${started}`;
+    if (write || wf.file !== SCAN_WORKFLOW) {
+      // A write-token job anywhere, and every job outside the scan: a literal GitHub label, no setting.
+      let why = `runs outside ${SCAN_WORKFLOW} with a read-only token`;
+      let [whom, rule] = ['every job outside the scan', UNWATCHED];
+      if (write) {
+        const how = [wf.workflowGrant.how, job.grant.how].filter(Boolean).join(' and ')
+          || 'no permissions: key in the workflow or the job, so the repository\'s default token, which may write';
+        why = `holds a write token (${how})${started}`;
+        [whom, rule] = ['every write-token job', STRICTER];
+      }
       if (value === null || !GITHUB_STANDARD.includes(unquote(value))) {
-        refusals.push(`Could not find one of GitHub's standard machines (${GITHUB_STANDARD.join(', ')}) as the machine of ${named}: it ${why} and reads ${machineOf(job.runsOn)}. Holding every write-token job to GitHub's machines is ${STRICTER}.`);
+        refusals.push(`Could not find one of GitHub's standard machines (${GITHUB_STANDARD.join(', ')}) as the machine of ${named}: it ${why} and reads ${machineOf(job.runsOn)}. Holding ${whom} to GitHub's machines is ${rule}.`);
       }
       for (const [lines, part] of [[job.text, 'the job'], [wf.topText, 'the workflow\'s top']]) {
         const hit = lines.map((l) => l.match(OUR_SETTING)).find(Boolean);
-        if (hit) refusals.push(`Could not find ${named} free of the organisation's machine settings: it ${why}, and ${part} reads ${hit[0]}, a CHECKS_, SCAN_ or LOCKED_ setting such a job never reads, by ${STRICTER}.`);
+        if (hit) refusals.push(`Could not find ${named} free of the organisation's machine settings: it ${why}, and ${part} reads ${hit[0]}, a CHECKS_, SCAN_ or LOCKED_ setting such a job never reads, by ${rule}.`);
       }
       continue;
     }
-    const [want, machines] = wf.file === SCAN_WORKFLOW
-      ? [SCAN, 'the scan machines (decision 93), which hold no change\'s own code only while the scan runner group admits only the scan workflows (decision 98)']
-      : [CHECKS, 'the organisation\'s change-check machines'];
-    if (value !== want) {
-      refusals.push(`Could not find ${want} as the machine of ${named}: it reads ${machineOf(job.runsOn)}. Its machine is ${machines}, GitHub's own while the setting is empty.`);
+    if (value !== SCAN) {
+      refusals.push(`Could not find ${SCAN} as the machine of ${named}: it reads ${machineOf(job.runsOn)}. Its machine is the scan machines (decision 93), which hold no change's own code only while the scan runner group admits only the scan workflows (decision 98), GitHub's own while the setting is empty.`);
     }
   }
   return refusals;
@@ -487,9 +507,12 @@ for (const file of files) {
 }
 
 // ---- KEPT CASES ----
-// Each spelling a review found hiding a write token, and each spelling round 2 planted, is fed to
-// the reader as text and must be refused, naming its line where it says which line; the controls,
-// ordinary spellings, must pass, so a reader that refuses everything fails them.
+// Each spelling a review found hiding a write token, each spelling round 2 planted, and each case
+// round 4 added (a refused line after a block scalar, a C1 control, a job outside the scan reading
+// CHECKS_RUNNER_2) is fed to the reader as text and must be refused, naming its line where it says
+// which line; the controls, ordinary spellings, must pass, so a reader that refuses everything
+// fails them. The plain layout is a read-only job of decide-tests.yml on ubuntu-latest; a case
+// that needs the change-check machines says so.
 const CR = String.fromCharCode(13);
 const STEPS = ['    steps:', '      - name: Run the tests', '        run: node --test test/*.test.mjs'];
 function workflow({
@@ -497,7 +520,7 @@ function workflow({
   on = ['on:', '  pull_request:', '  merge_group:'],
   permissions = ['permissions:', '  contents: read'],
   job = ['    name: decide-tests'],
-  runsOn = CHECKS,
+  runsOn = 'ubuntu-latest',
   steps = STEPS,
 } = {}) {
   return [...top, '', ...on, '', ...permissions, '', 'jobs:', '  decide-tests:', ...job, `    runs-on: ${runsOn}`, ...steps, ''].join('\n');
@@ -534,24 +557,24 @@ for (const [name, code] of [['A: a carriage return mid-line', 13], ['A: U+0085 m
 refused('B: an anchored key', workflow({ job: ['    name: decide-tests', '    &k permissions: write-all'] }), { at: '&k permissions', says: /anchor/ });
 refused('B: an aliased key', workflow({ job: ['    name: decide-tests', '    env:', '      X: &k permissions', '    *k : write-all'] }), { at: '*k :', says: /alias/ });
 refused('B: a tagged key', workflow({ job: ['    name: decide-tests', '    !!str permissions: write-all'] }), { at: '!!str', says: /tag/ });
-refused('B: an escaped key', workflow({ job: ['    name: decide-tests', `    "${String.fromCharCode(92)}u0070ermissions": write-all`] }), { at: 'ermissions"', says: /backslash/ });
+refused('B: an escaped key', workflow({ job: ['    name: decide-tests', `    "${String.fromCharCode(92)}u0070ermissions": write-all`] }), { at: 'ermissions"', says: /quoted key with a backslash/ });
 refused('C: an unclosed quote at the top', workflow({ top: ['name: "Decide tests'], permissions: ['permissions: read-all #"'] }), { at: 'name: "Decide', says: /not closed/ });
 refused('C: an unclosed quote at the job-key indent', workflow({ job: ['    name: "decide-tests', '    uses: ./x.yml #"'] }), { at: 'name: "decide', says: /not closed/ });
 
 // Round 2's planted spellings (the second review's finding D).
 refused('an anchored access', workflow({ permissions: ['permissions:', '  contents: &w write'] }), { at: '&w write', says: /anchor/ });
 refused('an aliased access', workflow({ top: ['name: Decide tests', 'env:', '  X: &w write'], permissions: ['permissions:', '  contents: *w'] }), { at: 'contents: *w', says: /alias/ });
-refused('a quoted scope granting a write', workflow({ permissions: ['permissions:', '  "statuses": write'] }), { says: WRITE });
+refused('a quoted scope granting a write', workflow({ permissions: ['permissions:', '  "statuses": write'], runsOn: CHECKS }), { says: WRITE });
 refused('an access on the next line', workflow({ permissions: ['permissions:', '  contents:', '    write'] }), { at: '    write', says: /neither a plain key/ });
 refused('a flow mapping holding an alias', workflow({ top: ['name: Decide tests', 'env:', '  X: &w write'], permissions: ['permissions: { contents: *w }'] }), { at: 'permissions: {', says: /flow mapping/ });
 refused('a flow mapping holding an anchor', workflow({ permissions: ['permissions: { contents: &w write }'] }), { at: 'permissions: {', says: /flow mapping/ });
-refused('an access other than read, none or write', workflow({ permissions: ['permissions:', '  statuses: admin'] }), { says: WRITE });
+refused('an access other than read, none or write', workflow({ permissions: ['permissions:', '  statuses: admin'], runsOn: CHECKS }), { says: WRITE });
 refused('an explicit key in permissions', workflow({ permissions: ['permissions:', '  ? statuses', '  : write'] }), { at: '? statuses', says: /explicit key/ });
 refused('a permissions line at a lesser indent', workflow({ permissions: [], job: ['    name: decide-tests', '    permissions:', '        contents: read', '      statuses: write'] }), { says: /grants/ });
-refused('a workflow_call-only write job on the change-check machines', workflow({ on: ['on:', '  workflow_call:'], permissions: ['permissions:', '  statuses: write'] }), { says: WRITE, file: 'engineer-review.yml' });
+refused('a workflow_call-only write job on the change-check machines', workflow({ on: ['on:', '  workflow_call:'], permissions: ['permissions:', '  statuses: write'], runsOn: CHECKS }), { says: WRITE, file: 'engineer-review.yml' });
 passes('a workflow_call-only write job on ubuntu-latest', workflow({ on: ['on:', '  workflow_call:'], permissions: ['permissions:', '  statuses: write'], runsOn: 'ubuntu-latest' }), 'engineer-review.yml');
-refused('a workflow_run write job on the change-check machines', workflow({ on: ['on:', '  workflow_run:'], permissions: ['permissions:', '  pull-requests: write'] }), { says: WRITE });
-refused('a push workflow with no permissions on the change-check machines', workflow({ on: ['on: push'], permissions: [] }), { says: /default token/ });
+refused('a workflow_run write job on the change-check machines', workflow({ on: ['on:', '  workflow_run:'], permissions: ['permissions:', '  pull-requests: write'], runsOn: CHECKS }), { says: WRITE });
+refused('a push workflow with no permissions on the change-check machines', workflow({ on: ['on: push'], permissions: [], runsOn: CHECKS }), { says: /default token/ });
 refused('on: as a flow mapping', workflow({ on: ['on: { pull_request: {} }'] }), { at: 'on: {', says: /flow mapping/ });
 refused('on: as a flow list left open', workflow({ on: ['on: [push,', '  pull_request]'] }), { at: 'on: [push', says: /flow list/ });
 refused('an explicit key at the job-key indent', workflow({ job: ['    name: decide-tests', '    ? permissions', '    : write-all'] }), { at: '? permissions', says: /explicit key/ });
@@ -567,6 +590,26 @@ refused('a second document', `${workflow()}---\npermissions: write-all\n`, { at:
 refused('a key written twice', workflow({ job: ['    name: decide-tests', '    permissions: read-all', '    permissions: write-all'] }), { at: 'write-all', says: /again/ });
 refused('a read key in another case', workflow({ job: ['    name: decide-tests', '    Permissions: write-all'] }), { at: 'Permissions', says: /lower case/ });
 refused('a key: value item at the job-key indent', workflow({ job: ['    name: decide-tests', '    timeout-minutes: 10', '    - permissions: write-all'] }), { at: '- permissions', says: /stray item/ });
+
+// Round 4. The third review's finding 1: a refused line after a valid block scalar, so where a
+// body ends, and that an empty block ends at once, are held. Its input as written, where YAML
+// carries the run-name's quote on to the permissions line, so the job has no permissions key and
+// the default token; then the same with the block left empty.
+const AFTER_BLOCK = ['name: |', '  Decide tests', 'run-name: "Decide tests', 'permissions: read-all #"', 'on:', '  pull_request:', 'jobs:', '  decide-tests:',
+  `    runs-on: ${CHECKS}`, '    steps:', '      - run: node --test test/*.test.mjs', ''];
+refused('an unclosed quote after a block scalar with a body', AFTER_BLOCK.join('\n'), { at: 'run-name:', says: /not closed/ });
+refused('an unclosed quote after an empty block scalar', AFTER_BLOCK.filter((l) => l !== '  Decide tests').join('\n'), { at: 'run-name:', says: /not closed/ });
+// Its note 3: a C1 control in a value, the first and the last of U+0080 to U+009F.
+for (const code of [0x80, 0x9F]) {
+  refused(`a C1 control, ${hex(code)}, in a value`, workflow({ steps: [STEPS[0], `${STEPS[1]}${String.fromCharCode(code)}`, STEPS[2]] }),
+    { at: '- name: Run the tests', says: new RegExp(`control character ${hex(code).replace('+', '\\+')}`) });
+}
+// Decision 104: a job outside the scan reads no CHECKS_ setting, as its machine or anywhere else.
+refused('a read-only job outside the scan on the change-check machines', workflow({ runsOn: CHECKS }),
+  { says: /outside security-scan\.yml with a read-only token and reads runs-on: \$\{\{ vars\.CHECKS_RUNNER_2/ });
+refused('a read-only job outside the scan reading CHECKS_RUNNER_2 in a step', workflow({ steps: [...STEPS, '        env:', '          RUNNER: ${{ vars.CHECKS_RUNNER_2 }}'] }),
+  { says: /free of the organisation's machine settings: it runs outside security-scan\.yml.*reads vars\.CHECKS_RUNNER_2/ });
+passes('a read-only job of the scan on the scan machines', workflow({ runsOn: SCAN }), 'security-scan.yml');
 
 // Controls: ordinary spellings that must pass.
 passes('the plain layout', workflow());

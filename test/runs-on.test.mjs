@@ -31,12 +31,17 @@
 //     once the watcher reads .github's runs: such a job may then read
 //     ${{ vars.CHECKS_RUNNER_2 || 'ubuntu-latest' }}, as the other repositories' checks do.
 // The scan setting empty sends the scan's jobs back to GitHub's computers, which is how the
-// fallback watcher keeps the scan from ever waiting on our machines; by decision 98 that setting
-// is visible only to the repositories the watcher reads, so elsewhere, here among them, the scan
-// stays on GitHub's computers. This test cannot see who the setting is visible to.
-// A job that calls a reusable workflow (`uses:` at the job's level) has no machine of its own and
-// is accepted; a called workflow in this folder is judged in its own file by the same rules, one
-// in another repository is not read.
+// fallback watcher keeps the scan from ever waiting on our machines. Decision 98 has r-1.54 write
+// that setting visible only to the repositories the watcher reads, so that elsewhere, here among
+// them, the scan stays on GitHub's computers; until then nothing here keeps .github's own scan off
+// the scan machines once the setting is filled. This test cannot see who the setting is visible to.
+// A job that calls a reusable workflow (`uses:` at the job's level) has no machine of its own, so
+// its machine line is not read; it is held to its file's setting rule like any other job, its
+// `with:` included, so outside security-scan.yml it reads no CHECKS_, SCAN_ or LOCKED_ setting.
+// Outside security-scan.yml it may call only a workflow of this folder (`./`), judged in its own
+// file by the same rules: a workflow in another repository, or this one at another commit, is not
+// read here, and its jobs could wait on machines of ours that the watcher would never send back
+// (decision 104). In security-scan.yml a called workflow in another repository is not read.
 //
 // GitHub's standard machines are the labels dazzer's check-runner-setting gate takes for them
 // (GITHUB_STANDARD_CORES in its scripts/checks/check-test-width-matches-the-machine.mjs):
@@ -104,8 +109,8 @@
 //     no job at all.
 // It does not run GitHub's own parser; a file another reader takes differently inside this
 // subset would not be seen. The kept cases at the end hold each spelling a review found hiding a
-// write token, each spelling round 2 planted and each case round 4 added, with controls that
-// must pass; a refusal above with no kept case of its own is held only by its code.
+// write token, each spelling round 2 planted and each case rounds 4 and 5 added, with controls
+// that must pass; a refusal above with no kept case of its own is held only by its code.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -460,13 +465,14 @@ function judge(wf) {
   const refusals = [...wf.refusals];
   const started = wf.triggers.length ? `, started by ${wf.triggers.join(', ')}` : '';
   for (const job of wf.jobs) {
-    if (job.uses) continue;
     const named = `job ${job.id} of ${wf.where}`;
     const value = job.runsOn && !job.runsOn.body.some((l) => !isComment(l)) ? job.runsOn.value : null;
     const defaultToken = !wf.workflowGrant.set && !job.grant.set;
     const write = defaultToken || wf.workflowGrant.write || job.grant.write;
     if (write || wf.file !== SCAN_WORKFLOW) {
-      // A write-token job anywhere, and every job outside the scan: a literal GitHub label, no setting.
+      // A write-token job anywhere, and every job outside the scan: a literal GitHub label, no
+      // CHECKS_, SCAN_ or LOCKED_ setting. A job calling a workflow has no machine of its own: outside
+      // the scan it calls only a workflow of this folder, judged in its own file.
       let why = `runs outside ${SCAN_WORKFLOW} with a read-only token`;
       let [whom, rule] = ['every job outside the scan', UNWATCHED];
       if (write) {
@@ -475,7 +481,12 @@ function judge(wf) {
         why = `holds a write token (${how})${started}`;
         [whom, rule] = ['every write-token job', STRICTER];
       }
-      if (value === null || !GITHUB_STANDARD.includes(unquote(value))) {
+      if (job.uses) {
+        const callee = unquote(job.uses.value);
+        if (wf.file !== SCAN_WORKFLOW && !callee.startsWith('./')) {
+          refusals.push(`Could not find a workflow of this repository's own folder (./.github/workflows/...) as the workflow ${named} calls: it calls ${callee || '(nothing on the uses: line)'}, a workflow in another repository or at another commit, which this test does not read, so its jobs may wait on machines of ours. A job outside ${SCAN_WORKFLOW} calls only a ./ workflow, judged in its own file, by ${UNWATCHED}.`);
+        }
+      } else if (value === null || !GITHUB_STANDARD.includes(unquote(value))) {
         refusals.push(`Could not find one of GitHub's standard machines (${GITHUB_STANDARD.join(', ')}) as the machine of ${named}: it ${why} and reads ${machineOf(job.runsOn)}. Holding ${whom} to GitHub's machines is ${rule}.`);
       }
       for (const [lines, part] of [[job.text, 'the job'], [wf.topText, 'the workflow\'s top']]) {
@@ -484,6 +495,8 @@ function judge(wf) {
       }
       continue;
     }
+    // A read-only job of the scan calling a workflow has no machine of its own to hold.
+    if (job.uses) continue;
     if (value !== SCAN) {
       refusals.push(`Could not find ${SCAN} as the machine of ${named}: it reads ${machineOf(job.runsOn)}. Its machine is the scan machines (decision 93), which hold no change's own code only while the scan runner group admits only the scan workflows (decision 98), GitHub's own while the setting is empty.`);
     }
@@ -507,12 +520,14 @@ for (const file of files) {
 }
 
 // ---- KEPT CASES ----
-// Each spelling a review found hiding a write token, each spelling round 2 planted, and each case
+// Each spelling a review found hiding a write token, each spelling round 2 planted, each case
 // round 4 added (a refused line after a block scalar, a C1 control, a job outside the scan reading
-// CHECKS_RUNNER_2) is fed to the reader as text and must be refused, naming its line where it says
-// which line; the controls, ordinary spellings, must pass, so a reader that refuses everything
-// fails them. The plain layout is a read-only job of decide-tests.yml on ubuntu-latest; a case
-// that needs the change-check machines says so.
+// CHECKS_RUNNER_2) and each case round 5 added (a job of the scan holding a write or the default
+// token, a job outside the scan calling a workflow) is fed to the reader as text and must be
+// refused, naming its line where it says which line; the controls, ordinary spellings, must pass,
+// so a reader that refuses everything fails them. The plain layout is a read-only job of
+// decide-tests.yml on ubuntu-latest; a case that needs the change-check machines or the scan
+// machines says so in its name.
 const CR = String.fromCharCode(13);
 const STEPS = ['    steps:', '      - name: Run the tests', '        run: node --test test/*.test.mjs'];
 function workflow({
@@ -522,8 +537,9 @@ function workflow({
   job = ['    name: decide-tests'],
   runsOn = 'ubuntu-latest',
   steps = STEPS,
+  after = [],
 } = {}) {
-  return [...top, '', ...on, '', ...permissions, '', 'jobs:', '  decide-tests:', ...job, `    runs-on: ${runsOn}`, ...steps, ''].join('\n');
+  return [...top, '', ...on, '', ...permissions, '', 'jobs:', '  decide-tests:', ...job, `    runs-on: ${runsOn}`, ...steps, ...after, ''].join('\n');
 }
 const lineOf = (text, needle) => text.split('\n').findIndex((l) => l.includes(needle)) + 1;
 const refusalsOf = (text, file = 'decide-tests.yml') => judge(readText(text, file));
@@ -564,11 +580,11 @@ refused('C: an unclosed quote at the job-key indent', workflow({ job: ['    name
 // Round 2's planted spellings (the second review's finding D).
 refused('an anchored access', workflow({ permissions: ['permissions:', '  contents: &w write'] }), { at: '&w write', says: /anchor/ });
 refused('an aliased access', workflow({ top: ['name: Decide tests', 'env:', '  X: &w write'], permissions: ['permissions:', '  contents: *w'] }), { at: 'contents: *w', says: /alias/ });
-refused('a quoted scope granting a write', workflow({ permissions: ['permissions:', '  "statuses": write'], runsOn: CHECKS }), { says: WRITE });
+refused('a quoted scope granting a write, on the change-check machines', workflow({ permissions: ['permissions:', '  "statuses": write'], runsOn: CHECKS }), { says: WRITE });
 refused('an access on the next line', workflow({ permissions: ['permissions:', '  contents:', '    write'] }), { at: '    write', says: /neither a plain key/ });
 refused('a flow mapping holding an alias', workflow({ top: ['name: Decide tests', 'env:', '  X: &w write'], permissions: ['permissions: { contents: *w }'] }), { at: 'permissions: {', says: /flow mapping/ });
 refused('a flow mapping holding an anchor', workflow({ permissions: ['permissions: { contents: &w write }'] }), { at: 'permissions: {', says: /flow mapping/ });
-refused('an access other than read, none or write', workflow({ permissions: ['permissions:', '  statuses: admin'], runsOn: CHECKS }), { says: WRITE });
+refused('an access other than read, none or write, on the change-check machines', workflow({ permissions: ['permissions:', '  statuses: admin'], runsOn: CHECKS }), { says: WRITE });
 refused('an explicit key in permissions', workflow({ permissions: ['permissions:', '  ? statuses', '  : write'] }), { at: '? statuses', says: /explicit key/ });
 refused('a permissions line at a lesser indent', workflow({ permissions: [], job: ['    name: decide-tests', '    permissions:', '        contents: read', '      statuses: write'] }), { says: /grants/ });
 refused('a workflow_call-only write job on the change-check machines', workflow({ on: ['on:', '  workflow_call:'], permissions: ['permissions:', '  statuses: write'], runsOn: CHECKS }), { says: WRITE, file: 'engineer-review.yml' });
@@ -610,6 +626,19 @@ refused('a read-only job outside the scan on the change-check machines', workflo
 refused('a read-only job outside the scan reading CHECKS_RUNNER_2 in a step', workflow({ steps: [...STEPS, '        env:', '          RUNNER: ${{ vars.CHECKS_RUNNER_2 }}'] }),
   { says: /free of the organisation's machine settings: it runs outside security-scan\.yml.*reads vars\.CHECKS_RUNNER_2/ });
 passes('a read-only job of the scan on the scan machines', workflow({ runsOn: SCAN }), 'security-scan.yml');
+
+// Round 5. The fourth review's finding 1: security-scan.yml is the one file where the write rule
+// changes the outcome, so a job of the scan holding a write or the default token is held there.
+refused('a write-token job of the scan on the scan machines', workflow({ permissions: ['permissions:', '  pull-requests: write'], runsOn: SCAN }), { says: WRITE, file: 'security-scan.yml' });
+refused('a scan job with the default token on the scan machines', workflow({ permissions: [], runsOn: SCAN }), { says: /default token/, file: 'security-scan.yml' });
+// Its finding 2: a job outside the scan calling a workflow calls only one of this folder, and is
+// held to its file's setting rule, its with: included. The review's job first, beside the plain one.
+const callJob = (uses, ...withLines) => ['  shared:', `    uses: ${uses}`, ...(withLines.length ? ['    with:', ...withLines.map((l) => `      ${l}`)] : [])];
+refused('a job outside the scan calling a workflow in another repository', workflow({ after: callJob('dazzer-io/dazzer/.github/workflows/shared-checks.yml@0123456789abcdef0123456789abcdef01234567', `runner: ${CHECKS}`) }),
+  { says: /job shared of .*: it calls dazzer-io\/dazzer\/\.github\/workflows\/shared-checks\.yml@[0-9a-f]{40}, a workflow in another repository/ });
+refused('a job outside the scan calling a workflow of this folder, passing CHECKS_RUNNER_2 in with:', workflow({ after: callJob('./.github/workflows/shared.yml', `runner: ${CHECKS}`) }),
+  { says: /job shared of .* free of the organisation's machine settings: it runs outside security-scan\.yml.*the job reads vars\.CHECKS_RUNNER_2/ });
+passes('a job outside the scan calling a workflow of this folder, reading no setting', workflow({ after: callJob('./.github/workflows/shared.yml', 'mode: fast') }));
 
 // Controls: ordinary spellings that must pass.
 passes('the plain layout', workflow());

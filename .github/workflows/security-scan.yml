@@ -39,12 +39,15 @@
 # workflows (decision 98): a workflow lives in the repository it checks, so a pull request in a
 # repository the group admits can add a workflow of its own naming the scan label, and only the
 # group's workflow list keeps that job off the scan machines; nothing in this file can. No job
-# here holds a write token (each, person-tokens too, takes the workflow's contents: read and sets
-# no permissions of its own), so none has to stay on GitHub's computers by the repository's rule
-# for write tokens. test/runs-on.test.mjs holds every job to this, and reads this file only in
-# the plain subset of YAML its header lists line shape by line shape: plain keys, plain, quoted
-# or block values, - items and one-line flow lists, with no anchor, alias or tag outside a quoted
-# value or a block's body and no backslash in a double-quoted value; it refuses any other line.
+# here holds a write token today (each, person-tokens too, takes the workflow's contents: read and
+# sets no permissions of its own), so none has to stay on GitHub's computers by the repository's
+# rule for write tokens. test/runs-on.test.mjs holds each read-only job here to that setting, and
+# any write-token job (one granted a write, or left with the repository's default token) to
+# GitHub's own labels, written as a literal label, reading no CHECKS_, SCAN_ or LOCKED_ setting.
+# It reads this file only in the plain subset of YAML its header lists line shape by line shape:
+# plain keys, plain, quoted or block values, - items and one-line flow lists, with no anchor,
+# alias or tag outside a quoted value or a block's body and no backslash in a double-quoted value;
+# it refuses any other line.
 #
 # That setting is the organisation's unless a repository sets a variable of the same name: this
 # workflow runs in each gated repository's own context, where GitHub reads a repository variable

@@ -11,6 +11,7 @@ import {
   decide, summary, annotations, readMode, readNative, readAccepted, allowGhsas,
   requiredOutputs, fromCvss, fromWord, blocks, OPEN_SOURCE_OUTPUTS,
   readRemovedLockfiles, isLockfile, EVERY_DEPENDENCY_FILE_REMOVED, DEPENDENCY_FILES_REMOVED, cell,
+  escapeProperty,
 } from '../security-scan/decide.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -119,8 +120,8 @@ test('an accepted entry with no risk-acceptance record accepts nothing', () => {
 
 test('on a native repository no open-source job is required', () => {
   const d = check('native: no dependency changes and no open-source output, blocking');
-  assert.deepEqual(d.required, ['dependency-review']);
-  assert.deepEqual(requiredOutputs(true), ['dependency-review']);
+  assert.deepEqual(d.required, ['dependency-review', 'person-tokens']);
+  assert.deepEqual(requiredOutputs(true), ['dependency-review', 'person-tokens']);
   for (const name of OPEN_SOURCE_OUTPUTS) assert.ok(!d.required.includes(name), name);
   assert.equal(d.branch, 'native');
 });
@@ -135,9 +136,9 @@ test('a missing dependency review output blocks', () => {
 
 // ---------- the open-source scanners ----------
 
-test('elsewhere, clean scanners pass, and all five outputs are required', () => {
+test('elsewhere, clean scanners pass, and all six outputs are required', () => {
   const d = check('open source: everything clean, blocking');
-  assert.deepEqual(d.required, ['osv-head', 'osv-base', 'osv-removed', 'gitleaks', 'semgrep']);
+  assert.deepEqual(d.required, ['osv-head', 'osv-base', 'osv-removed', 'gitleaks', 'semgrep', 'person-tokens']);
   assert.equal(d.branch, 'open source');
 });
 
@@ -380,11 +381,60 @@ test('in advisory mode a scanner job that failed counts as one would-block item 
   assert.equal(annotations(d).at(-1), '::warning title=security-scan::security-scan would block: 3');
 });
 
+// ---------- the person-token check, on every branch ----------
+
+const PERSON_TOKEN_ID = 'person-token:.github/workflows/release.yml:HARBOR_LANE_PAT';
+
+test('a person token the change adds blocks in blocking mode, and points at its line', () => {
+  const d = check('native: a person token the change adds, blocking');
+  const lines = annotations(d);
+  assert.equal(lines.at(-1), '::error title=security-scan::security-scan blocks: 1');
+  const at = lines.find((l) => l.includes('file=.github/workflows/release.yml'));
+  assert.ok(at, `${MISSED}: no annotation points at the workflow: ${JSON.stringify(lines)}`);
+  assert.match(at, /^::error file=\.github\/workflows\/release\.yml,line=14,title=security-scan::\.github\/workflows\/release\.yml line 14 uses the repository secret HARBOR_LANE_PAT/);
+  const text = summary(d);
+  assert.ok(text.includes(PERSON_TOKEN_ID), text);
+  assert.match(text, /github\.token/, 'the summary does not say what to use instead');
+  assert.match(text, /actions\/create-github-app-token/, 'the summary does not say what to use instead');
+  const said = text.split('\n').find((l) => l.startsWith('- .github/workflows/release.yml line 14'));
+  assert.ok(said && said.endsWith('(${{ steps.<id>.outputs.token }}).'), `${MISSED}: the summary cuts the refusal short: ${said}`);
+});
+
+test('a person token the change adds is counted, and passes, in advisory mode', () => {
+  const d = check('open source: a person token the change adds, advisory');
+  assert.ok(annotations(d).some((l) => /^::warning file=\.github\/workflows\/release\.yml,line=14,/.test(l)),
+    `${MISSED}: the advisory run does not point at the line`);
+});
+
+test('a person token its exception allows is recorded and does not block', () => {
+  const d = check('native: a person token its exception allows, blocking');
+  assert.equal(d.findings[0].id, PERSON_TOKEN_ID);
+  assert.ok(d.notes.includes('person tokens: read the 1 workflow file(s) the change touches'), JSON.stringify(d.notes));
+  assert.ok(!annotations(d).some((l) => l.includes('file=')), `${WRONGLY_BLOCKED}: an allowed use is annotated as refused`);
+});
+
+test('the accepted list never accepts a person token: only the exceptions file does, with its end date', () => {
+  const d = check('native: a person token named in the accepted list, blocking');
+  assert.equal(d.findings[0].accepted, null, `${MISSED}: the accepted list let a person token in`);
+});
+
+test('a person-token check that did not run, crashed or wrote what cannot be read blocks', () => {
+  check('native: the person-token check did not run, blocking');
+  check('open source: the person-token check crashed, blocking');
+  check('native: the person-token output is not JSON, blocking');
+  const d = check('native: the exceptions file the change writes cannot be read, blocking');
+  assert.ok(d.errors.some((e) => /person-token-exceptions\.json/.test(e)), JSON.stringify(d.errors));
+});
+
+test('an annotation\'s file name cannot break out of its property', () => {
+  assert.equal(escapeProperty('a,b:c%d\ne'), 'a%2Cb%3Ac%25d%0Ae');
+});
+
 // ---------- the workflow, as GitHub runs it ----------
 
 const WORKFLOW = path.join(here, '..', '.github', 'workflows', 'security-scan.yml');
 const workflowLines = fs.readFileSync(WORKFLOW, 'utf8').split('\n');
-const SCANNER_JOBS = ['dependency-review', 'osv-scanner', 'gitleaks', 'semgrep'];
+const SCANNER_JOBS = ['dependency-review', 'osv-scanner', 'gitleaks', 'semgrep', 'person-tokens'];
 const OPEN_SOURCE_JOBS = ['osv-scanner', 'gitleaks', 'semgrep'];
 const QUIETING_FILES = ['.semgrepignore', '.gitleaksignore', '.gitleaks.toml', 'osv-scanner.toml'];
 const STRIP_STEP = 'Remove the files a change could quiet the scan with';
@@ -684,10 +734,10 @@ function settle(mode, files) {
 }
 
 test('the settle command fails the job on a critical in blocking mode and passes it in advisory', () => {
-  const blocking = settle('blocking', { 'dependency-review': 'dr-runtime-critical' });
+  const blocking = settle('blocking', { 'dependency-review': 'dr-runtime-critical', 'person-tokens': 'pt-clean' });
   assert.equal(blocking.status, 1, `${CRITICAL_PASSED}: ${blocking.stdout}`);
   assert.match(blocking.summary, /okafor-template/);
-  const advisory = settle('advisory', { 'dependency-review': 'dr-runtime-critical' });
+  const advisory = settle('advisory', { 'dependency-review': 'dr-runtime-critical', 'person-tokens': 'pt-clean' });
   assert.equal(advisory.status, 0, `${WRONGLY_BLOCKED}: ${advisory.stdout}`);
   assert.equal(advisory.stdout.trim().split('\n').at(-1), '::warning title=security-scan::security-scan would block: 1');
 });

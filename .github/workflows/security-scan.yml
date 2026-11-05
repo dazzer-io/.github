@@ -11,6 +11,11 @@
 #     the lockfiles the change deletes or renames listed beside it, gitleaks over the pull
 #     request's commits, and Semgrep's open-source engine against the base commit, each
 #     installed by pinned version and checksum.
+# On both branches the job person-tokens reads the workflow files and composite actions the change
+# changes (the merge base of the base and the change's head, against that head) and lists every
+# use of a person's GitHub token kept as a repository secret, with whether the calling
+# repository's .github/person-token-exceptions.json, read from the base commit, still allows it
+# (security-scan/person-tokens.mjs). It needs no secret and no permission beyond contents: read.
 #
 # The mode is the variable SECURITY_SCAN_MODE, read on every run: advisory records every
 # finding and passes with "security-scan would block: N"; blocking fails on a new critical
@@ -356,9 +361,64 @@ jobs:
           path: scan/
           if-no-files-found: error
 
+  person-tokens:
+    name: Person tokens in workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
+    steps:
+      - name: Name this workflow's own repository and commit
+        id: source
+        env:
+          SOURCE_REPO: ${{ job.workflow_repository }}
+          SOURCE_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$SOURCE_REPO" ] || [ -z "$SOURCE_SHA" ]; then
+            echo "::error title=security-scan::the contexts job.workflow_repository and job.workflow_sha must both be set, so the check's source is known"
+            exit 1
+          fi
+          echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the check at that commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.source.outputs.repo }}
+          ref: ${{ steps.source.outputs.sha }}
+          token: ${{ github.token }}
+          path: .security-scan-source
+          sparse-checkout: security-scan
+          persist-credentials: false
+
+      - name: Fetch the change with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: List the person tokens the changed workflows sign in to GitHub with
+        # Only the files the change changes are read, at its head; the exceptions are read at the
+        # base commit, so a change never lets itself in. The check only reads git; the decision is
+        # the final job's.
+        run: |
+          mkdir -p scan
+          set +e
+          node .security-scan-source/security-scan/person-tokens.mjs scan --target target --base "$BASE_SHA" --head "$HEAD_SHA" > scan/person-tokens.out
+          echo "$?" > scan/person-tokens.exit
+          exit 0
+
+      - name: Hand the output to the final job
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-scan-person-tokens
+          path: scan/
+          if-no-files-found: error
+
   security-scan:
     name: security-scan
-    needs: [plan, dependency-review, osv-scanner, gitleaks, semgrep]
+    needs: [plan, dependency-review, osv-scanner, gitleaks, semgrep, person-tokens]
     if: ${{ !cancelled() }}
     runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5

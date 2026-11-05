@@ -1,21 +1,26 @@
-// Every job of every workflow here names its machine by what it holds, never by its name
-// (decisions 36 and 93 of the checks-on-google job, which moved the checks off GitHub's
-// computers):
+// Every job of every workflow here names its machine by what it holds, never by its name:
 //
 //   - A WRITE TOKEN. A job granted any write by its workflow's `permissions:` or its own (any
 //     access other than read or none, or `write-all`), or whose workflow and job write no
 //     `permissions:` key at all (the repository's default token, which may be read-write), runs
 //     on one of GitHub's standard machines written as a literal label, and reads no CHECKS_,
 //     SCAN_ or LOCKED_ setting anywhere in the job or the workflow's top. This holds whatever
-//     starts the workflow, pull_request, workflow_call, workflow_run, a push or anything else:
-//     on a machine of ours that token is within reach of whatever ran there before it, and that
-//     reason does not depend on the trigger. A workflow's grant counts even where the job's own
+//     starts the workflow, pull_request, workflow_call, workflow_run, a push or anything else.
+//     That is this repository's own stricter rule, built on decision 36's reason: decision 36 of
+//     the checks-on-google job holds pull_request jobs with a write token to GitHub's machines,
+//     because on a machine of ours that token is within reach of whatever ran there before it,
+//     and that reason does not depend on the trigger. Decision 36 itself still reads only
+//     pull_request, and decision 47 (a push-started job elsewhere on the change-check machines)
+//     stands; here the rule is wider. A workflow's grant counts even where the job's own
 //     permissions would replace it, so the reading errs toward GitHub's machines.
 //     engineer-review.yml is such a job (statuses: write).
 //   - THE SECURITY SCAN. Every other job of .github/workflows/security-scan.yml, the file the
 //     organisation ruleset security-scan-required runs on every gated repository, reads exactly
-//     ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}: the scan machines, where no change's own code
-//     runs, so the change it scans cannot reach the scan from a job of its own.
+//     ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}: the scan machines (decision 93). They hold no
+//     change's own code only while the scan runner group admits only the scan workflows
+//     (decision 98): a workflow lives in the repository it checks, so a pull request in a
+//     repository the group admits can add a workflow of its own naming the scan label, and only
+//     the group's workflow list keeps it off. This test cannot see that list.
 //   - EVERY OTHER JOB reads exactly ${{ vars.CHECKS_RUNNER_2 || 'ubuntu-latest' }}, the
 //     organisation's change-check machines.
 // Either setting empty sends its jobs back to GitHub's computers, which is how the fallback
@@ -27,38 +32,67 @@
 // (GITHUB_STANDARD_CORES in its scripts/checks/check-test-width-matches-the-machine.mjs):
 // ubuntu-latest, ubuntu-24.04 and ubuntu-22.04.
 //
-// THE READER. This repository has no YAML package and adds none, so the workflows are read by
-// their lines, as test/decide-tests-workflow.test.mjs and test/security-scan-decide.test.mjs read
-// them, in the block layout every workflow here is written in. Its limits, stated:
+// THE READER. This repository has no YAML package and adds none (decision 99), so a workflow is
+// read only if it is written in a closed plain subset of YAML, and any line outside it is refused
+// with its line number and the plain spelling to use. Before anything else is read:
+//   - the file holds no carriage return except directly before a line feed, no U+0085, U+2028 or
+//     U+2029, no byte-order mark and no other control character but the line feed, so a line is
+//     exactly what a line feed ends;
+//   - every line is one of these shapes, and nothing else:
+//       an empty line, or a comment (`# ...` after any spaces);
+//       `---` as line 1 only;
+//       a key line: spaces, a key, a colon, then nothing, a comment, or a value;
+//       a list item: spaces, `- `, then a value, or a key, a colon and nothing, a comment or a
+//         value, as a key line has;
+//       a line of a block scalar's body;
+//     where a key is a plain name matching ^[A-Za-z_][A-Za-z0-9_-]*$, bare or inside matching
+//     quotes with no backslash; and a value, after one or more spaces, with an optional
+//     ` # comment` after it, is one of:
+//       plain: not starting with - ? : (each before a space), , [ ] { } # & * ! | > ' " % @ or
+//         a backquote, and holding no `: ` and no closing `:`;
+//       single-quoted, closed on its line ('' for a quote inside);
+//       double-quoted with no backslash, closed on its line;
+//       `{}`;
+//       a flow list closed on its line, `[a, 'b', "c"]`, each item plain (none of , [ ] { } # :)
+//         or quoted as above;
+//       a block scalar header, `|` or `>` with an optional + or -, and no indentation digit;
+//   - a block scalar's body is skipped by indentation as YAML does: the lines after its header
+//     that are empty or indented at least as far as its first non-empty line, when that line is
+//     indented more than the key (or, for `- |`, the dash) the header belongs to; a leading
+//     empty line indented further than that first line is refused;
+//   - a line indented more than a key or item that holds a value on its own line is refused,
+//     since YAML would read it as more of that value;
+//   - a tab outside a block scalar's body is refused; and so, by shape, are an anchor (`&a`), an
+//     alias (`*a`) and a tag (`!t`) anywhere outside a quoted value or a block scalar's body, an
+//     explicit key (`? k`), a merge key (`<<`), a flow mapping other than `{}`, a flow list not
+//     closed on its line, a quoted value not closed on its line, an escaped key and a second
+//     document.
+// Then, inside that subset:
 //   - top keys at column zero (a quoted `"on":` is read as on), `jobs:` among them; each job id two
-//     spaces in, plain (`  <id>:` with nothing after it but a comment); each job key four spaces in;
-//     a key is plain or quoted, and its quotes are taken off;
-//   - a value is the text after `<key>:` on its line, a trailing ` # comment` dropped; a key with
-//     nothing after it holds the more-indented lines below it (a list, a mapping);
-//   - `on:` as one trigger, a flow list `[a, b]` closed on its own line, or the keys or `- ` items
-//     of the first indent below it; the triggers are read only to be named, since no rule turns on
-//     them;
-//   - `permissions:` as one word (read-all, write-all), `{}`, a flow mapping `{ a: read }` on one
-//     line, or `<scope>: <access>` lines at the first indent below it, each key and access with
-//     its quotes taken off; an access is read only when it is exactly read or none, so an anchor
-//     (`&w write`), an alias (`*w`), an empty value, a value continued on the lines below and any
-//     other word count as a write, as does any other spelling of the whole permissions value;
+//     spaces in, plain (`  <id>:` with nothing after it but a comment); each job key four spaces
+//     in. At the top and at the job-key indent every line is a key, save `---` as line 1 and a
+//     `- ` item directly under a key with nothing after it (a `- key: value` item is an item
+//     there, never a key), and no key appears twice, in any case, nor a read key (on, jobs,
+//     permissions, runs-on, uses) in another case;
+//   - a key with nothing after it holds the more-indented lines below it (a list, a mapping);
+//   - `on:` as one trigger, a flow list closed on its own line, or the keys or `- ` items of the
+//     first indent below it (items at column zero too); the triggers are read only to be named,
+//     since no rule turns on them;
+//   - `permissions:` as one word (read-all, write-all), `{}`, or `<scope>: <access>` lines at the
+//     first indent below it, quotes taken off both; an access is read only when it is exactly read
+//     or none, so an empty value and any other word count as a write, as does any other spelling of
+//     the whole permissions value; a line below the key that is not such a pair is refused;
 //   - a setting is read where a line that is not a whole-line comment holds `vars.CHECKS_`,
 //     `vars.SCAN_` or `vars.LOCKED_` (or `vars['...']`, in any case); a setting named by a value
 //     worked out as the run goes (`vars[format(...)]`) is not seen;
 //   - the expression is compared as written: another spacing, quotes around it, or another
 //     fallback is another machine line, and refused;
 //   - what it cannot read is refused rather than passed: no workflow file, no `jobs:` at column
-//     zero or `jobs:` written on one line, a job id that is not plain, a tab in an indent, a
-//     workflow with no trigger it can read, an `on:` written as a flow mapping (`{ ... }`) or as a
-//     flow list not closed on its own line, a `permissions:` line below the key that is not a
-//     plain `<scope>: <access>` at the first indent, a flow-mapping pair that is not `<scope>:
-//     <access>`, a line at the top or job-key indent that is not a key (an explicit key written
-//     `? key`, a stray line, a line at an odd indent) unless it is a `- ` item directly under a
-//     key with nothing after it, a merge key (`<<`) at either of those indents, and a reading that
-//     found no job at all.
+//     zero or `jobs:` written on one line, a job id that is not plain, a workflow with no trigger
+//     it can read, a line at the top or job-key indent at an odd indent, and a reading that found
+//     no job at all.
 // It does not run GitHub's own parser; a file another reader takes differently inside this
-// layout would not be seen.
+// subset would not be seen. The kept cases at the end hold each refused spelling and controls.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -71,29 +105,164 @@ const CHECKS = "${{ vars.CHECKS_RUNNER_2 || 'ubuntu-latest' }}";
 const SCAN = "${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}";
 const GITHUB_STANDARD = ['ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04'];
 const READ_ONLY = ['read', 'none'];
+const READ_KEYS = ['on', 'jobs', 'permissions', 'runs-on', 'uses'];
 const OUR_SETTING = /\bvars\s*(?:\.\s*|\[\s*['"])\s*(CHECKS|SCAN|LOCKED)_\w*/i;
 
 const isComment = (line) => /^\s*(#.*)?$/.test(line);
 const indentOf = (line) => line.match(/^ */)[0].length;
 const isItem = (line) => /^\s*-(\s|$)/.test(line);
 
-// The value after a key: a quoted value up to its closing quote, a plain one up to ` #`.
-function valueOf(rest) {
-  const s = rest.trim();
-  if (s.startsWith('#')) return '';
-  for (const q of ["'", '"']) {
-    if (!s.startsWith(q)) continue;
-    for (let i = 1; i < s.length; i++) {
-      if (s[i] !== q) continue;
-      if (q === "'" && s[i + 1] === "'") { i++; continue; }
-      if (q === '"' && s[i - 1] === '\\') continue;
-      return s.slice(0, i + 1);
-    }
-    return s;
+// THE SUBSET.
+const NAME = '[A-Za-z_][A-Za-z0-9_-]*';
+const KEY_LINE = new RegExp(`^(?:(${NAME})|'(${NAME})'|"(${NAME})"):(?= |$)(.*)$`);
+const keyOf = (m) => m[1] ?? m[2] ?? m[3];
+const SPELL = {
+  key: 'write each key as a plain name of letters, digits, _ and -, bare or in quotes with no backslash, then a colon (permissions: read-all)',
+  value: 'write a value plain, in single quotes, or in double quotes with no backslash, closed on its line, and a longer text as a | or > block',
+  property: 'write the value out in full where it is used, with no anchor, alias or tag',
+  flow: 'write a mapping as key: value lines below its key, and a list closed on its line or as - items below its key',
+  block: 'write a block as | or > with at most a + or -, its body indented further than its key',
+  break: 'end every line with a line feed alone, or a carriage return directly before it',
+  tab: 'indent with spaces',
+  document: 'write one document, with --- only as line 1',
+  more: 'keep a value on its key\'s line, or write it as a | or > block',
+};
+
+// What a value after `key:` or `- ` is: { kind: 'none' | 'scalar' | 'flow' | 'block', text, items }
+// or { bad, spell, text } for a value outside the subset.
+function valueShape(rest) {
+  const s = rest.replace(/^ +/, '');
+  if (s === '' || s.startsWith('#')) return { kind: 'none', text: '' };
+  const tail = (t) => /^( *| +#.*)$/.test(t);
+  const bad = (why, spell = SPELL.value) => ({ bad: why, spell, text: s });
+  if (s[0] === '|' || s[0] === '>') {
+    return /^[|>][+-]?( *| +#.*)$/.test(s) ? { kind: 'block', text: s[0] } : bad('holds a block scalar header other than | or > with an optional + or -', SPELL.block);
   }
-  const k = s.search(/\s#/);
-  return (k < 0 ? s : s.slice(0, k)).trim();
+  const quoted = (t) => {
+    if (t[0] === "'") {
+      const m = t.match(/^'(?:[^']|'')*'/);
+      return m ? { text: m[0] } : { bad: 'holds a single-quoted value not closed on its line' };
+    }
+    const m = t.match(/^"[^"\\]*"/);
+    if (m) return { text: m[0] };
+    return { bad: /^"[^"]*\\/.test(t) ? 'holds a double-quoted value with a backslash, an escape YAML decodes' : 'holds a double-quoted value not closed on its line' };
+  };
+  if (s[0] === "'" || s[0] === '"') {
+    const q = quoted(s);
+    if (q.bad) return bad(q.bad);
+    if (!tail(s.slice(q.text.length))) return bad('holds text after a quoted value');
+    return { kind: 'scalar', text: q.text };
+  }
+  if (s.startsWith('{}') && tail(s.slice(2))) return { kind: 'scalar', text: '{}' };
+  if (s[0] === '{') return bad('holds a flow mapping', SPELL.flow);
+  if (s[0] === '[') {
+    const items = [];
+    let i = 1;
+    for (;;) {
+      while (s[i] === ' ') i++;
+      if (s[i] === ']' && !items.length) break;
+      const at = s.slice(i);
+      let item;
+      if (at[0] === "'" || at[0] === '"') {
+        const q = quoted(at);
+        if (q.bad) return bad(`${q.bad}, inside a flow list`, SPELL.flow);
+        item = q.text;
+      } else {
+        item = at.match(/^[^,[\]{}#:]*/)[0].trimEnd();
+        if (!item || /^[-?&*!|>'"%@`]/.test(item)) return bad('holds a flow list whose items are not plain or quoted, or that is not closed on its line', SPELL.flow);
+      }
+      items.push(item);
+      i += item.length;
+      while (s[i] === ' ') i++;
+      if (s[i] === ',') { i++; continue; }
+      if (s[i] === ']') break;
+      return bad('holds a flow list not closed on its line, or with an item that is not plain or quoted', SPELL.flow);
+    }
+    if (!tail(s.slice(i + 1))) return bad('holds text after a flow list', SPELL.flow);
+    return { kind: 'flow', text: s.slice(0, i + 1), items: items.map(unquote) };
+  }
+  if (/^[&*!]/.test(s)) return bad(`holds ${{ '&': 'an anchor', '*': 'an alias', '!': 'a tag' }[s[0]]} (${s.split(' ')[0]})`, SPELL.property);
+  if (/^([,\]}#%@`]|[-?:]( |$))/.test(s)) return bad(`holds a value starting with the indicator ${s[0]}`);
+  const k = s.search(/ #/);
+  const text = (k < 0 ? s : s.slice(0, k)).trimEnd();
+  if (/:( |$)/.test(text)) return bad('holds a plain value with ": " in it or a closing ":", which YAML reads as a key');
+  return { kind: 'scalar', text };
 }
+
+// Why a line that is not a key line is not one, in words.
+function notAKey(body) {
+  if (body.startsWith('&')) return ['starts with an anchor (&), not a key', SPELL.key];
+  if (body.startsWith('*')) return ['starts with an alias (*), not a key', SPELL.key];
+  if (body.startsWith('!')) return ['starts with a tag (!), not a key', SPELL.key];
+  if (/^\?( |$)/.test(body)) return ['is an explicit key (?), not a plain key', SPELL.key];
+  if (body.startsWith('<<')) return ['is a merge key (<<), whose keys this reader does not follow', SPELL.key];
+  if (/^(---|\.\.\.)( |$)/.test(body)) return ['is a document marker after line 1', SPELL.document];
+  if (body.startsWith('%')) return ['is a directive', SPELL.document];
+  if (/^["'][^:]*\\/.test(body)) return ['is a quoted key with a backslash, an escape YAML decodes', SPELL.key];
+  return ['is neither a plain key line, a - item nor a comment', SPELL.key];
+}
+
+// Every line of the file, judged against the subset: refusals naming the line and the spelling.
+function shapeRefusals(lines, where) {
+  const out = [];
+  const refuse = (n, line, why, spell) =>
+    out.push(`Could not find a line this reader reads in ${where}: line ${n} ${why} (${line.trim()}); ${spell}.`);
+  let open = null;
+  let i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    const n = i + 1;
+    i++;
+    if (/^ *$/.test(l)) continue;
+    if (l.includes('\t')) { refuse(n, l, 'holds a tab', SPELL.tab); continue; }
+    if (/^ *#/.test(l)) continue;
+    if (n === 1 && /^---( *| +#.*)$/.test(l)) continue;
+    const ind = indentOf(l);
+    if (open !== null && ind > open) refuse(n, l, 'is indented under a value written on the line above it, so YAML reads it as more of that value', SPELL.more);
+    open = null;
+    let body = l.slice(ind);
+    let col = ind;
+    const item = /^-( |$)/.test(body);
+    if (item) {
+      const m = body.match(/^- */)[0];
+      body = body.slice(m.length);
+      col = ind + m.length;
+      if (body === '' || body.startsWith('#')) { refuse(n, l, 'is a - item with nothing after it', SPELL.value); continue; }
+    }
+    const k = body.match(KEY_LINE);
+    let v;
+    if (k) v = valueShape(k[4]);
+    else if (item && !/^["']?[^\s"']*["']?:( |$)/.test(body)) v = valueShape(` ${body}`);
+    else {
+      const [why, spell] = notAKey(body);
+      refuse(n, l, why, spell);
+      continue;
+    }
+    if (v.bad) { refuse(n, l, v.bad, v.spell); continue; }
+    const owner = item && !k ? ind : col;
+    if (v.kind === 'scalar' || v.kind === 'flow') open = owner;
+    if (v.kind !== 'block') continue;
+    // The block's body, as YAML finds it: from its first non-empty line's indent.
+    let j = i;
+    let first = -1;
+    while (j < lines.length) {
+      if (/^ *$/.test(lines[j])) { j++; continue; }
+      first = indentOf(lines[j]);
+      break;
+    }
+    open = owner;
+    if (first <= owner) continue;
+    for (let e = i; e < j; e++) {
+      if (lines[e].length > first) refuse(e + 1, lines[e], 'is an empty line at the head of a block indented further than the block\'s first line', SPELL.block);
+    }
+    while (j < lines.length && (/^ *$/.test(lines[j]) || indentOf(lines[j]) >= first)) j++;
+    i = j;
+  }
+  return out;
+}
+
+// The reader's text of a value: quoted values keep their quotes, a comment is dropped.
+const valueOf = (rest) => valueShape(rest).text;
 
 function unquote(v) {
   if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) return v.slice(1, -1).replaceAll("''", "'");
@@ -101,39 +270,41 @@ function unquote(v) {
   return v;
 }
 
-const KEY = /^(\S[^:]*?)\s*:(?=\s|$)(.*)$/;
-
 // A block's entries at one indent: { key, value, body, line }, body the deeper lines under it.
-// A line that is not a key at that indent, or a deeper line before any entry, is an entry with
-// key null, for oddKeys to judge.
+// A line that is not a key at that indent (a `- ` item among them), or a deeper line before any
+// entry, is an entry with key null, for oddKeys to judge.
 function entries(lines, indent, firstLine) {
   const out = [];
   lines.forEach((l, i) => {
     if (isComment(l)) { if (out.length) out.at(-1).body.push(l); return; }
     const ind = indentOf(l);
     if (ind > indent && out.length) { out.at(-1).body.push(l); return; }
-    const m = ind === indent ? l.slice(indent).match(KEY) : null;
-    out.push({ key: m ? unquote(m[1]) : null, raw: l, value: m ? valueOf(m[2]) : '', body: [], line: firstLine + i });
+    const m = ind === indent ? l.slice(indent).match(KEY_LINE) : null;
+    out.push({ key: m ? keyOf(m) : null, raw: l, value: m ? valueOf(m[4]) : '', body: [], line: firstLine + i });
   });
   return out;
 }
 
-// Refusals for the entries at the top or job-key indent this reader cannot follow: a merge key,
-// and a line that is not a key, unless it is a `- ` item directly under a key with nothing after it.
+// Refusals for the entries at the top or job-key indent this reader cannot follow: a line that is
+// not a key, unless it is a `- ` item directly under a key with nothing after it, and a key written
+// twice, or a read key written in another case.
 function oddKeys(list, where, level) {
   const out = [];
+  const seen = new Map();
   list.forEach((e, i) => {
-    if (e.key === '<<') {
-      out.push(`Could not find plain keys ${level} of ${where}: line ${e.line} is a merge key (${e.raw.trim()}), whose keys this reader does not follow`);
+    if (e.key !== null) {
+      const lower = e.key.toLowerCase();
+      if (seen.has(lower)) out.push(`Could not find plain keys ${level} of ${where}: line ${e.line} writes ${e.key} again after line ${seen.get(lower)}, and another reader may keep either; write each key once.`);
+      else seen.set(lower, e.line);
+      if (READ_KEYS.includes(lower) && e.key !== lower) out.push(`Could not find plain keys ${level} of ${where}: line ${e.line} writes ${e.key}, a key this reader reads only as ${lower}; write it in lower case.`);
       return;
     }
-    if (e.key !== null) return;
     if (level === 'at the top' && i === 0 && e.raw.trim() === '---') return;
     let k = i - 1;
     while (k >= 0 && list[k].key === null && isItem(list[k].raw)) k--;
     const owner = list[k];
     const underKey = isItem(e.raw) && owner && owner.key !== null && owner.value === '' && !owner.body.some((l) => !isComment(l));
-    if (!underKey) out.push(`Could not find plain keys ${level} of ${where}: line ${e.line} reads ${e.raw.trim()}, which is not a key this reader reads (an explicit key, a stray line or an odd indent)`);
+    if (!underKey) out.push(`Could not find plain keys ${level} of ${where}: line ${e.line} reads ${e.raw.trim()}, which is not a key this reader reads there (a stray item or an odd indent); ${SPELL.key}.`);
   });
   return out;
 }
@@ -143,12 +314,13 @@ function readTriggers(on) {
   if (!on) return { triggers: [] };
   const body = on.body.filter((l) => !isComment(l));
   const v = on.value;
-  if (v.startsWith('{')) return { triggers: [], unread: `on: is written as a flow mapping (${v}), which this reader does not read` };
+  if (v.startsWith('{') && v !== '{}') return { triggers: [], unread: `on: is written as a flow mapping (${v}), which this reader does not read` };
   if (v.startsWith('[')) {
-    if (!v.endsWith(']') || /[[\]{}]/.test(v.slice(1, -1)) || body.length) {
+    const shape = valueShape(` ${v}`);
+    if (shape.kind !== 'flow' || body.length) {
       return { triggers: [], unread: `on: is a flow list this reader does not read (${[v, ...body.map((l) => l.trim())].join(' ')}); it reads one closed on its own line` };
     }
-    return { triggers: v.slice(1, -1).split(',').map((s) => unquote(s.trim())).filter(Boolean) };
+    return { triggers: shape.items.filter(Boolean) };
   }
   if (v && body.length) return { triggers: [], unread: `on: holds ${v} and lines below it, which this reader does not read` };
   if (v) return { triggers: [unquote(v)] };
@@ -159,10 +331,10 @@ function readTriggers(on) {
     const ind = indentOf(l);
     if (ind > indent) continue;
     const item = ind === indent ? l.slice(indent).match(/^-\s+(.*)$/) : null;
-    if (item) { triggers.push(unquote(valueOf(item[1]))); continue; }
-    const m = ind === indent ? l.slice(indent).match(KEY) : null;
+    if (item) { triggers.push(unquote(valueOf(` ${item[1]}`))); continue; }
+    const m = ind === indent ? l.slice(indent).match(KEY_LINE) : null;
     if (!m) return { triggers: [], unread: `on: holds the line ${l.trim()}, which is not a trigger this reader reads at the first indent below it` };
-    triggers.push(unquote(m[1]));
+    triggers.push(keyOf(m));
   }
   return { triggers };
 }
@@ -177,37 +349,50 @@ function readGrant(entry, where) {
   if (v && body.length) return asWrite(`${entry.value} with lines below it`);
   if (v === 'read-all' || v === '{}') return { set: true, write: false };
   if (v === 'write-all') return { set: true, write: true, how: `${where} permissions: write-all` };
+  if (v !== '') return asWrite(v);
+  if (!body.length) return asWrite('with nothing after it or below it');
   const pairs = [];
-  if (v.startsWith('{') && v.endsWith('}')) {
-    for (const p of v.slice(1, -1).split(',').map((s) => s.trim()).filter(Boolean)) {
-      const m = p.match(KEY);
-      if (!m) return { set: true, write: true, how: `${where} permissions ${v}`, unread: `${where} permissions: ${v} holds ${p}, which is not a <scope>: <access> pair this reader reads` };
-      pairs.push([unquote(m[1]), unquote(valueOf(m[2]))]);
-    }
-  } else if (v === '') {
-    if (!body.length) return asWrite('with nothing after it or below it');
-    const indent = indentOf(body[0]);
-    for (const l of body) {
-      const ind = indentOf(l);
-      if (ind > indent) { pairs.at(-1)[1] = `${pairs.at(-1)[1]} continued below as ${l.trim()}`.trim(); continue; }
-      const m = ind === indent ? l.slice(indent).match(KEY) : null;
-      if (!m) return { set: true, write: true, how: `${where} permissions`, unread: `${where} permissions: holds the line ${l.trim()}, which is not a <scope>: <access> line this reader reads at the first indent below it` };
-      pairs.push([unquote(m[1]), unquote(valueOf(m[2]))]);
-    }
-  } else return asWrite(v);
+  const indent = indentOf(body[0]);
+  for (const l of body) {
+    const ind = indentOf(l);
+    if (ind > indent) { pairs.at(-1)[1] = `${pairs.at(-1)[1]} continued below as ${l.trim()}`.trim(); continue; }
+    const m = ind === indent ? l.slice(indent).match(KEY_LINE) : null;
+    if (!m) return { set: true, write: true, how: `${where} permissions`, unread: `${where} permissions: holds the line ${l.trim()}, which is not a <scope>: <access> line this reader reads at the first indent below it` };
+    pairs.push([keyOf(m), unquote(valueOf(m[4]))]);
+  }
   const writes = pairs.filter(([, access]) => !READ_ONLY.includes(access)).map(([scope, access]) => `${scope}: ${access || '(empty)'}`);
   return writes.length ? { set: true, write: true, how: `${where} permissions ${writes.join(', ')}` } : { set: true, write: false };
 }
 
-function readWorkflow(file) {
+// The characters YAML may read as a line break, or as no character at all, inside a line.
+const ODD_CHARACTER = new RegExp('[\\r\\u0085\\u2028\\u2029\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F\\uFEFF]');
+const ODD_NAMES = { 13: 'a carriage return not directly before a line feed', 0x85: 'U+0085 (next line)', 0x2028: 'U+2028 (line separator)', 0x2029: 'U+2029 (paragraph separator)' };
+
+// A workflow's text, read: { where, file, triggers, refusals, jobs, topText, workflowGrant }.
+function readText(text, file) {
   const where = `.github/workflows/${file}`;
-  const lines = fs.readFileSync(path.join(DIR, file), 'utf8').split('\n').map((l) => l.replace(/\r$/, ''));
   const refusals = [];
-  const tab = lines.findIndex((l) => /^ *\t/.test(l));
-  if (tab >= 0) refusals.push(`Could not find a plain indent in ${where}: line ${tab + 1} indents with a tab, which this reader does not read`);
+  const raw = text.split('\n');
+  raw.forEach((l, i) => {
+    const odd = (l.endsWith('\r') ? l.slice(0, -1) : l).match(ODD_CHARACTER);
+    if (!odd) return;
+    const code = odd[0].charCodeAt(0);
+    const name = ODD_NAMES[code] ?? `the character U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
+    refusals.push(`Could not find a line this reader reads in ${where}: line ${i + 1} holds ${name}, which YAML may read as a line break or as no character at all; ${SPELL.break}, and no other control character.`);
+  });
+  if (refusals.length) return { where, file, triggers: [], refusals, jobs: [] };
+  const lines = raw.map((l) => l.replace(/\r$/, ''));
+  refusals.push(...shapeRefusals(lines, where));
   const top = entries(lines, 0, 1);
   refusals.push(...oddKeys(top, where, 'at the top'));
-  const { triggers, unread } = readTriggers(top.find((e) => e.key === 'on' || e.key === 'true'));
+  const onAt = top.findIndex((e) => e.key === 'on' || e.key === 'true');
+  let on = top[onAt];
+  if (on && !on.value && !on.body.some((l) => !isComment(l))) {
+    const items = [];
+    for (let k = onAt + 1; k < top.length && top[k].key === null && isItem(top[k].raw); k++) items.push(top[k].raw, ...top[k].body);
+    if (items.length) on = { ...on, body: items };
+  }
+  const { triggers, unread } = readTriggers(on);
   if (unread) refusals.push(`Could not find the triggers of ${where}: ${unread}`);
   else if (!triggers.length) refusals.push(`Could not find the triggers of ${where}: no on: key this reader reads at column zero`);
   const jobsEntry = top.find((e) => e.key === 'jobs');
@@ -239,6 +424,8 @@ function readWorkflow(file) {
   return { where, file, triggers, refusals, jobs, topText, workflowGrant };
 }
 
+const readWorkflow = (file) => readText(fs.readFileSync(path.join(DIR, file), 'utf8'), file);
+
 // What a runs-on holds, in words, for a refusal.
 function machineOf(runsOn) {
   if (!runsOn) return 'no runs-on';
@@ -249,6 +436,8 @@ function machineOf(runsOn) {
   }
   return `runs-on: ${runsOn.value || '(empty)'}`;
 }
+
+const STRICTER = 'this repository\'s own stricter rule, built on decision 36\'s reason: on a machine of ours that token is within reach of whatever ran there before it, whatever started the run';
 
 function judge(wf) {
   const refusals = [...wf.refusals];
@@ -264,16 +453,16 @@ function judge(wf) {
         || 'no permissions: key in the workflow or the job, so the repository\'s default token, which may write';
       const why = `holds a write token (${how})${started}`;
       if (value === null || !GITHUB_STANDARD.includes(unquote(value))) {
-        refusals.push(`Could not find one of GitHub's standard machines (${GITHUB_STANDARD.join(', ')}) as the machine of ${named}: it ${why} and reads ${machineOf(job.runsOn)}. On a machine of ours that token is within reach of whatever ran there before it, whatever started the run (decision 36).`);
+        refusals.push(`Could not find one of GitHub's standard machines (${GITHUB_STANDARD.join(', ')}) as the machine of ${named}: it ${why} and reads ${machineOf(job.runsOn)}. Holding every write-token job to GitHub's machines is ${STRICTER}.`);
       }
       for (const [lines, part] of [[job.text, 'the job'], [wf.topText, 'the workflow\'s top']]) {
         const hit = lines.map((l) => l.match(OUR_SETTING)).find(Boolean);
-        if (hit) refusals.push(`Could not find ${named} free of the organisation's machine settings: it ${why}, and ${part} reads ${hit[0]}, a CHECKS_, SCAN_ or LOCKED_ setting such a job never reads (decision 36).`);
+        if (hit) refusals.push(`Could not find ${named} free of the organisation's machine settings: it ${why}, and ${part} reads ${hit[0]}, a CHECKS_, SCAN_ or LOCKED_ setting such a job never reads, by ${STRICTER}.`);
       }
       continue;
     }
     const [want, machines] = wf.file === SCAN_WORKFLOW
-      ? [SCAN, 'the scan machines, where no change\'s own code runs (decision 93)']
+      ? [SCAN, 'the scan machines (decision 93), which hold no change\'s own code only while the scan runner group admits only the scan workflows (decision 98)']
       : [CHECKS, 'the organisation\'s change-check machines'];
     if (value !== want) {
       refusals.push(`Could not find ${want} as the machine of ${named}: it reads ${machineOf(job.runsOn)}. Its machine is ${machines}, GitHub's own while the setting is empty.`);
@@ -296,3 +485,99 @@ for (const file of files) {
     assert.ok(refusals.length === 0, refusals.join('\n'));
   });
 }
+
+// ---- KEPT CASES ----
+// Each spelling a review found hiding a write token, and each spelling round 2 planted, is fed to
+// the reader as text and must be refused, naming its line where it says which line; the controls,
+// ordinary spellings, must pass, so a reader that refuses everything fails them.
+const CR = String.fromCharCode(13);
+const STEPS = ['    steps:', '      - name: Run the tests', '        run: node --test test/*.test.mjs'];
+function workflow({
+  top = ['name: Decide tests'],
+  on = ['on:', '  pull_request:', '  merge_group:'],
+  permissions = ['permissions:', '  contents: read'],
+  job = ['    name: decide-tests'],
+  runsOn = CHECKS,
+  steps = STEPS,
+} = {}) {
+  return [...top, '', ...on, '', ...permissions, '', 'jobs:', '  decide-tests:', ...job, `    runs-on: ${runsOn}`, ...steps, ''].join('\n');
+}
+const lineOf = (text, needle) => text.split('\n').findIndex((l) => l.includes(needle)) + 1;
+const refusalsOf = (text, file = 'decide-tests.yml') => judge(readText(text, file));
+
+// A case the reader must refuse: `at` names the line its refusal must name, `says` what it says.
+function refused(name, text, { at, says, file } = {}) {
+  test(`kept case, refused: ${name}`, () => {
+    const refusals = refusalsOf(text, file);
+    assert.ok(refusals.length > 0, `Could not find any refusal of ${name}: the reader passed it, so the spelling hides what it holds`);
+    const line = at ? lineOf(text, at) : 0;
+    const hit = refusals.find((r) => (!line || r.includes(`line ${line} `)) && (!says || says.test(r)));
+    assert.ok(hit, `Could not find a refusal of ${name}${line ? ` naming line ${line}` : ''}${says ? ` saying ${says}` : ''}: the reader said ${refusals.join(' | ')}`);
+  });
+}
+// A control the reader must pass.
+function passes(name, text, file) {
+  test(`kept case, passes: ${name}`, () => {
+    const refusals = refusalsOf(text, file);
+    assert.ok(refusals.length === 0, `Could not find a clean reading of ${name}, an ordinary spelling: ${refusals.join(' | ')}`);
+  });
+}
+const WRITE = /holds a write token/;
+
+// The second review's inputs (A, B, C). A is held twice: on a job key's line, as the review wrote
+// it, and on a step's line, deeper than any line the reader reads as a key.
+for (const [name, code] of [['A: a carriage return mid-line', 13], ['A: U+0085 mid-line', 0x85], ['A: U+2028 mid-line', 0x2028], ['A: U+2029 mid-line', 0x2029]]) {
+  const hide = (line) => `${line}${String.fromCharCode(code)}    permissions: write-all`;
+  refused(`${name} on a job key's line, hiding the job's permissions`, workflow({ job: ['    name: decide-tests', hide('    timeout-minutes: 10')] }), { at: 'timeout-minutes', says: /line break/ });
+  refused(`${name} on a step's line, hiding the job's permissions`, workflow({ steps: [...STEPS.slice(0, 2), hide(STEPS[2])] }), { at: 'run: node', says: /line break/ });
+}
+refused('B: an anchored key', workflow({ job: ['    name: decide-tests', '    &k permissions: write-all'] }), { at: '&k permissions', says: /anchor/ });
+refused('B: an aliased key', workflow({ job: ['    name: decide-tests', '    env:', '      X: &k permissions', '    *k : write-all'] }), { at: '*k :', says: /alias/ });
+refused('B: a tagged key', workflow({ job: ['    name: decide-tests', '    !!str permissions: write-all'] }), { at: '!!str', says: /tag/ });
+refused('B: an escaped key', workflow({ job: ['    name: decide-tests', `    "${String.fromCharCode(92)}u0070ermissions": write-all`] }), { at: 'ermissions"', says: /backslash/ });
+refused('C: an unclosed quote at the top', workflow({ top: ['name: "Decide tests'], permissions: ['permissions: read-all #"'] }), { at: 'name: "Decide', says: /not closed/ });
+refused('C: an unclosed quote at the job-key indent', workflow({ job: ['    name: "decide-tests', '    uses: ./x.yml #"'] }), { at: 'name: "decide', says: /not closed/ });
+
+// Round 2's planted spellings (the second review's finding D).
+refused('an anchored access', workflow({ permissions: ['permissions:', '  contents: &w write'] }), { at: '&w write', says: /anchor/ });
+refused('an aliased access', workflow({ top: ['name: Decide tests', 'env:', '  X: &w write'], permissions: ['permissions:', '  contents: *w'] }), { at: 'contents: *w', says: /alias/ });
+refused('a quoted scope granting a write', workflow({ permissions: ['permissions:', '  "statuses": write'] }), { says: WRITE });
+refused('an access on the next line', workflow({ permissions: ['permissions:', '  contents:', '    write'] }), { at: '    write', says: /neither a plain key/ });
+refused('a flow mapping holding an alias', workflow({ top: ['name: Decide tests', 'env:', '  X: &w write'], permissions: ['permissions: { contents: *w }'] }), { at: 'permissions: {', says: /flow mapping/ });
+refused('a flow mapping holding an anchor', workflow({ permissions: ['permissions: { contents: &w write }'] }), { at: 'permissions: {', says: /flow mapping/ });
+refused('an access other than read, none or write', workflow({ permissions: ['permissions:', '  statuses: admin'] }), { says: WRITE });
+refused('an explicit key in permissions', workflow({ permissions: ['permissions:', '  ? statuses', '  : write'] }), { at: '? statuses', says: /explicit key/ });
+refused('a permissions line at a lesser indent', workflow({ permissions: [], job: ['    name: decide-tests', '    permissions:', '        contents: read', '      statuses: write'] }), { says: /grants/ });
+refused('a workflow_call-only write job on the change-check machines', workflow({ on: ['on:', '  workflow_call:'], permissions: ['permissions:', '  statuses: write'] }), { says: WRITE, file: 'engineer-review.yml' });
+passes('a workflow_call-only write job on ubuntu-latest', workflow({ on: ['on:', '  workflow_call:'], permissions: ['permissions:', '  statuses: write'], runsOn: 'ubuntu-latest' }), 'engineer-review.yml');
+refused('a workflow_run write job on the change-check machines', workflow({ on: ['on:', '  workflow_run:'], permissions: ['permissions:', '  pull-requests: write'] }), { says: WRITE });
+refused('a push workflow with no permissions on the change-check machines', workflow({ on: ['on: push'], permissions: [] }), { says: /default token/ });
+refused('on: as a flow mapping', workflow({ on: ['on: { pull_request: {} }'] }), { at: 'on: {', says: /flow mapping/ });
+refused('on: as a flow list left open', workflow({ on: ['on: [push,', '  pull_request]'] }), { at: 'on: [push', says: /flow list/ });
+refused('an explicit key at the job-key indent', workflow({ job: ['    name: decide-tests', '    ? permissions', '    : write-all'] }), { at: '? permissions', says: /explicit key/ });
+refused('a merge key at the top', workflow({ top: ['name: Decide tests', 'x-common: &c', '  permissions: write-all', '<<: *c'] }), { at: '<<: *c', says: /merge key/ });
+refused('a merge key at the job-key indent', workflow({ top: ['name: Decide tests', 'x-common: &c', '  permissions: write-all'], job: ['    name: decide-tests', '    <<: *c'] }), { at: '    <<: *c', says: /merge key/ });
+
+// Other spellings outside the subset.
+refused('a tab', workflow({ job: ['    name: decide-tests', '    timeout-minutes:\t10'] }), { at: 'timeout-minutes', says: /tab/ });
+refused('a plain value continued on the line below', workflow({ job: ['    name: decide-tests', '      permissions: write-all'] }), { at: '      permissions', says: /more of that value/ });
+refused('a tagged access', workflow({ permissions: ['permissions:', '  contents: !!str read'] }), { at: '!!str read', says: /tag/ });
+refused('a block header with an indentation digit', workflow({ job: ['    name: decide-tests', '    env:', '      X: |2', '        text'] }), { at: '|2', says: /block scalar header/ });
+refused('a second document', `${workflow()}---\npermissions: write-all\n`, { at: '---', says: /document marker/ });
+refused('a key written twice', workflow({ job: ['    name: decide-tests', '    permissions: read-all', '    permissions: write-all'] }), { at: 'write-all', says: /again/ });
+refused('a read key in another case', workflow({ job: ['    name: decide-tests', '    Permissions: write-all'] }), { at: 'Permissions', says: /lower case/ });
+refused('a key: value item at the job-key indent', workflow({ job: ['    name: decide-tests', '    timeout-minutes: 10', '    - permissions: write-all'] }), { at: '- permissions', says: /stray item/ });
+
+// Controls: ordinary spellings that must pass.
+passes('the plain layout', workflow());
+passes('lines ended by a carriage return and a line feed', workflow().split('\n').join(`${CR}\n`));
+passes('steps written at the job-key indent', workflow({ steps: ['    steps:', '    - name: Run the tests', '      run: node --test test/*.test.mjs'] }));
+passes('a leading ---', `---\n${workflow()}`);
+passes('permissions: {}', workflow({ permissions: ['permissions: {}'] }));
+passes('permissions: read-all', workflow({ permissions: ['permissions: read-all # every scope read'] }));
+passes('a one-line trigger list', workflow({ on: ["on: [pull_request, 'merge_group']"] }));
+passes('triggers as items at column zero', workflow({ on: ['on:', '- pull_request', '- merge_group'] }));
+passes('a block scalar holding colons, quotes, an ampersand and a star', workflow({
+  steps: ['    steps:', '      - name: Run the tests', '        run: |', '          echo "a: b" \'c\' && ls *.mjs & wait', `          x: &anchor *alias !tag "${String.fromCharCode(92)}n"`, '', '          # not a comment', '        env:', "          NAME: 'it''s'"],
+}));
+passes('a folded block scalar with a chomping sign', workflow({ job: ['    name: decide-tests', '    if: >-', '      github.event_name != \'push\' &&', '      *.x: y'] }));

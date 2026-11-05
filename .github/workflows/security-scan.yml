@@ -28,11 +28,17 @@
 # The organisation and repositories come from the run's own context, never from this file.
 #
 # Every job runs where the setting SCAN_RUNNER_2 points, GitHub's own computers while it is
-# empty: the scan machines, where no change's own code runs. On the machines that run each
-# change's own checks, a job of the change could reach a scan beside it on the same machine and
-# quiet it; on the scan machines nothing of the change runs beside the scan. No job here holds a
-# write token, so none has to stay on GitHub's computers by decision 36 (test/runs-on.test.mjs
-# holds every job to this).
+# empty: the scan machines (decision 93). On the machines that run each change's own checks, a
+# job of the change could reach a scan beside it on the same machine and quiet it. The scan
+# machines hold no change's own code only while the scan runner group admits only the scan
+# workflows (decision 98): a workflow lives in the repository it checks, so a pull request in a
+# repository the group admits can add a workflow of its own naming the scan label, and only the
+# group's workflow list keeps that job off the scan machines; nothing in this file can. No job
+# here holds a write token, so none has to stay on GitHub's computers by the repository's rule
+# for write tokens. test/runs-on.test.mjs holds every job to this, and reads this file only in
+# the plain subset of YAML its header lists line shape by line shape: plain keys, plain, quoted
+# or block values, - items and one-line flow lists, with no anchor, alias or tag outside a quoted
+# value or a block's body and no backslash in a double-quoted value; it refuses any other line.
 #
 # That setting is the organisation's unless a repository sets a variable of the same name: this
 # workflow runs in each gated repository's own context, where GitHub reads a repository variable

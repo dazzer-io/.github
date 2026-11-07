@@ -178,8 +178,8 @@ const TRUST = [
 ].join('\n');
 // The options the analyze step hands CodeQL's database run-queries, by language, by their exact
 // text, as CODEQL_ACTION_EXTRA_OPTIONS gives them; the action reads the value with yaml.load
-// (github/codeql-action v4.39.3 src/util.ts:83), of which JSON is a subset, and appends the
-// options after its own flags (src/codeql.ts). The exact text is the guard. For every language,
+// (github/codeql-action v4.39.3 src/util.ts:83) and appends the options after its own flags
+// (src/codeql.ts). The exact text is the guard. For every language,
 // --no-database-extension-packs (decision 169): CodeQL then omits the extension packs stored in
 // the database at its creation, from a configuration file or from the scanned code's own
 // .github/codeql/extensions folder. CodeQL's own models in its library packs still apply, as do
@@ -198,10 +198,11 @@ const EXTRA_OPTIONS = `\${{ matrix.language == 'actions' && '${EXTRA}' || '${EXT
 const ANALYZE_STEP_KEYS = ['name', 'uses', 'env', 'with'];
 // What database run-queries takes from an option's value, picked as the action picks it
 // (getExtraOptions over database and run-queries, a '*' at either level included). The action
-// reads the value with yaml.load, of which JSON is a subset; this test reads JSON alone, so a
-// value JSON.parse cannot read is NOT_JSON, said so in a refusal and never read as what
-// run-queries takes, and the exact text above stays the guard. An empty value is no options; a
-// value of no shape this test evaluates, or with no list there, is null.
+// reads the value with yaml.load (src/util.ts:83) and this test reads it with JSON.parse, so this
+// account of what run-queries takes holds only for values both read alike, and the exact-text
+// check above is the guard. A value JSON.parse cannot read is NOT_JSON, said so in a refusal and
+// never read as what run-queries takes. An empty value is no options; a value of no shape this
+// test evaluates, or with no list there, is null.
 const NOT_JSON = Symbol('not JSON');
 function runQueriesOf(value) {
   if (typeof value !== 'string') return null;

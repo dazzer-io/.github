@@ -4,17 +4,13 @@
 # languages; this file decides everything else, so a new repository needs no copy and no review of
 # one, and a change in a calling repository cannot edit the scan it is scanned by.
 #
-# WHAT INIT ALSO READS. Beside this file, CodeQL's init reads the calling repository's custom
-# properties named github-codeql-* (github/codeql-action v4.39.3): github-codeql-extra-queries,
-# which without a leading + replaces the query suite (src/config-utils.ts:409-414,
-# src/config/db-config.ts:472-475); github-codeql-disable-overlay (src/config-utils.ts:770);
-# github-codeql-file-coverage-on-prs (src/init.ts:348); and, where GitHub has switched on the
-# action's feature for them, github-codeql-tools, which picks the CodeQL bundle where init sets no
-# tools:, as here (src/config/inputs.ts:44-70 and the action's CHANGELOG), and
-# github-codeql-config-file, a configuration file where init names none (src/config/file.ts:47-61).
-# The organisation defines none of them (its one property is kind, read 8 Nov 2026). Defining one
-# is an organisation owner's setting that would change what every caller's scan runs; a change in
-# a calling repository cannot set them.
+# WHAT INIT ALSO READS. CodeQL's init also reads some of the calling repository's custom
+# properties named github-codeql-* (github/codeql-action v4.39.3), so such a property can change
+# what a caller's scan runs whatever this file says. For example, github-codeql-extra-queries can
+# replace the query suite (src/config-utils.ts:409-414, src/config/db-config.ts:472-475), and
+# github-codeql-tools can pick the CodeQL bundle (the action's CHANGELOG). The organisation defines
+# none of them (its one property is kind, read 8 Nov 2026). Defining one is an organisation
+# owner's setting, and a change in a calling repository cannot set them.
 #
 # WHAT IT SCANS. What GitHub's automatic setup scanned on dazzer and dazzer-app, read from its own
 # runs on 5 Nov 2026: each language the caller names, of actions, javascript-typescript and python
@@ -76,7 +72,9 @@
 #     (codeql/<language>-all), which every query reads as before; the packs this scan names (for
 #     actions, the trusted-publisher pack, named with --model-packs); and the action's own pack for
 #     a pull request's diff-informed analysis, which it hands run-queries with --extension-packs and
-#     never stores in the database. Only packs the scanned code carries are left out.
+#     never stores in the database. Left out are the packs stored in the database when it is
+#     created: those the scanned code carries in its extensions folder and those a configuration
+#     file names. This scan names no configuration file.
 #   - What it drops. None of dazzer-io's 19 repositories had a .github/codeql folder on its default
 #     branch, read 8 Nov 2026 (each answered 404), so no model a repository relies on is dropped. A
 #     repository that wants models of its own asks for them here, in the shared scan, where a

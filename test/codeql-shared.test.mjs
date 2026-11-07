@@ -56,10 +56,11 @@
 //     gives database run-queries the options OPTION_FOR pins by their exact text: for actions,
 //     --model-packs naming that pack; and no line names --additional-packs, which the action
 //     passes itself for a pull request's diff-informed analysis;
-//   - only the packs the scan names apply (decision 169): for every language it takes, the same
-//     option also gives database run-queries --no-database-extension-packs, so a model pack the
-//     scanned code carries in its own .github/codeql/extensions folder, which GitHub's page says
-//     is still recognized and used in advanced setup, cannot quiet its own scan.
+//   - no model pack the scanned code carries applies (decision 169): for every language it
+//     takes, the same option also gives database run-queries --no-database-extension-packs, so a
+//     model pack the scanned code carries in its own .github/codeql/extensions folder, which
+//     GitHub's page says is still recognized and used in advanced setup, cannot quiet its own
+//     scan; CodeQL's own models and the packs the scan names still apply.
 //
 // test/runs-on.test.mjs reads the same file by its general rules (a scan job reading SCAN_RUNNER_2
 // holds no write and no secret; a write-token job names a literal GitHub label) and holds it to
@@ -176,14 +177,15 @@ const TRUST = [
   'MODEL',
 ].join('\n');
 // The options the analyze step hands CodeQL's database run-queries, by language, by their exact
-// text, as CODEQL_ACTION_EXTRA_OPTIONS gives them; the action reads the value as JSON
-// (src/util.ts) and appends the options after its own flags (src/codeql.ts). For every language,
+// text, as CODEQL_ACTION_EXTRA_OPTIONS gives them; the action reads the value with yaml.load
+// (github/codeql-action v4.39.3 src/util.ts:83), of which JSON is a subset, and appends the
+// options after its own flags (src/codeql.ts). The exact text is the guard. For every language,
 // --no-database-extension-packs (decision 169): CodeQL then omits the extension packs stored in
 // the database at its creation, from a configuration file or from the scanned code's own
-// .github/codeql/extensions folder, so only the packs this scan names apply, beside the action's
-// own pull-request diff pack, which it passes to run-queries with --extension-packs and never
-// stores in the database. For actions, beside it, --model-packs naming the trusted-publisher pack
-// (decision 166).
+// .github/codeql/extensions folder. CodeQL's own models in its library packs still apply, as do
+// the packs this scan names and the action's own pull-request diff pack, which it passes to
+// run-queries with --extension-packs and never stores in the database. For actions, beside it,
+// --model-packs naming the trusted-publisher pack (decision 166).
 const NO_DATABASE_PACKS = '--no-database-extension-packs';
 const OPTION_FOR = {
   actions: '{"database":{"run-queries":["--model-packs=shared-scan/trusted-publishers@1.0.0","--no-database-extension-packs"]}}',
@@ -194,14 +196,18 @@ const EXTRA = OPTION_FOR.actions;
 const EXTRA_OTHER = OPTION_FOR.python;
 const EXTRA_OPTIONS = `\${{ matrix.language == 'actions' && '${EXTRA}' || '${EXTRA_OTHER}' }}`;
 const ANALYZE_STEP_KEYS = ['name', 'uses', 'env', 'with'];
-// What database run-queries takes from an option's value, read as the action reads it
-// (getExtraOptions over database and run-queries, a '*' at either level included): an empty value
-// is no options, and a value that is no JSON object, or no list there, is null.
+// What database run-queries takes from an option's value, picked as the action picks it
+// (getExtraOptions over database and run-queries, a '*' at either level included). The action
+// reads the value with yaml.load, of which JSON is a subset; this test reads JSON alone, so a
+// value JSON.parse cannot read is NOT_JSON, said so in a refusal and never read as what
+// run-queries takes, and the exact text above stays the guard. An empty value is no options; a
+// value of no shape this test evaluates, or with no list there, is null.
+const NOT_JSON = Symbol('not JSON');
 function runQueriesOf(value) {
   if (typeof value !== 'string') return null;
   if (value === '') return [];
   let o;
-  try { o = JSON.parse(value); } catch { return null; }
+  try { o = JSON.parse(value); } catch { return NOT_JSON; }
   const list = (v) => (v === undefined ? [] : Array.isArray(v) ? v : null);
   const parts = [list(o?.['*']), list(o?.database?.['*']), list(o?.database?.['run-queries'])];
   return parts.includes(null) ? null : parts.flat();
@@ -509,8 +515,13 @@ function judgeShared(text) {
   for (const [l, got] of options) {
     if (got !== OPTION_FOR[l]) {
       const takes = runQueriesOf(got);
+      const gives = `CODEQL_ACTION_EXTRA_OPTIONS gives ${got === '' ? 'an empty value' : show(got)} for ${l}`;
+      if (takes === NOT_JSON) {
+        no(`the option ${OPTION_FOR[l]} for ${l}`, `${gives}, which is not JSON this test can read, so what database run-queries takes is not read here`);
+        continue;
+      }
       const omits = Array.isArray(takes) && takes.includes(NO_DATABASE_PACKS) ? '' : `, and without ${NO_DATABASE_PACKS} a model pack in the scanned code's own .github/codeql/extensions folder applies to the scan of that code`;
-      no(`the option ${OPTION_FOR[l]} for ${l}`, `CODEQL_ACTION_EXTRA_OPTIONS gives ${got === '' ? 'an empty value' : show(got)} for ${l}, so database run-queries takes ${show(takes)}${omits}`);
+      no(`the option ${OPTION_FOR[l]} for ${l}`, `${gives}, so database run-queries takes ${show(takes)}${omits}`);
     }
   }
   const named = String(options[0]?.[1] ?? '').match(/--model-packs=([^"@]+)@([^"]+)"/);
@@ -808,6 +819,10 @@ plant('the option empty for javascript-typescript and python, as before', extraA
 plant('the option for actions without the trusted publishers', extraAs(EXTRA_OPTIONS.replace(`'${EXTRA}'`, `'${EXTRA_OTHER}'`)), [optionRefused('actions', `${lit(EXTRA_OTHER)} for actions, so database run-queries takes ${lit(`["${NO_DATABASE_PACKS}"]`)}\\.$`), /the option naming the pack the trusted-publisher step writes, shared-scan\/trusted-publishers@1\.0\.0 in the shared scan \S+: for actions it names \{"database"/]);
 plant('the option for python handed to another command', extraAs(EXTRA_OPTIONS.replace(`|| '${EXTRA_OTHER}'`, `|| '${EXTRA_OTHER.replace('run-queries', 'interpret-results')}'`)), optionRefused('python', `${lit(EXTRA_OTHER.replace('run-queries', 'interpret-results'))} for python, so database run-queries takes \\[\\]${OMITS_NONE}`));
 plant('the option misspelled for python', extraAs(EXTRA_OPTIONS.replace(`|| '${EXTRA_OTHER}'`, `|| '${EXTRA_OTHER.replace(NO_DATABASE_PACKS, '--no-database-extension-pack')}'`)), optionRefused('python', `${lit(EXTRA_OTHER.replace(NO_DATABASE_PACKS, '--no-database-extension-pack'))} for python, so database run-queries takes \\["--no-database-extension-pack"\\]${OMITS_NONE}`));
+// A value the action's yaml.load may read but JSON.parse cannot (a trailing comma in the list):
+// refused by its exact text, and said to be no JSON this test can read, never a reading of null.
+const TRAILING_COMMA = EXTRA_OTHER.replace(`"${NO_DATABASE_PACKS}"]`, `"${NO_DATABASE_PACKS}",]`);
+plant('the option for python with a trailing comma, no JSON', extraAs(EXTRA_OPTIONS.replace(`|| '${EXTRA_OTHER}'`, `|| '${TRAILING_COMMA}'`)), optionRefused('python', `${lit(TRAILING_COMMA)} for python, which is not JSON this test can read, so what database run-queries takes is not read here\\.$`));
 plant('another variable beside the option', (t) => t.replace(`${EXTRA_LINE}\n`, `${EXTRA_LINE}\n          CODEQL_ACTION_DEBUG: true\n`), /the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS/);
 plant('the option on init in place of analyze', (t) => t.replace(`        env:\n${EXTRA_LINE}\n`, '').replace('      - name: Initialize CodeQL\n', `      - name: Initialize CodeQL\n        env:\n${EXTRA_LINE}\n`), [/step github\/codeql-action\/init of the analysis holding exactly name, uses, with/, /the analyze step's env exactly/]);
 

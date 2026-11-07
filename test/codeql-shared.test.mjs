@@ -53,9 +53,13 @@
 //     the one row ["dazzer-io"] to trustedActionsOwnerDataModel, the list actions/unpinned-tag reads.
 //     Its script's lines sit at one indent, so the script run here is the one GitHub runs. The
 //     analyze step's env holds exactly CODEQL_ACTION_EXTRA_OPTIONS, EXTRA_OPTIONS below, which
-//     gives the run-queries option --model-packs naming that pack for actions and an empty string,
-//     no options, for every other language; and no line names --additional-packs, which the action
-//     passes itself for a pull request's diff-informed analysis.
+//     gives database run-queries the options OPTION_FOR pins by their exact text: for actions,
+//     --model-packs naming that pack; and no line names --additional-packs, which the action
+//     passes itself for a pull request's diff-informed analysis;
+//   - only the packs the scan names apply (decision 169): for every language it takes, the same
+//     option also gives database run-queries --no-database-extension-packs, so a model pack the
+//     scanned code carries in its own .github/codeql/extensions folder, which GitHub's page says
+//     is still recognized and used in advanced setup, cannot quiet its own scan.
 //
 // test/runs-on.test.mjs reads the same file by its general rules (a scan job reading SCAN_RUNNER_2
 // holds no write and no secret; a write-token job names a literal GitHub label) and holds it to
@@ -171,11 +175,37 @@ const TRUST = [
   MODEL_LINE,
   'MODEL',
 ].join('\n');
-// The option the analyze step hands CodeQL for actions, and its env value, which is empty for
-// every other language: the action reads an empty value as no options (src/util.ts).
-const EXTRA = `{"database":{"run-queries":["--model-packs=${PACK_NAME}@${PACK_VERSION}"]}}`;
-const EXTRA_OPTIONS = `\${{ matrix.language == 'actions' && '${EXTRA}' || '' }}`;
+// The options the analyze step hands CodeQL's database run-queries, by language, by their exact
+// text, as CODEQL_ACTION_EXTRA_OPTIONS gives them; the action reads the value as JSON
+// (src/util.ts) and appends the options after its own flags (src/codeql.ts). For every language,
+// --no-database-extension-packs (decision 169): CodeQL then omits the extension packs stored in
+// the database at its creation, from a configuration file or from the scanned code's own
+// .github/codeql/extensions folder, so only the packs this scan names apply, beside the action's
+// own pull-request diff pack, which it passes to run-queries with --extension-packs and never
+// stores in the database. For actions, beside it, --model-packs naming the trusted-publisher pack
+// (decision 166).
+const NO_DATABASE_PACKS = '--no-database-extension-packs';
+const OPTION_FOR = {
+  actions: '{"database":{"run-queries":["--model-packs=shared-scan/trusted-publishers@1.0.0","--no-database-extension-packs"]}}',
+  'javascript-typescript': '{"database":{"run-queries":["--no-database-extension-packs"]}}',
+  python: '{"database":{"run-queries":["--no-database-extension-packs"]}}',
+};
+const EXTRA = OPTION_FOR.actions;
+const EXTRA_OTHER = OPTION_FOR.python;
+const EXTRA_OPTIONS = `\${{ matrix.language == 'actions' && '${EXTRA}' || '${EXTRA_OTHER}' }}`;
 const ANALYZE_STEP_KEYS = ['name', 'uses', 'env', 'with'];
+// What database run-queries takes from an option's value, read as the action reads it
+// (getExtraOptions over database and run-queries, a '*' at either level included): an empty value
+// is no options, and a value that is no JSON object, or no list there, is null.
+function runQueriesOf(value) {
+  if (typeof value !== 'string') return null;
+  if (value === '') return [];
+  let o;
+  try { o = JSON.parse(value); } catch { return null; }
+  const list = (v) => (v === undefined ? [] : Array.isArray(v) ? v : null);
+  const parts = [list(o?.['*']), list(o?.database?.['*']), list(o?.database?.['run-queries'])];
+  return parts.includes(null) ? null : parts.flat();
+}
 // The value an expression of one of these two shapes gives for a language, as GitHub evaluates
 // it (strings compared ignoring case; && and || give back an operand), or null for any other
 // shape: ${{ matrix.language == '<l>' }}, and ${{ matrix.language == '<l>' && '<a>' || '<b>' }}.
@@ -187,6 +217,9 @@ function forLanguage(expr, language) {
   if (when) return language.toLowerCase() === when[1].toLowerCase();
   return null;
 }
+// The value an env entry gives a language's run: an unset one is none, which the action reads as
+// no options; a value holding no ${{ }} is itself; an expression as forLanguage reads it.
+const envFor = (value, language) => (value === undefined ? '' : typeof value === 'string' && !value.includes('${{') ? value : forLanguage(value, language));
 // The body lines of the run: block of the step named `name`, as written in the file.
 function runBodyOf(lines, name) {
   const at = lines.findIndex((l) => l.trim() === `- name: ${name}`);
@@ -466,14 +499,19 @@ function judgeShared(text) {
   const want = ['actions/checkout', `${CODEQL}init`, `${CODEQL}analyze`, 'actions/upload-artifact'];
   const steps = stepsOf(rest, 'analysis', want, (st) => (actionOf(st) === `${CODEQL}analyze` ? ANALYZE_STEP_KEYS : STEP_KEYS));
   const [checkout, init, analyze, keep] = steps;
-  // The option naming the pack, on the analyze step alone: --model-packs for actions, empty (no
-  // options) for every other language.
+  // The options database run-queries takes, on the analyze step alone, by their exact text for
+  // each language (OPTION_FOR): --no-database-extension-packs for every language, so the scanned
+  // code's own model packs are omitted (decision 169), and for actions --model-packs beside it.
   if (!same(analyze?.env, { CODEQL_ACTION_EXTRA_OPTIONS: EXTRA_OPTIONS })) {
     no(`the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS: ${EXTRA_OPTIONS}`, `its env reads ${show(analyze?.env)}`);
   }
-  const options = ALLOWED.map((l) => [l, forLanguage(analyze?.env?.CODEQL_ACTION_EXTRA_OPTIONS, l)]);
-  if (!same(options, ALLOWED.map((l) => [l, l === 'actions' ? EXTRA : '']))) {
-    no(`the option ${EXTRA} for actions and an empty one for every other language`, `CODEQL_ACTION_EXTRA_OPTIONS gives ${show(options)}, and the action reads an empty value as no options`);
+  const options = ALLOWED.map((l) => [l, envFor(analyze?.env?.CODEQL_ACTION_EXTRA_OPTIONS, l)]);
+  for (const [l, got] of options) {
+    if (got !== OPTION_FOR[l]) {
+      const takes = runQueriesOf(got);
+      const omits = Array.isArray(takes) && takes.includes(NO_DATABASE_PACKS) ? '' : `, and without ${NO_DATABASE_PACKS} a model pack in the scanned code's own .github/codeql/extensions folder applies to the scan of that code`;
+      no(`the option ${OPTION_FOR[l]} for ${l}`, `CODEQL_ACTION_EXTRA_OPTIONS gives ${got === '' ? 'an empty value' : show(got)} for ${l}, so database run-queries takes ${show(takes)}${omits}`);
+    }
   }
   const named = String(options[0]?.[1] ?? '').match(/--model-packs=([^"@]+)@([^"]+)"/);
   if (!named || `.codeql/packages/${named[1]}/${named[2]}` !== PACK_DIR) no(`the option naming the pack the trusted-publisher step writes, ${PACK_NAME}@${PACK_VERSION}`, `for actions it names ${show(named ? `${named[1]}@${named[2]}` : options[0]?.[1])}`);
@@ -751,12 +789,25 @@ plant('the pack written into the working folder', trustLine(`pack="$HOME/${PACK_
 plant('the leftover pack files kept', trustLine('rm -rf "$pack"', null), /exactly the two files of the pack written, .*it leaves \[[^\]]*leftover\.model\.json/);
 plant('a line of the pack indented further', trustLine('library: true', '  library: true'), /the trusted-publisher step's script with every line at one indent/);
 plant('the trusted-publisher step\'s header as |-', trustLine('run: |', 'run: |-'), /the trusted-publisher step's script written as a literal block \(run: \|\) in the shared scan \S+: its run: line reads run: \|-/);
-plant('the option for every language', extraAs(`'${EXTRA}'`), [/the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS/, /an empty one for every other language in the shared scan \S+: CODEQL_ACTION_EXTRA_OPTIONS gives \[\["actions",null\]/]);
-plant('the option for python as well', extraAs(EXTRA_OPTIONS.replace("matrix.language == 'actions'", "matrix.language != 'javascript-typescript'")), /the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS/);
-plant('the option empty for actions', extraAs("''"), /the option \{"database".*\} for actions and an empty one for every other language/);
-plant('the option naming another version', extraAs(EXTRA_OPTIONS.replace(`@${PACK_VERSION}`, '@1.0.1')), [/the option \{"database".*for actions and an empty one/, /the option naming the pack the trusted-publisher step writes, shared-scan\/trusted-publishers@1\.0\.0 in the shared scan \S+: for actions it names shared-scan\/trusted-publishers@1\.0\.1/]);
+// A pinned text as a pattern, its every special character escaped; and the refusal of one
+// language's option, saying what CODEQL_ACTION_EXTRA_OPTIONS gives it (a pattern's own words).
+const lit = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const optionRefused = (l, gives) => new RegExp(`the option ${lit(OPTION_FOR[l])} for ${l} in the shared scan \\S+: CODEQL_ACTION_EXTRA_OPTIONS gives ${gives}`);
+const OMITS_NONE = `, and without ${NO_DATABASE_PACKS} a model pack in the scanned code's own \\.github/codeql/extensions folder applies`;
+plant('the option for every language', extraAs(`'${EXTRA}'`), [/the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS/, optionRefused('javascript-typescript', `${lit(EXTRA)} for javascript-typescript, so database run-queries takes ${lit(`["--model-packs=${PACK_NAME}@${PACK_VERSION}","${NO_DATABASE_PACKS}"]`)}\\.$`), optionRefused('python', lit(EXTRA))]);
+plant('the option for python as well', extraAs(EXTRA_OPTIONS.replace("matrix.language == 'actions'", "matrix.language != 'javascript-typescript'")), [/the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS/, optionRefused('python', `null for python, so database run-queries takes null${OMITS_NONE}`)]);
+plant('the option empty for every language', extraAs("''"), [optionRefused('actions', `an empty value for actions, so database run-queries takes \\[\\]${OMITS_NONE}`), optionRefused('javascript-typescript', 'an empty value'), optionRefused('python', 'an empty value')]);
+plant('the option naming another version', extraAs(EXTRA_OPTIONS.replace(`@${PACK_VERSION}`, '@1.0.1')), [optionRefused('actions', lit(EXTRA.replace(`@${PACK_VERSION}`, '@1.0.1'))), /the option naming the pack the trusted-publisher step writes, shared-scan\/trusted-publishers@1\.0\.0 in the shared scan \S+: for actions it names shared-scan\/trusted-publishers@1\.0\.1/]);
 plant('the option passing --additional-packs', extraAs(EXTRA_OPTIONS.replace('["--model-packs=', '["--additional-packs=/tmp/trusted","--model-packs=')), [/a scan free of --additional-packs in the shared scan \S+: line \d+ reads CODEQL_ACTION_EXTRA_OPTIONS/, /the analyze step's env exactly/]);
-plant('the option removed', (t) => t.replace(`        env:\n${EXTRA_LINE}\n`, ''), [/step github\/codeql-action\/analyze of the analysis holding exactly name, uses, env, with/, /the option \{"database".*for actions and an empty one/]);
+plant('the option removed', (t) => t.replace(`        env:\n${EXTRA_LINE}\n`, ''), [/step github\/codeql-action\/analyze of the analysis holding exactly name, uses, env, with/, optionRefused('actions', 'an empty value'), optionRefused('python', `an empty value for python, so database run-queries takes \\[\\]${OMITS_NONE}`)]);
+// The scanned code's own packs omitted for every language (decision 169), each half of the option
+// as it stood before alone, and the option's other ways of losing it.
+const BEFORE_ACTIONS = `{"database":{"run-queries":["--model-packs=${PACK_NAME}@${PACK_VERSION}"]}}`;
+plant('the option for actions without --no-database-extension-packs, as before', extraAs(EXTRA_OPTIONS.replace(`,"${NO_DATABASE_PACKS}"`, '')), optionRefused('actions', `${lit(BEFORE_ACTIONS)} for actions, so database run-queries takes ${lit(`["--model-packs=${PACK_NAME}@${PACK_VERSION}"]`)}${OMITS_NONE}`));
+plant('the option empty for javascript-typescript and python, as before', extraAs(EXTRA_OPTIONS.replace(`|| '${EXTRA_OTHER}'`, "|| ''")), [optionRefused('javascript-typescript', `an empty value for javascript-typescript, so database run-queries takes \\[\\]${OMITS_NONE}`), optionRefused('python', `an empty value for python, so database run-queries takes \\[\\]${OMITS_NONE}`)]);
+plant('the option for actions without the trusted publishers', extraAs(EXTRA_OPTIONS.replace(`'${EXTRA}'`, `'${EXTRA_OTHER}'`)), [optionRefused('actions', `${lit(EXTRA_OTHER)} for actions, so database run-queries takes ${lit(`["${NO_DATABASE_PACKS}"]`)}\\.$`), /the option naming the pack the trusted-publisher step writes, shared-scan\/trusted-publishers@1\.0\.0 in the shared scan \S+: for actions it names \{"database"/]);
+plant('the option for python handed to another command', extraAs(EXTRA_OPTIONS.replace(`|| '${EXTRA_OTHER}'`, `|| '${EXTRA_OTHER.replace('run-queries', 'interpret-results')}'`)), optionRefused('python', `${lit(EXTRA_OTHER.replace('run-queries', 'interpret-results'))} for python, so database run-queries takes \\[\\]${OMITS_NONE}`));
+plant('the option misspelled for python', extraAs(EXTRA_OPTIONS.replace(`|| '${EXTRA_OTHER}'`, `|| '${EXTRA_OTHER.replace(NO_DATABASE_PACKS, '--no-database-extension-pack')}'`)), optionRefused('python', `${lit(EXTRA_OTHER.replace(NO_DATABASE_PACKS, '--no-database-extension-pack'))} for python, so database run-queries takes \\["--no-database-extension-pack"\\]${OMITS_NONE}`));
 plant('another variable beside the option', (t) => t.replace(`${EXTRA_LINE}\n`, `${EXTRA_LINE}\n          CODEQL_ACTION_DEBUG: true\n`), /the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS/);
 plant('the option on init in place of analyze', (t) => t.replace(`        env:\n${EXTRA_LINE}\n`, '').replace('      - name: Initialize CodeQL\n', `      - name: Initialize CodeQL\n        env:\n${EXTRA_LINE}\n`), [/step github\/codeql-action\/init of the analysis holding exactly name, uses, with/, /the analyze step's env exactly/]);
 

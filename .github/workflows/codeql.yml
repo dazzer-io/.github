@@ -1,0 +1,139 @@
+# Shared CodeQL scan (decisions 118 and 119): GitHub's code scanning for every dazzer-io
+# repository, as one workflow here that each repository calls, in place of a copy of its own.
+# A repository calls it from a short caller file (README.md, "The shared CodeQL scan"), naming its
+# languages; this file decides everything else, so a new repository needs no copy and no review of
+# one, and a change in a calling repository cannot edit the scan it is scanned by.
+#
+# WHAT IT SCANS. What GitHub's automatic setup scanned on dazzer and dazzer-app, read from its own
+# runs on 5 Nov 2026: each language the caller names, with build-mode none (CodeQL reads the source
+# and builds nothing, so no code of the change runs), the security-extended query suite (what the
+# setup calls "extended"), under the category /language:<language>, the one its analyses were
+# stored under, so each alert carries on by its rule and fingerprint.
+#
+# WHY IT IS SPLIT IN TWO.
+#   - analyze runs on the scan machines, by ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}, so an
+#     empty setting keeps it on GitHub's computers (decision 93). A called workflow reads its
+#     caller's variables (docs.github.com, Variables reference: "For reusable workflows, the
+#     variables from the caller workflow's repository are used."), so the setting resolves as the
+#     calling repository sees it, and a repository the setting is not visible to scans on GitHub's.
+#     It holds a read-only token: contents: read to check out, actions: read so CodeQL can read
+#     this run's workflow on a private repository. Read-only is not nothing: the checkout and
+#     CodeQL's actions take that token, and the runner hands every job its own runtime token, which
+#     can write this run's artifacts and caches. It uploads nothing (upload: never) and keeps its
+#     post-processed results (each alert's fingerprint read from its own checkout, a pull request's
+#     results kept to its changed lines) as an artifact of this run.
+#   - upload, on GitHub's own ubuntu-latest written as a literal label, is the only job holding
+#     security-events: write, since a write token on a machine of ours would sit within reach of
+#     whatever ran there before it (decision 36). It checks nothing out and runs no script: one run
+#     per language fetches that language's results by name, failing if they are missing, and hands
+#     them to code scanning under the same category. A language whose analysis finished is
+#     uploaded even when another's failed; that run is red.
+#
+# WHAT THE CALLER GRANTS. A called workflow's token is at most what its calling job grants, so the
+# calling job grants contents: read, actions: read and security-events: write, and nothing more.
+# The scan declares no secret and reads none, so a caller passes none (no secrets:, no inherit).
+# Concurrency is the caller's, since only it knows its triggers.
+#
+# WHO DEFINES THE SCAN. Called at @main, this file is read from this repository's main branch,
+# never from the change being scanned; and the scan runner group is to admit only the shared
+# workflows at refs/heads/main (decision 119, the runners task r-1.54), which this file cannot see. A change to this repository's own copy is a pull request here,
+# reviewed here; a pull request elsewhere runs this file as main holds it.
+#
+# test/codeql-shared.test.mjs pins what is scanned and what each job holds, line for line where it
+# matters; test/runs-on.test.mjs holds its jobs to the machine rules every workflow here keeps (a
+# job reading SCAN_RUNNER_2 holds no write and no secret; a write-token job names a literal GitHub
+# label) and reads it only in the plain subset of YAML its header lists.
+name: CodeQL
+
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: 'The languages to scan, as a JSON list in a string, for example ["actions", "javascript-typescript"]'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
+    # The slowest analysis on record was dazzer's javascript-typescript on main, 1165 s on GitHub's
+    # 2-core ubuntu-latest (its automatic setup's last 20 runs, 5 Nov 2026); the limit is about twice
+    # that, since the scan machines fetch the CodeQL bundle GitHub's image already holds.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(inputs.languages) }}
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+
+      # upload: never keeps the token read-only; the post-processed results are what an upload
+      # would send. The database is not uploaded either, since that also needs security-events: write.
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
+          upload: never
+          upload-database: false
+          output: ${{ runner.temp }}/codeql-results
+          post-processed-sarif-path: ${{ runner.temp }}/codeql-sarif
+
+      - name: Keep the results for the upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: codeql-sarif-${{ matrix.language }}
+          path: ${{ runner.temp }}/codeql-sarif
+          if-no-files-found: error
+          # Seven days, so the upload can be re-run alone, after GitHub's automatic setup is
+          # switched off on the calling repository, while the results are still here.
+          retention-days: 7
+
+  upload:
+    name: Upload CodeQL results (${{ matrix.language }})
+    needs: analyze
+    # Each language whose analysis finished is uploaded, whatever another's did.
+    if: ${{ !cancelled() }}
+    # GitHub's own standard machine, by a literal label: this job holds a write token (decision 36).
+    runs-on: ubuntu-latest
+    # An upload waits for code scanning to process it, at most 155 s by the action's own backoff
+    # (5, 15, 35, 75 and 155 s); the fetch and the post take seconds.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(inputs.languages) }}
+    steps:
+      # By name, so a language whose results are missing fails here rather than uploading nothing.
+      - name: Fetch this language's results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: codeql-sarif-${{ matrix.language }}
+          path: ${{ runner.temp }}/codeql-sarif
+
+      - name: Upload the results under the language's category
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/codeql-sarif
+          category: /language:${{ matrix.language }}

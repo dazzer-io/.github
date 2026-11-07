@@ -250,6 +250,28 @@ function plant(name, change, says) {
     assert.ok(refusals.some((r) => says.test(r)), `Could not find a refusal of ${name} saying ${says}: the reader said ${refusals.join(' | ')}`);
   });
 }
+// Plants read the text line by line, never by a pattern over the joined text.
+// A top key's block, from its line to the next empty or column-zero line, replaced whole.
+function replaceTopKey(t, key, lines) {
+  const all = t.split('\n');
+  const start = all.indexOf(`${key}:`);
+  if (start < 0) return t;
+  let end = start + 1;
+  while (end < all.length && all[end] !== '' && all[end].startsWith(' ')) end++;
+  return [...all.slice(0, start), ...lines, ...all.slice(end)].join('\n');
+}
+// The first line equal to `from` inside job `job` (its id line to the next line at two spaces or
+// less, empty lines inside it), replaced by `to`.
+function replaceInJob(t, job, from, to) {
+  const all = t.split('\n');
+  const start = all.indexOf(`  ${job}:`);
+  if (start < 0) return t;
+  for (let k = start + 1; k < all.length; k++) {
+    if (all[k].trim() !== '' && !all[k].startsWith('    ')) break;
+    if (all[k] === from) { all[k] = to; return all.join('\n'); }
+  }
+  return t;
+}
 const ANALYZE_GRANT = '    permissions:\n      contents: read\n      actions: read\n';
 const KEEP_NO_CREDENTIAL = '          persist-credentials: false\n';
 
@@ -264,9 +286,9 @@ plant('the analysis on the change-check machines', (t) => t.replace(`runs-on: ${
 plant('another setting read in a step', (t) => t.replace(KEEP_NO_CREDENTIAL, `${KEEP_NO_CREDENTIAL}          ref: \${{ vars.SCAN_REF }}\n`), /SCAN_RUNNER_2 as the only setting it reads in the shared scan \S+: line \d+ reads ref: \$\{\{ vars\.SCAN_REF/);
 // A trigger other than workflow_call.
 plant('a pull_request trigger beside workflow_call', (t) => t.replace('on:\n  workflow_call:\n', 'on:\n  pull_request:\n  workflow_call:\n'), /workflow_call as the only trigger/);
-plant('push in place of workflow_call', (t) => t.replace(/^on:\n {2}workflow_call:\n(?: {4}.*\n)*/m, 'on:\n  push:\n'), /workflow_call as the only trigger/);
+plant('push in place of workflow_call', (t) => replaceTopKey(t, 'on', ['on:', '  push:']), /workflow_call as the only trigger/);
 // What is scanned and where the write sits.
-plant('the upload on the scan machines', (t) => t.replace(/(\n {2}upload:\n(?: {4}.*\n|\s*\n)*? {4}runs-on: )ubuntu-latest/, `$1${SCAN}`), /ubuntu-latest, written as a literal label, as the upload job's machine/);
+plant('the upload on the scan machines', (t) => replaceInJob(t, 'upload', '    runs-on: ubuntu-latest', `    runs-on: ${SCAN}`), /ubuntu-latest, written as a literal label, as the upload job's machine/);
 plant('analyze uploading on its own', (t) => t.replace('          upload: never\n', '          upload: always\n'), /upload: never/);
 plant('a narrower query suite', (t) => t.replace('queries: security-extended', 'queries: security-and-quality-lite'), /security-extended suite/);
 plant('a skipped analysis', (t) => t.replace(ANALYZE_GRANT, `${ANALYZE_GRANT}    if: false\n`), /analysis job without if:/);

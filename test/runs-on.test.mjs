@@ -17,9 +17,12 @@
 //     engineer-review.yml is such a job (statuses: write).
 //   - THE SCANS. Every other job of the two scan workflows reads exactly
 //     ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}, the scan machines (decision 93), and reads no
-//     secret, declared or used, in the job or the workflow's top (a secrets. or secrets[ read, or
-//     a secrets: key, `secrets: inherit` among them, in any case; a run script holding such a
-//     line is refused too, erring toward refusal). The two are .github/workflows/security-scan.yml,
+//     secret, declared or used, in the job or the workflow's top: no line there holds the word
+//     secrets, in any case, so a secrets. or secrets[ read, the whole context (toJSON(secrets)),
+//     a secrets: key and `secrets: inherit` are all refused, and so is a run script or a comment
+//     line inside a | or > block holding the word, since GitHub evaluates an expression on any
+//     line of a block, one starting with # included; this errs toward refusal. The two are
+//     .github/workflows/security-scan.yml,
 //     the file the organisation ruleset security-scan-required runs on every gated repository, and
 //     .github/workflows/codeql.yml, the shared CodeQL scan every repository calls (decisions 118
 //     and 119; test/codeql-shared.test.mjs pins what it scans). The scan machines hold no change's
@@ -43,9 +46,11 @@
 // A job that calls a reusable workflow (`uses:` at the job's level) has no machine of its own, so
 // its machine line is not read. Wherever it sits, the scans included, it may call only a workflow
 // of this folder (`./`), written on the uses: line, judged in its own file by the same rules, which
-// take only a literal GitHub label outside the scans. A workflow in another repository, this one at
-// another commit, or a call written as a | or > block, is not read here, and is refused by the rule
-// its calling job is held by: a
+// take only a literal GitHub label outside the scans. A workflow outside the two scans may not call
+// either scan workflow (./.github/workflows/codeql.yml or security-scan.yml), since the called
+// scan's analysis reads SCAN_RUNNER_2, and only the scans' own jobs run on the scan machines. A
+// workflow in another repository, this one at another commit, or a call written as a | or > block,
+// is not read here, and is refused by the rule its calling job is held by: a
 // write-token job's, since its jobs could hold that token on machines of ours (decision 36's
 // reason); a job's outside the scan, since its jobs could wait on machines of ours that the watcher
 // would never send back (decision 104); and a read-only scan job's, since its jobs could put part
@@ -140,8 +145,9 @@ const GITHUB_STANDARD = ['ubuntu-latest', 'ubuntu-24.04', 'ubuntu-22.04'];
 const READ_ONLY = ['read', 'none'];
 const READ_KEYS = ['on', 'jobs', 'permissions', 'runs-on', 'uses'];
 const OUR_SETTING = /\bvars\s*(?:\.\s*|\[\s*['"])\s*(CHECKS|SCAN|LOCKED)_\w*/i;
-// A secret, read (secrets. or secrets[) or declared (a secrets: key, `secrets: inherit` among them).
-const A_SECRET = /\bsecrets\s*(?:\.|\[)|^\s*(?:-\s+)?['"]?secrets['"]?\s*:/i;
+// A secret, read (secrets. or secrets[, or the whole context, toJSON(secrets)) or declared (a
+// secrets: key, `secrets: inherit` among them): any line holding the word secrets.
+const A_SECRET = /\bsecrets\b/i;
 
 const isComment = (line) => /^\s*(#.*)?$/.test(line);
 const indentOf = (line) => line.match(/^ */)[0].length;
@@ -238,7 +244,7 @@ function notAKey(body) {
 }
 
 // Every line of the file, judged against the subset: refusals naming the line and the spelling.
-function shapeRefusals(lines, where) {
+function shapeRefusals(lines, where, blockLines = new Set()) {
   const out = [];
   const refuse = (n, line, why, spell) =>
     out.push(`Could not find a line this reader reads in ${where}: line ${n} ${why} (${line.trim()}); ${spell}.`);
@@ -291,6 +297,7 @@ function shapeRefusals(lines, where) {
       if (lines[e].length > first) refuse(e + 1, lines[e], 'is an empty line at the head of a block indented further than the block\'s first line', SPELL.block);
     }
     while (j < lines.length && (/^ *$/.test(lines[j]) || indentOf(lines[j]) >= first)) j++;
+    for (let e = i; e < j; e++) blockLines.add(e + 1);
     i = j;
   }
   return out;
@@ -420,7 +427,13 @@ function readText(text, file) {
   });
   if (refusals.length) return { where, file, triggers: [], refusals, jobs: [] };
   const lines = raw.map((l) => l.replace(/\r$/, ''));
-  refusals.push(...shapeRefusals(lines, where));
+  // The lines of a | or > block's body, by line number: GitHub evaluates an expression on each of
+  // them, one starting with # included, so they are read as text, never dropped as comments.
+  const blockLines = new Set();
+  refusals.push(...shapeRefusals(lines, where, blockLines));
+  // An entry's lines that GitHub reads: its own line and its body, contiguous from it, less the
+  // comments outside a block's body.
+  const textOf = (e) => [e.raw, ...e.body].filter((l, k) => !isComment(l) || (l.trim() !== '' && blockLines.has(e.line + k)));
   const top = entries(lines, 0, 1);
   refusals.push(...oddKeys(top, where, 'at the top'));
   const onAt = top.findIndex((e) => e.key === 'on' || e.key === 'true');
@@ -438,7 +451,7 @@ function readText(text, file) {
     refusals.push(`Could not find the jobs of ${where}: ${jobsEntry ? 'jobs: is written on one line' : 'no jobs: key at column zero'}, where each job id must sit two spaces in`);
     return { where, file, triggers, refusals, jobs: [] };
   }
-  const topText = top.filter((e) => e !== jobsEntry).flatMap((e) => [e.raw, ...e.body]).filter((l) => !isComment(l));
+  const topText = top.filter((e) => e !== jobsEntry).flatMap(textOf);
   const workflowGrant = readGrant(top.find((e) => e.key === 'permissions'), 'the workflow\'s');
   if (workflowGrant.unread) refusals.push(`Could not find what ${where} grants: ${workflowGrant.unread}`);
   const jobs = [];
@@ -455,7 +468,7 @@ function readText(text, file) {
     if (grant.unread) refusals.push(`Could not find what job ${id} of ${where} grants: ${grant.unread}`);
     jobs.push({
       id, line: j.line, runsOn: key('runs-on'), uses: key('uses'), steps: key('steps'), grant,
-      text: [j.raw, ...j.body].filter((l) => !isComment(l)),
+      text: textOf(j),
     });
   }
   if (!jobs.length && !refusals.length) refusals.push(`Could not find any job in ${where}: a reading of nothing would pass everything`);
@@ -509,6 +522,8 @@ function judge(wf) {
       const callee = block ? `${body || '(nothing)'} written as a ${onLine} block` : onLine || '(nothing on the uses: line)';
       if (block || !onLine.startsWith('./')) {
         refusals.push(`Could not find a workflow of this repository's own folder (./.github/workflows/...) as the workflow ${named} calls: it calls ${callee}, a workflow in another repository or at another commit, or one not written on the uses: line, which this test does not read, and it ${why}. Holding ${whom} to a ./ workflow, judged in its own file, is ${rule}.`);
+      } else if (!isScan(wf) && SCAN_WORKFLOWS.includes(path.posix.basename(onLine))) {
+        refusals.push(`Could not find a workflow other than a scan as the workflow ${named} calls: it calls ${onLine}, a scan workflow whose jobs read SCAN_RUNNER_2, from ${wf.file}, outside ${SCAN_NAMES}. Only the scans' own jobs run on the scan machines, by ${SCANNED}.`);
       }
     }
     if (write || !isScan(wf)) {
@@ -724,6 +739,34 @@ refused('a write-token job of the scan reading SCAN_RUNNER_2 in a step', workflo
 // Its note 3: a call written as a folded block, which GitHub reads as the same remote reference.
 refused('a call written as a folded block', workflow({ after: ['  shared:', '    uses: >-', `      ${REMOTE}`] }),
   { says: /it calls dazzer-io\/dazzer\/\.github\/workflows\/shared-checks\.yml@[0-9a-f]{40} written as a > block, a workflow in another repository/ });
+
+// The shared scan's first review (decision 131), finding 2: the whole secrets context, and a line
+// starting with # inside a | or > block, which GitHub evaluates, are read as secrets.
+refused('the shared scan handing the whole secrets context to an env at its top', workflow({ top: ['name: CodeQL', 'env:', '  ALL: ${{ toJSON(secrets) }}'], on: ['on:', '  workflow_call:'], runsOn: SCAN }),
+  { says: /free of secrets: .*the workflow's top reads ALL: \$\{\{ toJSON\(secrets\) \}\}/, file: 'codeql.yml' });
+refused('a secret on a # line inside a | block of a shared-scan step\'s input', workflow({ on: ['on:', '  workflow_call:'], runsOn: SCAN, steps: ['    steps:', '      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9', '        with:', '          compression-level: |', '            # ${{ secrets.SCAN_TOKEN }}'] }),
+  { says: /free of secrets: .*the job reads # \$\{\{ secrets\.SCAN_TOKEN \}\}/, file: 'codeql.yml' });
+// The same planted into a copy of security-scan.yml itself, read here, the file left unchanged:
+// a # line holding a secret at the head of its first run: | block.
+const SECURITY_SCAN = fs.existsSync(path.join(DIR, 'security-scan.yml')) ? fs.readFileSync(path.join(DIR, 'security-scan.yml'), 'utf8') : '';
+const withSecretInRun = (text) => {
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => /^ +run: \|$/.test(l));
+  if (at < 0 || at + 1 >= lines.length) return text;
+  lines.splice(at + 1, 0, `${' '.repeat(indentOf(lines[at + 1]))}# \${{ secrets.SCAN_TOKEN }}`);
+  return lines.join('\n');
+};
+test('kept case, the plant took: a secret on a # line in a run: | block of security-scan.yml', () => {
+  assert.ok(SECURITY_SCAN && withSecretInRun(SECURITY_SCAN) !== SECURITY_SCAN, 'Could not find a run: | block in security-scan.yml to plant into: the case below would prove nothing');
+});
+refused('a secret on a # line in a run: | block of security-scan.yml', withSecretInRun(SECURITY_SCAN),
+  { says: /of \.github\/workflows\/security-scan\.yml free of secrets: .*the job reads # \$\{\{ secrets\.SCAN_TOKEN \}\}/, file: 'security-scan.yml' });
+// Its note 4: a workflow outside the two scans calls neither, since its jobs read SCAN_RUNNER_2.
+refused('a job outside the scans calling the shared CodeQL scan', workflow({ after: callJob('./.github/workflows/codeql.yml', `languages: '["actions"]'`) }),
+  { says: /Could not find a workflow other than a scan as the workflow job shared of \.github\/workflows\/decide-tests\.yml calls: it calls \.\/\.github\/workflows\/codeql\.yml/ });
+refused('a job outside the scans calling the security scan', workflow({ after: callJob('./.github/workflows/security-scan.yml') }),
+  { says: /Could not find a workflow other than a scan .*it calls \.\/\.github\/workflows\/security-scan\.yml/ });
+passes('a read-only job of the security scan calling the shared CodeQL scan', workflow({ runsOn: SCAN, after: callJob('./.github/workflows/codeql.yml', `languages: '["actions"]'`) }), 'security-scan.yml');
 
 // Controls: ordinary spellings that must pass.
 passes('the plain layout', workflow());

@@ -8,7 +8,9 @@
 # runs on 5 Nov 2026: each language the caller names, with build-mode none (CodeQL reads the source
 # and builds nothing, so no code of the change runs), the security-extended query suite (what the
 # setup calls "extended"), under the category /language:<language>, the one its analyses were
-# stored under, so each alert carries on by its rule and fingerprint.
+# stored under. The analysis is now keyed by this workflow, not the automatic setup, so whether each
+# alert carries on by its rule and fingerprint, rather than closing and opening again, is read on a
+# calling repository's first run on main, not promised here.
 #
 # WHY IT IS SPLIT IN TWO.
 #   - analyze runs on the scan machines, by ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}, so an
@@ -16,18 +18,24 @@
 #     caller's variables (docs.github.com, Variables reference: "For reusable workflows, the
 #     variables from the caller workflow's repository are used."), so the setting resolves as the
 #     calling repository sees it, and a repository the setting is not visible to scans on GitHub's.
+#     That setting is the organisation's unless the calling repository sets a variable of the same
+#     name: GitHub reads a repository variable SCAN_RUNNER_2 ahead of the organisation's, so that
+#     repository's admin can point its scan at any label. What keeps a repository from moving its
+#     scan onto machines that run changes' own code is the runner groups' repository lists, and
+#     nothing in this file: a label reaches only a set whose group admits the repository.
 #     It holds a read-only token: contents: read to check out, actions: read so CodeQL can read
 #     this run's workflow on a private repository. Read-only is not nothing: the checkout and
 #     CodeQL's actions take that token, and the runner hands every job its own runtime token, which
 #     can write this run's artifacts and caches. It uploads nothing (upload: never) and keeps its
-#     post-processed results (each alert's fingerprint read from its own checkout, a pull request's
-#     results kept to its changed lines) as an artifact of this run.
+#     post-processed results (each alert's fingerprint read from its own checkout) as an artifact
+#     of this run.
 #   - upload, on GitHub's own ubuntu-latest written as a literal label, is the only job holding
 #     security-events: write, since a write token on a machine of ours would sit within reach of
 #     whatever ran there before it (decision 36). It checks nothing out and runs no script: one run
 #     per language fetches that language's results by name, failing if they are missing, and hands
-#     them to code scanning under the same category. A language whose analysis finished is
-#     uploaded even when another's failed; that run is red.
+#     them to code scanning under the same category. It runs only when every language's analysis
+#     succeeded, so a partial scan never passes (decision 101, kept for every caller by decision
+#     131): a failed or cancelled analysis uploads nothing, and the run is red.
 #
 # WHAT THE CALLER GRANTS. A called workflow's token is at most what its calling job grants, so the
 # calling job grants contents: read, actions: read and security-events: write, and nothing more.
@@ -36,8 +44,10 @@
 #
 # WHO DEFINES THE SCAN. Called at @main, this file is read from this repository's main branch,
 # never from the change being scanned; and the scan runner group is to admit only the shared
-# workflows at refs/heads/main (decision 119, the runners task r-1.54), which this file cannot see. A change to this repository's own copy is a pull request here,
-# reviewed here; a pull request elsewhere runs this file as main holds it.
+# workflows at refs/heads/main (decision 119, the runners task r-1.54), which this file cannot
+# see. A change to this repository's own copy is a pull request here, reviewed here; a pull
+# request elsewhere runs this file as main holds it. No workflow of this repository but the two
+# scans may call it (test/runs-on.test.mjs).
 #
 # test/codeql-shared.test.mjs pins what is scanned and what each job holds, line for line where it
 # matters; test/runs-on.test.mjs holds its jobs to the machine rules every workflow here keeps (a
@@ -49,7 +59,9 @@ on:
   workflow_call:
     inputs:
       languages:
-        description: 'The languages to scan, as a JSON list in a string, for example ["actions", "javascript-typescript"]'
+        description: >-
+          The languages to scan, as a JSON list in a string,
+          for example ["actions", "javascript-typescript"]
         required: true
         type: string
 
@@ -109,8 +121,8 @@ jobs:
   upload:
     name: Upload CodeQL results (${{ matrix.language }})
     needs: analyze
-    # Each language whose analysis finished is uploaded, whatever another's did.
-    if: ${{ !cancelled() }}
+    # Only when every language's analysis succeeded: a partial scan never passes (decision 101).
+    if: ${{ needs.analyze.result == 'success' }}
     # GitHub's own standard machine, by a literal label: this job holds a write token (decision 36).
     runs-on: ubuntu-latest
     # An upload waits for code scanning to process it, at most 155 s by the action's own backoff

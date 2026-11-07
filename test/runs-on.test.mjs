@@ -768,6 +768,14 @@ refused('a job outside the scans calling the security scan', workflow({ after: c
   { says: /Could not find a workflow other than a scan .*it calls \.\/\.github\/workflows\/security-scan\.yml/ });
 passes('a read-only job of the security scan calling the shared CodeQL scan', workflow({ runsOn: SCAN, after: callJob('./.github/workflows/codeql.yml', `languages: '["actions"]'`) }), 'security-scan.yml');
 
+// The shared scan's second review (decision 133): a secret spelled with a YAML escape in a
+// double-quoted value, in each scan file, is refused by the backslash rule.
+const ESCAPED_SECRET = `      - name: "Check out \${{ ${String.fromCharCode(92)}x73ecrets.SCAN_TOKEN }}"`;
+refused('a secret spelled with an escape in a step name of security-scan.yml', workflow({ runsOn: SCAN, steps: ['    steps:', ESCAPED_SECRET, '        run: node --test test/*.test.mjs'] }),
+  { at: 'Check out', says: /holds a double-quoted value with a backslash/, file: 'security-scan.yml' });
+refused('a secret spelled with an escape in a step name of codeql.yml', workflow({ on: ['on:', '  workflow_call:'], runsOn: SCAN, steps: ['    steps:', ESCAPED_SECRET, '        run: node --test test/*.test.mjs'] }),
+  { at: 'Check out', says: /holds a double-quoted value with a backslash/, file: 'codeql.yml' });
+
 // Controls: ordinary spellings that must pass.
 passes('the plain layout', workflow());
 passes('lines ended by a carriage return and a line feed', workflow().split('\n').join(`${CR}\n`));

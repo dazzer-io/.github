@@ -3,7 +3,12 @@
 // scans and what it may hold, so a weakened scan goes red here, and a red line here shows up in
 // the change's diff beside the workflow's:
 //
-//   - it is started only by workflow_call, taking one input, languages, a JSON list as a string;
+//   - it is started only by workflow_call, taking one input, languages, a JSON list as a string,
+//     and the analysis's first step, a guard written exactly as GUARD below and run here under
+//     bash, takes only actions, javascript-typescript and python (decision 133): a later language
+//     joins by its own decision;
+//   - no line outside a block's body holds a backslash inside a double-quoted value, where YAML
+//     decodes an escape, so a secret or a setting cannot be spelled past the rules below;
 //   - it declares no secret and reads none: no line GitHub reads holds the word secrets, so a
 //     secrets: key, a secrets. or secrets[ read and the whole context (toJSON(secrets)) are all
 //     refused, a line starting with # inside a | or > block among the lines read, since GitHub
@@ -15,12 +20,12 @@
 //     repository are used."), so the setting resolves as the calling repository sees it;
 //   - its top holds exactly name, on, permissions (contents: read) and jobs; each job holds exactly
 //     the keys it holds today, each step exactly name, uses and with, and each step's with: exactly
-//     its inputs, so a key this test does not name (an env:, defaults:, concurrency:,
+//     its inputs, the output and results paths by value, so a key this test does not name (an env:, defaults:, concurrency:,
 //     environment:, if: or continue-on-error:, a download's github-token or run-id) is refused;
 //   - its two jobs, analyze and upload, line for line where it matters: analyze holds contents:
 //     read and actions: read and nothing more, runs one language per matrix entry, read from the
-//     input, and runs exactly four steps (a checkout of one commit keeping no credential, CodeQL's
-//     init with build-mode none and the security-extended suite, analyze with upload: never and
+//     input, and runs the guard and then exactly four steps (a checkout of one commit keeping no
+//     credential, CodeQL's init with build-mode none and the security-extended suite, analyze with upload: never and
 //     the category /language:<language>, and the results kept as an artifact); upload runs on
 //     GitHub's own ubuntu-latest, written as a literal label, is the only job holding
 //     security-events: write (decision 36 keeps the write off our machines), runs only when every
@@ -40,6 +45,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const FILE = fileURLToPath(new URL('../.github/workflows/codeql.yml', import.meta.url));
 const WHERE = '.github/workflows/codeql.yml';
@@ -51,6 +57,29 @@ const ARTIFACT = 'codeql-sarif-${{ matrix.language }}';
 // github/codeql-action v4.39.3, dazzer's pin on 7 Nov 2026, newer than dazzer-app's v4.39.1.
 const PIN = '33d7b85da1a04171e211befe2c739303b9a4c066';
 const CODEQL = 'github/codeql-action/';
+// The output and the results' path, by value: analyze writes there, upload-artifact keeps it,
+// download-artifact fetches into it and upload-sarif sends it.
+const RESULTS = '${{ runner.temp }}/codeql-results';
+const SARIF = '${{ runner.temp }}/codeql-sarif';
+// The languages the scan takes (decision 133): what dazzer and dazzer-app scan today, whose build
+// mode none is known to run no build tool. Any other is refused by the analysis's first step.
+const ALLOWED = ['actions', 'javascript-typescript', 'python'];
+// Languages and spellings the guard must refuse, beside every one it takes.
+const OTHERS = ['go', 'csharp', 'java-kotlin', 'swift', 'c-cpp', 'ruby', 'rust', 'Python', 'python ', ' actions', 'actions|python', '*', ''];
+// The guard's script as the reader reads a block (each line trimmed).
+const GUARD = [
+  'case "$LANGUAGE" in',
+  'actions | javascript-typescript | python) ;;',
+  '*)',
+  'echo "::error::This scan takes only actions, javascript-typescript and python (decision 133)."',
+  'exit 1',
+  ';;',
+  'esac',
+].join('\n');
+// What the guard does with `language`: its exit status under bash, as GitHub runs a run: step.
+const guardStatus = (script, language) => spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script], {
+  env: { PATH: process.env.PATH, LANGUAGE: language }, stdio: 'ignore',
+}).status;
 
 // ---- THE READER: the plain subset into objects and lists ----
 const isBlank = (l) => /^\s*(#.*)?$/.test(l);
@@ -153,6 +182,7 @@ const A_SECRET = /\bsecrets\b/i;
 const A_SETTING = /\bvars\b/i;
 const MATRIX = { 'fail-fast': 'false', matrix: { language: LANGUAGES } };
 const STEP_KEYS = ['name', 'uses', 'with'];
+const GUARD_KEYS = ['name', 'env', 'run'];
 const TOP_KEYS = ['name', 'on', 'permissions', 'jobs'];
 const ANALYZE_KEYS = ['name', 'runs-on', 'timeout-minutes', 'permissions', 'strategy', 'steps'];
 const UPLOAD_KEYS = ['name', 'needs', 'if', 'runs-on', 'timeout-minutes', 'permissions', 'strategy', 'steps'];
@@ -174,6 +204,11 @@ function judgeShared(text) {
   for (const [l, n] of live.filter(([l]) => A_SETTING.test(l))) {
     if (l.trim() !== `runs-on: ${SCAN}`) no('SCAN_RUNNER_2 as the only setting it reads', `line ${n} reads ${l.trim()}, and the shared scan reads no setting but SCAN_RUNNER_2, written ${SCAN} as the analysis job's machine`);
   }
+  // No backslash inside a double-quoted value, where YAML decodes it as an escape (so a secret or a
+  // setting could be spelled past the two rules above); a block's body is literal, and not read so.
+  for (const [l, n] of live.filter(([, n]) => !blockLines.has(n))) {
+    if (/"[^"]*\\/.test(l)) no('a double-quoted value without a backslash', `line ${n} reads ${l.trim()}, and YAML decodes a backslash in a double-quoted value as an escape, so the words this test reads are not the words GitHub reads`);
+  }
 
   // The top, whole.
   if (!exactly(top, TOP_KEYS)) no(`the workflow's top holding exactly ${TOP_KEYS.join(', ')}`, `it holds ${show(keysOf(top))}, and a key at the top (an env:, defaults: or concurrency:) reaches every job`);
@@ -193,8 +228,7 @@ function judgeShared(text) {
     no('the two jobs analyze and upload', `its jobs are ${show(keysOf(top.jobs))}`);
     return refusals;
   }
-  const stepsOf = (job, name, want) => {
-    const steps = Array.isArray(job.steps) ? job.steps : [];
+  const stepsOf = (steps, name, want) => {
     if (!same(steps.map(actionOf), want)) no(`the ${name}'s steps, exactly ${want.join(', ')}`, `its steps use ${show(steps.map(actionOf))}`);
     for (const st of steps) {
       if (!exactly(st, STEP_KEYS)) no(`step ${actionOf(st)} of the ${name} holding exactly ${STEP_KEYS.join(', ')}`, `it holds ${show(keysOf(st))}, and a step's if:, env:, run: or continue-on-error: changes what the scan does`);
@@ -208,17 +242,24 @@ function judgeShared(text) {
   if (a['runs-on'] !== SCAN) no(`${SCAN} as the analysis job's machine`, `it reads ${show(a['runs-on'])}, and the scan machines hold the analysis (decision 93), GitHub's while the setting is empty`);
   if (!same(a.permissions, { contents: 'read', actions: 'read' })) no('a read-only token on the analysis job, contents: read and actions: read alone', `it grants ${show(a.permissions)}, and a write token on a machine of ours sits within reach of whatever ran there before it (decision 36), so the analysis uploads nothing`);
   if (!same(a.strategy, MATRIX)) no(`one analysis per language, the strategy exactly fail-fast: false and the matrix ${LANGUAGES}`, `its strategy reads ${show(a.strategy)}`);
+  // Its first step refuses any language but the three, then the four scan steps.
+  const [guard, ...rest] = Array.isArray(a.steps) ? a.steps : [];
+  if (!exactly(guard, GUARD_KEYS) || !same(guard?.env, { LANGUAGE }) || guard?.run !== GUARD) {
+    no('the language guard as the analysis\'s first step, exactly as this test holds it (name, env LANGUAGE and its case script)', `the first step reads ${show(guard)}`);
+  }
+  const takes = [...ALLOWED, ...OTHERS].filter((l) => typeof guard?.run === 'string' && guardStatus(guard.run, l) === 0);
+  if (!same(takes, ALLOWED)) no(`a guard taking exactly ${ALLOWED.join(', ')}`, `run under bash, the analysis's first step takes ${show(takes)}, and any other language joins by its own decision (decision 133), since build mode none for it may read the change's build files`);
   const want = ['actions/checkout', `${CODEQL}init`, `${CODEQL}analyze`, 'actions/upload-artifact'];
-  const steps = stepsOf(a, 'analysis', want);
+  const steps = stepsOf(rest, 'analysis', want);
   const [checkout, init, analyze, keep] = steps;
   if (!same(checkout?.with, { 'fetch-depth': '1', 'persist-credentials': 'false' })) no('a checkout of one commit keeping no credential (fetch-depth: 1, persist-credentials: false, and nothing else)', `the checkout takes ${show(checkout?.with)}`);
   if (!same(init?.with, { languages: LANGUAGE, 'build-mode': 'none', queries: 'security-extended' })) no('init with the language, build-mode none and the security-extended suite, and nothing else', `init takes ${show(init?.with)}`);
   const aw = analyze?.with ?? {};
-  if (aw.category !== CATEGORY || aw.upload !== 'never' || aw['upload-database'] !== 'false' || !aw['post-processed-sarif-path'] || !exactly(aw, ['category', 'upload', 'upload-database', 'output', 'post-processed-sarif-path'])) {
-    no(`the analyze step with the category ${CATEGORY}, upload: never, upload-database: false and its two outputs, and nothing else`, `analyze takes ${show(analyze?.with)}`);
+  if (!same(aw, { category: CATEGORY, upload: 'never', 'upload-database': 'false', output: RESULTS, 'post-processed-sarif-path': SARIF })) {
+    no(`the analyze step with the category ${CATEGORY}, upload: never, upload-database: false and its two outputs, ${RESULTS} and ${SARIF}, and nothing else`, `analyze takes ${show(analyze?.with)}`);
   }
   const kw = keep?.with ?? {};
-  if (kw.name !== ARTIFACT || kw.path !== aw['post-processed-sarif-path'] || kw['if-no-files-found'] !== 'error' || !/^[1-9][0-9]*$/.test(kw['retention-days'] ?? '') || !exactly(kw, ['name', 'path', 'if-no-files-found', 'retention-days'])) {
+  if (kw.name !== ARTIFACT || kw.path !== SARIF || kw['if-no-files-found'] !== 'error' || !/^[1-9][0-9]*$/.test(kw['retention-days'] ?? '') || !exactly(kw, ['name', 'path', 'if-no-files-found', 'retention-days'])) {
     no(`the results kept as the artifact ${ARTIFACT}, from analyze's post-processed results, refusing an empty one, kept some days, and nothing else`, `upload-artifact takes ${show(keep?.with)}`);
   }
 
@@ -230,10 +271,10 @@ function judgeShared(text) {
   if (u.needs !== 'analyze') no('the upload waiting on the analysis', `its needs: reads ${show(u.needs)}`);
   if (u.if !== ALL_SUCCEEDED) no(`the upload running only when every language's analysis succeeded (if: ${ALL_SUCCEEDED})`, `its if: reads ${show(u.if)}, and a partial scan never passes (decisions 101 and 131): a failed or cancelled analysis uploads nothing and the run is red`);
   if (!same(u.strategy, MATRIX)) no(`one upload per language, the strategy exactly fail-fast: false and the matrix ${LANGUAGES}`, `its strategy reads ${show(u.strategy)}`);
-  const usteps = stepsOf(u, 'upload', ['actions/download-artifact', `${CODEQL}upload-sarif`]);
+  const usteps = stepsOf(Array.isArray(u.steps) ? u.steps : [], 'upload', ['actions/download-artifact', `${CODEQL}upload-sarif`]);
   const [fetch, upload] = usteps;
-  if (fetch?.with?.name !== ARTIFACT || !fetch?.with?.path || !exactly(fetch?.with, ['name', 'path'])) no(`the artifact ${ARTIFACT} of this run fetched by name and path alone, so a missing one fails the upload`, `download-artifact takes ${show(fetch?.with)}`);
-  if (!same(upload?.with, { sarif_file: fetch?.with?.path, category: CATEGORY })) no(`upload-sarif sending the fetched results under the category ${CATEGORY}, and nothing else`, `upload-sarif takes ${show(upload?.with)}`);
+  if (!same(fetch?.with, { name: ARTIFACT, path: SARIF })) no(`the artifact ${ARTIFACT} of this run fetched by name and path alone, into ${SARIF}, so a missing one fails the upload`, `download-artifact takes ${show(fetch?.with)}`);
+  if (!same(upload?.with, { sarif_file: SARIF, category: CATEGORY })) no(`upload-sarif sending the fetched results under the category ${CATEGORY}, and nothing else`, `upload-sarif takes ${show(upload?.with)}`);
 
   // Every action by commit; CodeQL's three by one pin.
   for (const st of [...steps, ...usteps]) {
@@ -255,6 +296,7 @@ test('the shared CodeQL scan scans what it says and holds no more than it needs'
 });
 
 // ---- KEPT CASES: each plant into the real file must be refused ----
+// `says` is one pattern, or a list of them each of which some refusal must match.
 function plant(name, change, says) {
   test(`kept case, refused: ${name}`, () => {
     const real = readFile();
@@ -262,7 +304,9 @@ function plant(name, change, says) {
     assert.ok(text !== real, `Could not find the place to plant ${name} in ${WHERE}: the plant changed nothing, so this case would prove nothing`);
     const refusals = judgeShared(text);
     assert.ok(refusals.length > 0, `Could not find any refusal of ${name}: the shared scan passed with it`);
-    assert.ok(refusals.some((r) => says.test(r)), `Could not find a refusal of ${name} saying ${says}: the reader said ${refusals.join(' | ')}`);
+    for (const pattern of [says].flat()) {
+      assert.ok(refusals.some((r) => pattern.test(r)), `Could not find a refusal of ${name} saying ${pattern}: the reader said ${refusals.join(' | ')}`);
+    }
   });
 }
 // Plants read the text line by line, never by a pattern over the joined text.
@@ -356,5 +400,28 @@ plant('upload-sarif sending another file', (t) => t.replace('          sarif_fil
 // Pins.
 plant('an action by tag', (t) => t.replace('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/checkout@v7'), /a commit as the ref of actions\/checkout/);
 plant('an older CodeQL pin on one action', (t) => t.replace(`${CODEQL}init@${PIN}`, `${CODEQL}init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370`), /one pin, 33d7b85/);
+// The second review (decision 133): a secret spelled with a YAML escape in a double-quoted value.
+const BS = String.fromCharCode(92);
+plant('a secret spelled with an escape in a double-quoted step name', (t) => t.replace('      - name: Check out the code\n', `      - name: "Check out \${{ ${BS}x73ecrets.SCAN_TOKEN }}"\n`), /a double-quoted value without a backslash in the shared scan \S+: line \d+ reads - name: "Check out/);
+// The languages: the guard first, exactly, taking the three alone.
+const GUARD_HEAD = '      - name: Refuse a language this scan does not take';
+const withoutGuard = (t) => {
+  const all = t.split('\n');
+  const at = all.indexOf(GUARD_HEAD);
+  if (at < 0) return t;
+  let end = at + 1;
+  while (end < all.length && all[end] !== '') end++;
+  return [...all.slice(0, at), ...all.slice(end + 1)].join('\n');
+};
+plant('the language guard removed', withoutGuard, /the language guard as the analysis's first step/);
+plant('the language guard reading the whole input', (t) => t.replace('          LANGUAGE: ${{ matrix.language }}\n', '          LANGUAGE: ${{ inputs.languages }}\n'), /the language guard as the analysis's first step/);
+plant('the language guard reworded', (t) => t.replace('              exit 1\n', '              exit 2\n'), /the language guard as the analysis's first step/);
+plant('the language guard taking go', (t) => t.replace('            actions | javascript-typescript | python) ;;\n', '            actions | javascript-typescript | python | go) ;;\n'), /a guard taking exactly actions, javascript-typescript, python in the shared scan \S+: run under bash, the analysis's first step takes \["actions","javascript-typescript","python","go"\]/);
+// The paths, by value.
+const WORKSPACE = '${{ github.workspace }}/codeql-sarif';
+plant('the results kept in the workspace (analyze and upload-artifact as a pair)', (t) => t.replace(`          post-processed-sarif-path: ${SARIF}\n`, `          post-processed-sarif-path: ${WORKSPACE}\n`).replace(`          name: ${ARTIFACT}\n          path: ${SARIF}\n`, `          name: ${ARTIFACT}\n          path: ${WORKSPACE}\n`), [/the analyze step with the category .*its two outputs, \$\{\{ runner\.temp \}\}\/codeql-results and \$\{\{ runner\.temp \}\}\/codeql-sarif/, /the results kept as the artifact .*takes .*github\.workspace/]);
+plant('the output in the workspace', (t) => t.replace(`          output: ${RESULTS}\n`, '          output: ${{ github.workspace }}/codeql-results\n'), /the analyze step with the category .*its two outputs/);
+plant('the artifact kept from the workspace', ((t) => { const all = t.split('\n'); const at = all.findIndex((l) => l.trim().startsWith('uses: actions/upload-artifact@')); const k = all.findIndex((l, n) => n > at && l === `          path: ${SARIF}`); if (k < 0) return t; all[k] = `          path: ${WORKSPACE}`; return all.join('\n'); }), /the results kept as the artifact/);
+plant('the results fetched into and sent from the workspace (download and upload-sarif as a pair)', (t) => { const all = t.split('\n'); const u = all.indexOf('  upload:'); return all.map((l, n) => (n > u && l === `          path: ${SARIF}` ? `          path: ${WORKSPACE}` : n > u && l === `          sarif_file: ${SARIF}` ? `          sarif_file: ${WORKSPACE}` : l)).join('\n'); }, [/fetched by name and path alone, into \$\{\{ runner\.temp \}\}\/codeql-sarif/, /upload-sarif sending the fetched results .*takes .*github\.workspace/]);
 // The reader.
 plant('a key written twice', (t) => t.replace('          upload: never\n', '          upload: never\n          upload: always\n'), /a second time in one mapping/);

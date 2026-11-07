@@ -5,12 +5,20 @@
 # one, and a change in a calling repository cannot edit the scan it is scanned by.
 #
 # WHAT IT SCANS. What GitHub's automatic setup scanned on dazzer and dazzer-app, read from its own
-# runs on 5 Nov 2026: each language the caller names, with build-mode none (CodeQL reads the source
-# and builds nothing, so no code of the change runs), the security-extended query suite (what the
-# setup calls "extended"), under the category /language:<language>, the one its analyses were
-# stored under. The analysis is now keyed by this workflow, not the automatic setup, so whether each
-# alert carries on by its rule and fingerprint, rather than closing and opening again, is read on a
-# calling repository's first run on main, not promised here.
+# runs on 5 Nov 2026: each language the caller names, of actions, javascript-typescript and python
+# alone, with build-mode none (CodeQL reads the source and builds nothing, so no code of the change
+# runs), the security-extended query suite (what the setup calls "extended"), under the category
+# /language:<language>, the one its analyses were stored under. The analysis is now keyed by this
+# workflow, not the automatic setup, so whether each alert carries on by its rule and fingerprint,
+# rather than closing and opening again, is read on a calling repository's first run on main, not
+# promised here.
+#
+# ONLY THREE LANGUAGES. The analysis's first step refuses any language but actions,
+# javascript-typescript and python, the three dazzer and dazzer-app scan today (decision 133).
+# GitHub's page on compiled languages does not say whether build mode none for C# or Java reads
+# the change's build files (restoring dependencies through dotnet, Maven or Gradle), which would run
+# what the change wrote on the scan machines; and Go, Swift and Kotlin cannot be scanned without a
+# build at all. So a later language joins by its own decision, never by a caller naming it.
 #
 # WHY IT IS SPLIT IN TWO.
 #   - analyze runs on the scan machines, by ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}, so an
@@ -22,7 +30,9 @@
 #     name: GitHub reads a repository variable SCAN_RUNNER_2 ahead of the organisation's, so that
 #     repository's admin can point its scan at any label. What keeps a repository from moving its
 #     scan onto machines that run changes' own code is the runner groups' repository lists, and
-#     nothing in this file: a label reaches only a set whose group admits the repository.
+#     nothing in this file: a label reaches only a set whose group admits the repository, so the
+#     scan stays apart only while no group admitting a gated repository offers it a change-check
+#     set's label.
 #     It holds a read-only token: contents: read to check out, actions: read so CodeQL can read
 #     this run's workflow on a private repository. Read-only is not nothing: the checkout and
 #     CodeQL's actions take that token, and the runner hands every job its own runtime token, which
@@ -35,7 +45,10 @@
 #     per language fetches that language's results by name, failing if they are missing, and hands
 #     them to code scanning under the same category. It runs only when every language's analysis
 #     succeeded, so a partial scan never passes (decision 101, kept for every caller by decision
-#     131): a failed or cancelled analysis uploads nothing, and the run is red.
+#     131): a failed analysis uploads nothing and the run is red; a cancelled one uploads nothing
+#     and the run ends cancelled, not red. A skipped upload reads as success to a required-check
+#     rule, so a caller requires the Analyze checks, not the upload's. An upload that fails after
+#     every analysis passed may leave other languages' results already sent; that run is red.
 #
 # WHAT THE CALLER GRANTS. A called workflow's token is at most what its calling job grants, so the
 # calling job grants contents: read, actions: read and security-events: write, and nothing more.
@@ -84,6 +97,21 @@ jobs:
       matrix:
         language: ${{ fromJSON(inputs.languages) }}
     steps:
+      # Only the languages whose build mode none is known to run no build tool, the three dazzer and
+      # dazzer-app scan today (decision 133); a later language joins by its own decision. It runs
+      # before the checkout, reads only the language this run was handed, and builds nothing.
+      - name: Refuse a language this scan does not take
+        env:
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          case "$LANGUAGE" in
+            actions | javascript-typescript | python) ;;
+            *)
+              echo "::error::This scan takes only actions, javascript-typescript and python (decision 133)."
+              exit 1
+              ;;
+          esac
+
       - name: Check out the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -121,7 +149,8 @@ jobs:
   upload:
     name: Upload CodeQL results (${{ matrix.language }})
     needs: analyze
-    # Only when every language's analysis succeeded: a partial scan never passes (decision 101).
+    # Only when every language's analysis succeeded: a partial scan never passes (decision 101). A
+    # skipped upload reads as success to a required-check rule, so callers require the Analyze checks.
     if: ${{ needs.analyze.result == 'success' }}
     # GitHub's own standard machine, by a literal label: this job holds a write token (decision 36).
     runs-on: ubuntu-latest

@@ -46,9 +46,15 @@
 #     them to code scanning under the same category. It runs only when every language's analysis
 #     succeeded, so a partial scan never passes (decision 101, kept for every caller by decision
 #     131): a failed analysis uploads nothing and the run is red; a cancelled one uploads nothing
-#     and the run ends cancelled, not red. A skipped upload reads as success to a required-check
-#     rule, so a caller requires the Analyze checks, not the upload's. An upload that fails after
-#     every analysis passed may leave other languages' results already sent; that run is red.
+#     and the run ends cancelled, not red. An upload that fails after every analysis passed may
+#     leave other languages' results already sent; that run is red.
+#   - complete, named "CodeQL complete", is the one check a caller requires (decision 135). It
+#     runs always, after both jobs, on GitHub's own ubuntu-latest with no token at all
+#     (permissions: {}), and fails unless the analysis and the upload both succeeded; its name is
+#     the same whatever languages a caller names. The Analyze and upload checks cannot be required
+#     in its place: a skipped upload reads as success to a required-check rule, and a pull request
+#     that adds a language to its own caller fails that leg's guard, skips every upload, and leaves
+#     the Analyze checks of the languages already named green. It costs one GitHub minute a run.
 #
 # WHAT THE CALLER GRANTS. A called workflow's token is at most what its calling job grants, so the
 # calling job grants contents: read, actions: read and security-events: write, and nothing more.
@@ -150,7 +156,7 @@ jobs:
     name: Upload CodeQL results (${{ matrix.language }})
     needs: analyze
     # Only when every language's analysis succeeded: a partial scan never passes (decision 101). A
-    # skipped upload reads as success to a required-check rule, so callers require the Analyze checks.
+    # skipped upload reads as success to a required-check rule, so callers require complete's check.
     if: ${{ needs.analyze.result == 'success' }}
     # GitHub's own standard machine, by a literal label: this job holds a write token (decision 36).
     runs-on: ubuntu-latest
@@ -178,3 +184,26 @@ jobs:
         with:
           sarif_file: ${{ runner.temp }}/codeql-sarif
           category: /language:${{ matrix.language }}
+
+  # The one check a caller requires (decision 135): it fails unless every analysis and every upload
+  # succeeded, whatever languages were named. It reads nothing but the two jobs' results, passed to
+  # its script through env, and holds no token.
+  complete:
+    name: CodeQL complete
+    needs: [analyze, upload]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Refuse unless every analysis and every upload succeeded
+        env:
+          ANALYZE: ${{ needs.analyze.result }}
+          UPLOAD: ${{ needs.upload.result }}
+        run: |
+          if [ "$ANALYZE" = success ] && [ "$UPLOAD" = success ]; then
+            echo "Every language was analysed and uploaded."
+            exit 0
+          fi
+          echo "::error::The scan is not complete: analysis $ANALYZE, upload $UPLOAD."
+          exit 1

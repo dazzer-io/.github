@@ -22,14 +22,17 @@
 //     a secrets: key and `secrets: inherit` are all refused, and so is a run script or a comment
 //     line inside a | or > block holding the word, since GitHub evaluates an expression on any
 //     line of a block, one starting with # included; this errs toward refusal. The two are
-//     .github/workflows/security-scan.yml,
-//     the file the organisation ruleset security-scan-required runs on every gated repository, and
-//     .github/workflows/codeql.yml, the shared CodeQL scan every repository calls (decisions 118
-//     and 119; test/codeql-shared.test.mjs pins what it scans). The scan machines hold no change's
-//     own code only while the scan runner group admits only the scan workflows (decision 98): a
-//     workflow lives in the repository it checks, so a pull request in a repository the group
-//     admits can add a workflow of its own naming the scan label, and only the group's workflow
-//     list keeps it off. This test cannot see that list.
+//     .github/workflows/security-scan.yml, the file the organisation ruleset
+//     security-scan-required runs on every gated repository, and .github/workflows/codeql.yml,
+//     the shared CodeQL scan every repository calls (decisions 118 and 119;
+//     test/codeql-shared.test.mjs pins what it scans). codeql.yml holds one other job: its final
+//     check (decision 135), granted no token at all (permissions: {}), on one of GitHub's
+//     standard machines written as a literal label, calling no workflow and reading no CHECKS_,
+//     SCAN_ or LOCKED_ setting; a second such job in it is refused. The scan machines hold no
+//     change's own code only while the scan runner group admits only the scan workflows
+//     (decision 98): a workflow lives in the repository it checks, so a pull request in a
+//     repository the group admits can add a workflow of its own naming the scan label, and only
+//     the group's workflow list keeps it off. This test cannot see that list.
 //   - EVERY OTHER JOB, in any workflow but the two scans, runs on one of GitHub's standard
 //     machines written as a literal label and reads no CHECKS_, SCAN_ or LOCKED_ setting anywhere
 //     in the job or the workflow's top, whatever it holds (decision 104). The fallback watcher,
@@ -389,7 +392,8 @@ function readGrant(entry, where) {
   const body = entry.body.filter((l) => !isComment(l));
   const asWrite = (why) => ({ set: true, write: true, how: `${where} permissions: ${why}, a spelling this reader counts as a write` });
   if (v && body.length) return asWrite(`${entry.value} with lines below it`);
-  if (v === 'read-all' || v === '{}') return { set: true, write: false };
+  if (v === '{}') return { set: true, write: false, nothing: true };
+  if (v === 'read-all') return { set: true, write: false };
   if (v === 'write-all') return { set: true, write: true, how: `${where} permissions: write-all` };
   if (v !== '') return asWrite(v);
   if (!body.length) return asWrite('with nothing after it or below it');
@@ -493,8 +497,12 @@ const UNWATCHED = `this repository's rule until the fallback watcher reads .gith
 const SCANNED = 'the scan\'s rule (decision 93): the scan runs on the scan machines (GitHub\'s while the setting is empty), which hold no change\'s own code only while the scan runner group admits only the scan workflows (decision 98), and a workflow this test does not read could put part of the scan beside a change\'s own code, where the change could quiet it';
 const SECRETLESS = 'the scans\' rule: a scan job on the scan machines holds no secret, so nothing on those machines is worth taking, and a caller never hands one to the shared scan';
 
+// The scan files that may hold one final check on GitHub's machines, granted no token (decision 135).
+const FINAL_CHECK_FILES = ['codeql.yml'];
+
 function judge(wf) {
   const refusals = [...wf.refusals];
+  let finalChecks = 0;
   const started = wf.triggers.length ? `, started by ${wf.triggers.join(', ')}` : '';
   for (const job of wf.jobs) {
     const named = `job ${job.id} of ${wf.where}`;
@@ -547,6 +555,14 @@ function judge(wf) {
     // A read-only job of a scan calling a workflow names no machine: the ./ workflow it calls names
     // its own, judged in its own file.
     if (job.uses) continue;
+    // The scan file's one final check: no token, a literal GitHub label, no setting (decision 135).
+    if (FINAL_CHECK_FILES.includes(wf.file) && job.grant.nothing && value !== null && GITHUB_STANDARD.includes(unquote(value))) {
+      finalChecks++;
+      if (finalChecks > 1) refusals.push(`Could not find one final check alone in ${wf.where}: ${named} is a second job granted no token on ${unquote(value)}, and the shared scan holds one final check on GitHub's machines (decision 135), every other read-only job on the scan machines.`);
+      const hit = [...job.text, ...wf.topText].map((l) => l.match(OUR_SETTING)).find(Boolean);
+      if (hit) refusals.push(`Could not find ${named} free of the organisation's machine settings: it is the final check of a scan, on GitHub's machines with no token, and reads ${hit[0]}.`);
+      continue;
+    }
     if (value !== SCAN) {
       refusals.push(`Could not find ${SCAN} as the machine of ${named}: it reads ${machineOf(job.runsOn)}. Its machine is the scan machines (decision 93), which hold no change's own code only while the scan runner group admits only the scan workflows (decision 98), GitHub's own while the setting is empty.`);
     }
@@ -775,6 +791,20 @@ refused('a secret spelled with an escape in a step name of security-scan.yml', w
   { at: 'Check out', says: /holds a double-quoted value with a backslash/, file: 'security-scan.yml' });
 refused('a secret spelled with an escape in a step name of codeql.yml', workflow({ on: ['on:', '  workflow_call:'], runsOn: SCAN, steps: ['    steps:', ESCAPED_SECRET, '        run: node --test test/*.test.mjs'] }),
   { at: 'Check out', says: /holds a double-quoted value with a backslash/, file: 'codeql.yml' });
+
+// The shared scan's third review (decision 135): codeql.yml's one final check, granted no token,
+// on GitHub's machine; a second such job is refused, and so is one granted a token or reading a
+// setting.
+const FINAL = ['  complete:', '    needs: [decide-tests]', '    if: ${{ always() }}', '    runs-on: ubuntu-latest', '    permissions: {}', '    steps:', '      - run: exit 0'];
+passes('the shared scan\'s one final check on GitHub\'s machine with no token', workflow({ on: ['on:', '  workflow_call:'], runsOn: SCAN, after: FINAL }), 'codeql.yml');
+refused('a second final check in the shared scan', workflow({ on: ['on:', '  workflow_call:'], runsOn: SCAN, after: [...FINAL, ...FINAL.map((l) => l.replace('complete:', 'complete-again:'))] }),
+  { says: /Could not find one final check alone in \.github\/workflows\/codeql\.yml: job complete-again/, file: 'codeql.yml' });
+refused('a final check granted contents: read in the shared scan', workflow({ on: ['on:', '  workflow_call:'], runsOn: SCAN, after: FINAL.map((l) => (l === '    permissions: {}' ? '    permissions: read-all' : l)) }),
+  { says: /Could not find \$\{\{ vars\.SCAN_RUNNER_2 \|\| 'ubuntu-latest' \}\} as the machine of job complete/, file: 'codeql.yml' });
+refused('a final check reading a setting in the shared scan', workflow({ on: ['on:', '  workflow_call:'], runsOn: SCAN, after: [...FINAL, '        env:', '          RUNNER: ${{ vars.CHECKS_RUNNER_2 }}'] }),
+  { says: /job complete of .* free of the organisation's machine settings: it is the final check/, file: 'codeql.yml' });
+refused('a final check with no token in the security scan', workflow({ runsOn: SCAN, after: FINAL }),
+  { says: /Could not find \$\{\{ vars\.SCAN_RUNNER_2 \|\| 'ubuntu-latest' \}\} as the machine of job complete of \.github\/workflows\/security-scan\.yml/, file: 'security-scan.yml' });
 
 // Controls: ordinary spellings that must pass.
 passes('the plain layout', workflow());

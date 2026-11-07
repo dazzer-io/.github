@@ -27,10 +27,10 @@
 //     is refused, and a > block is read folded, as GitHub reads it;
 //   - its three jobs, analyze, upload and complete, line for line where it matters: analyze holds
 //     contents: read and actions: read and nothing more, runs one language per matrix entry, read
-//     from the input, and runs the guard and then exactly four steps (a checkout of one commit
-//     keeping no credential, CodeQL's init with build-mode none and the security-extended suite,
-//     analyze with upload: never and the category /language:<language>, and the results kept as
-//     an artifact); upload runs on
+//     from the input, and runs the guard, the trusted-publisher step and then exactly four steps (a
+//     checkout of one commit keeping no credential, CodeQL's init with build-mode none and the
+//     security-extended suite, analyze with upload: never and the category /language:<language>,
+//     and the results kept as an artifact); upload runs on
 //     GitHub's own ubuntu-latest, written as a literal label, is the only job holding
 //     security-events: write (decision 36 keeps the write off our machines), runs only when every
 //     language's analysis succeeded (if: needs.analyze.result == 'success'), so a partial scan
@@ -40,7 +40,22 @@
 //     (permissions: {}), and its script, taking the two results through env alone and holding no
 //     ${{ }}, passes only when both succeeded: the one check a caller requires (decision 135);
 //   - every action is pinned by commit, and CodeQL's three actions share one pin, PIN below: the
-//     newer of the two the product copies held on 7 Nov 2026 (dazzer v4.39.3; dazzer-app v4.39.1).
+//     newer of the two the product copies held on 7 Nov 2026 (dazzer v4.39.3; dazzer-app v4.39.1);
+//   - dazzer-io is a trusted publisher for the analysis of actions alone (decisions 165 to 167):
+//     the analysis's second step, before the checkout, written exactly as TRUST below, runs only
+//     when the language is actions (if: ACTIONS_ONLY), holds exactly name, if and run, so it is
+//     handed no token and no input, and its script holds no ${{ }} and no token. Run here under
+//     bash with a stand-in home and an empty working folder, over a leftover file planted where it
+//     writes, it leaves exactly two files there and nothing anywhere else: the model pack
+//     shared-scan/trusted-publishers in CodeQL's package cache (~/.codeql/packages/<scope>/<name>/
+//     <version>; its scope is a CodeQL pack scope, not the organisation's name, since the pack is
+//     no GitHub project and no workflow line names a project by hand, decision 167), library: true, extension target codeql/actions-all, and one data extension adding
+//     the one row ["dazzer-io"] to trustedActionsOwnerDataModel, the list actions/unpinned-tag reads.
+//     Its script's lines sit at one indent, so the script run here is the one GitHub runs. The
+//     analyze step's env holds exactly CODEQL_ACTION_EXTRA_OPTIONS, EXTRA_OPTIONS below, which
+//     gives the run-queries option --model-packs naming that pack for actions and an empty string,
+//     no options, for every other language; and no line names --additional-packs, which the action
+//     passes itself for a pull request's diff-informed analysis.
 //
 // test/runs-on.test.mjs reads the same file by its general rules (a scan job reading SCAN_RUNNER_2
 // holds no write and no secret; a write-token job names a literal GitHub label) and holds it to
@@ -51,6 +66,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -114,6 +131,101 @@ function runHeaderOf(lines, name) {
 }
 const GUARD_NAME = 'Refuse a language this scan does not take';
 const COMPLETE_NAME = 'Refuse unless every analysis and every upload succeeded';
+
+// The trusted publishers (decisions 165 to 167). The analysis of actions, and of no other
+// language, adds dazzer-io to trustedActionsOwnerDataModel, the list github/codeql's
+// actions/unpinned-tag query reads (isTrustedOwner, on the segment before the first /), through a
+// model pack the analysis's second step writes into CodeQL's package cache, and the analyze step
+// names with run-queries' --model-packs through CODEQL_ACTION_EXTRA_OPTIONS.
+const TRUST_NAME = "Add dazzer-io to CodeQL's trusted publishers";
+const TRUST_KEYS = ['name', 'if', 'run'];
+const ACTIONS_ONLY = "${{ matrix.language == 'actions' }}";
+const PACK_NAME = 'shared-scan/trusted-publishers';
+const PACK_VERSION = '1.0.0';
+const PACK_TARGET = 'codeql/actions-all';
+const TRUSTED_LIST = 'trustedActionsOwnerDataModel';
+const TRUSTED_ROWS = [['dazzer-io']];
+// Where CodeQL finds a named pack without a registry: its package cache, under the home folder.
+const PACK_DIR = `.codeql/packages/${PACK_NAME}/${PACK_VERSION}`;
+const PACK_FILE = `${PACK_DIR}/codeql-pack.yml`;
+const MODEL_FILE = `${PACK_DIR}/models/trusted-publishers.model.json`;
+const PACK_KEYS = ['name', 'version', 'library', 'extensionTargets', 'dataExtensions'];
+const PACK_LINES = [
+  `name: ${PACK_NAME}`,
+  `version: ${PACK_VERSION}`,
+  'library: true',
+  `extensionTargets: {${PACK_TARGET}: '*'}`,
+  'dataExtensions: [models/*.json]',
+];
+const MODEL_LINE = `{"extensions": [{"addsTo": {"pack": "${PACK_TARGET}", "extensible": "${TRUSTED_LIST}"}, "data": ${JSON.stringify(TRUSTED_ROWS)}}]}`;
+// The step's script as the reader reads a | block (each line trimmed); its lines sit at one indent
+// in the file, so this is the script GitHub runs.
+const TRUST = [
+  `pack="$HOME/${PACK_DIR}"`,
+  'rm -rf "$pack"',
+  'mkdir -p "$pack/models"',
+  'cat > "$pack/codeql-pack.yml" <<\'PACK\'',
+  ...PACK_LINES,
+  'PACK',
+  'cat > "$pack/models/trusted-publishers.model.json" <<\'MODEL\'',
+  MODEL_LINE,
+  'MODEL',
+].join('\n');
+// The option the analyze step hands CodeQL for actions, and its env value, which is empty for
+// every other language: the action reads an empty value as no options (src/util.ts).
+const EXTRA = `{"database":{"run-queries":["--model-packs=${PACK_NAME}@${PACK_VERSION}"]}}`;
+const EXTRA_OPTIONS = `\${{ matrix.language == 'actions' && '${EXTRA}' || '' }}`;
+const ANALYZE_STEP_KEYS = ['name', 'uses', 'env', 'with'];
+// The value an expression of one of these two shapes gives for a language, as GitHub evaluates
+// it (strings compared ignoring case; && and || give back an operand), or null for any other
+// shape: ${{ matrix.language == '<l>' }}, and ${{ matrix.language == '<l>' && '<a>' || '<b>' }}.
+function forLanguage(expr, language) {
+  const s = typeof expr === 'string' ? expr : '';
+  const pick = s.match(/^\$\{\{ matrix\.language == '([^']*)' && '([^']*)' \|\| '([^']*)' \}\}$/);
+  if (pick) return (language.toLowerCase() === pick[1].toLowerCase() && pick[2]) || pick[3];
+  const when = s.match(/^\$\{\{ matrix\.language == '([^']*)' \}\}$/);
+  if (when) return language.toLowerCase() === when[1].toLowerCase();
+  return null;
+}
+// The body lines of the run: block of the step named `name`, as written in the file.
+function runBodyOf(lines, name) {
+  const at = lines.findIndex((l) => l.trim() === `- name: ${name}`);
+  if (at < 0) return null;
+  let k = at + 1;
+  while (k < lines.length && lines[k].trim() !== '' && !/^ +run:/.test(lines[k])) k++;
+  if (k >= lines.length || !/^ +run:/.test(lines[k])) return null;
+  const header = lines[k].match(/^ */)[0].length;
+  const body = [];
+  for (k++; k < lines.length && lines[k].trim() !== '' && lines[k].match(/^ */)[0].length > header; k++) body.push(lines[k]);
+  return body;
+}
+// Every file under `dir`, by its path from there.
+function filesUnder(dir) {
+  return fs.readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((e) => !e.isDirectory())
+    .map((e) => path.relative(dir, path.join(e.parentPath ?? e.path, e.name)))
+    .sort();
+}
+// The step's script run under bash, as GitHub runs a run: step, with a stand-in home holding a
+// leftover file where it writes and an empty working folder: its exit status, every file it left
+// under the home and in the working folder, and the two files' text.
+const LEFTOVER = `${PACK_DIR}/models/leftover.model.json`;
+function runTrust(script) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'codeql-trust-home-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'codeql-trust-work-'));
+  try {
+    fs.mkdirSync(path.dirname(path.join(home, LEFTOVER)), { recursive: true });
+    fs.writeFileSync(path.join(home, LEFTOVER), '{"extensions": []}\n');
+    const status = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script], {
+      cwd: work, env: { PATH: process.env.PATH, HOME: home }, stdio: 'ignore',
+    }).status;
+    const read = (f) => (fs.existsSync(path.join(home, f)) ? fs.readFileSync(path.join(home, f), 'utf8') : null);
+    return { status, home: filesUnder(home), work: filesUnder(work), pack: read(PACK_FILE), model: read(MODEL_FILE) };
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+}
 
 // ---- THE READER: the plain subset into objects and lists ----
 const isBlank = (l) => /^\s*(#.*)?$/.test(l);
@@ -285,10 +397,11 @@ function judgeShared(text) {
     no('the three jobs analyze, upload and complete', `its jobs are ${show(keysOf(top.jobs))}`);
     return refusals;
   }
-  const stepsOf = (steps, name, want) => {
+  const stepsOf = (steps, name, want, keysFor = () => STEP_KEYS) => {
     if (!same(steps.map(actionOf), want)) no(`the ${name}'s steps, exactly ${want.join(', ')}`, `its steps use ${show(steps.map(actionOf))}`);
     for (const st of steps) {
-      if (!exactly(st, STEP_KEYS)) no(`step ${actionOf(st)} of the ${name} holding exactly ${STEP_KEYS.join(', ')}`, `it holds ${show(keysOf(st))}, and a step's if:, env:, run: or continue-on-error: changes what the scan does`);
+      const keys = keysFor(st);
+      if (!exactly(st, keys)) no(`step ${actionOf(st)} of the ${name} holding exactly ${keys.join(', ')}`, `it holds ${show(keysOf(st))}, and a step's if:, env:, run: or continue-on-error: changes what the scan does`);
     }
     return steps;
   };
@@ -299,8 +412,9 @@ function judgeShared(text) {
   if (a['runs-on'] !== SCAN) no(`${SCAN} as the analysis job's machine`, `it reads ${show(a['runs-on'])}, and the scan machines hold the analysis (decision 93), GitHub's while the setting is empty`);
   if (!same(a.permissions, { contents: 'read', actions: 'read' })) no('a read-only token on the analysis job, contents: read and actions: read alone', `it grants ${show(a.permissions)}, and a write token on a machine of ours sits within reach of whatever ran there before it (decision 36), so the analysis uploads nothing`);
   if (!same(a.strategy, MATRIX)) no(`one analysis per language, the strategy exactly fail-fast: false and the matrix ${LANGUAGES}`, `its strategy reads ${show(a.strategy)}`);
-  // Its first step refuses any language but the three, then the four scan steps.
-  const [guard, ...rest] = Array.isArray(a.steps) ? a.steps : [];
+  // Its first step refuses any language but the three, its second trusts dazzer-io for actions
+  // alone, then the four scan steps.
+  const [guard, trust, ...rest] = Array.isArray(a.steps) ? a.steps : [];
   if (!exactly(guard, GUARD_KEYS) || !same(guard?.env, { LANGUAGE }) || guard?.run !== GUARD) {
     no('the language guard as the analysis\'s first step, exactly as this test holds it (name, env LANGUAGE and its case script)', `the first step reads ${show(guard)}`);
   }
@@ -308,9 +422,61 @@ function judgeShared(text) {
   if (guardHeader !== 'run: |') no('the language guard\'s script written as a literal block (run: |)', `its run: line reads ${show(guardHeader)}, and a folded > block is joined into one line, which turns exit 1 into words echo prints`);
   const takes = [...ALLOWED, ...OTHERS].filter((l) => typeof guard?.run === 'string' && guardStatus(guard.run, l) === 0);
   if (!same(takes, ALLOWED)) no(`a guard taking exactly ${ALLOWED.join(', ')}`, `run under bash, the analysis's first step takes ${show(takes)}, and any other language joins by its own decision (decision 133), since build mode none for it may read the change's build files`);
+  // The trusted publishers (decisions 165 and 166): the second step, before the checkout, so it
+  // reads nothing the change wrote; for actions alone; handed no token; its script run here.
+  if (!exactly(trust, TRUST_KEYS) || trust?.name !== TRUST_NAME) {
+    no(`the trusted-publisher step as the analysis's second step, before the checkout, named ${TRUST_NAME} and holding exactly ${TRUST_KEYS.join(', ')}`, `the second step reads ${show(trust)}, and the step is handed no token, no secret and no input, and reads nothing the change wrote`);
+  }
+  if (trust?.if !== ACTIONS_ONLY) no(`the trusted-publisher step running for actions alone (if: ${ACTIONS_ONLY})`, `its if: reads ${show(trust?.if)}`);
+  const trustRuns = ALLOWED.filter((l) => forLanguage(trust?.if, l) === true);
+  if (!same(trustRuns, ['actions'])) no('the trusted-publisher step running for actions and no other language', `its if: runs it for ${show(trustRuns)}, and the pack extends ${PACK_TARGET} alone`);
+  if (typeof trust?.run !== 'string' || /\$\{\{|token/i.test(trust.run)) no('the trusted-publisher step\'s script free of ${{ }} and of any token', `it reads ${show(trust?.run)}, and the step holds no token and reads nothing the change wrote`);
+  if (trust?.run !== TRUST) no('the trusted-publisher step\'s script exactly as this test holds it', `it reads ${show(trust?.run)}`);
+  const trustHeader = runHeaderOf(lines, TRUST_NAME);
+  if (trustHeader !== 'run: |') no('the trusted-publisher step\'s script written as a literal block (run: |)', `its run: line reads ${show(trustHeader)}`);
+  const trustBody = runBodyOf(lines, TRUST_NAME) ?? [];
+  const indents = [...new Set(trustBody.map(indentOf))];
+  if (indents.length !== 1) no('the trusted-publisher step\'s script with every line at one indent', `its lines sit at ${show(indents)} spaces, and GitHub keeps a line's extra indent, so the files it writes would not be the files this test reads`);
+  if (typeof trust?.run === 'string') {
+    const ran = runTrust(trust.run);
+    if (ran.status !== 0) no('the trusted-publisher step\'s script passing under bash', `it exits ${ran.status}`);
+    if (!same(ran.home, [PACK_FILE, MODEL_FILE].sort()) || ran.work.length) {
+      no(`exactly the two files of the pack written, ${PACK_FILE} and ${MODEL_FILE} under the home folder, and nothing else`, `run under bash over a leftover file in its folder, it leaves ${show(ran.home)} under the home and ${show(ran.work)} in the working folder, and a file left in the pack's models folder would be read as part of it`);
+    }
+    const pack = Object.fromEntries((ran.pack ?? '').split('\n').filter(Boolean).map((l) => { const m = l.match(/^([A-Za-z]+): (.*)$/); return m ? [m[1], m[2]] : [l, null]; }));
+    if (!exactly(pack, PACK_KEYS) || pack.version !== PACK_VERSION || pack.library !== 'true' || pack.dataExtensions !== '[models/*.json]') {
+      no(`the pack ${PACK_FILE} holding exactly ${PACK_KEYS.join(', ')}, version ${PACK_VERSION}, library: true and its one models folder`, `it reads ${show(ran.pack)}`);
+    }
+    if (pack.name !== PACK_NAME) no(`the pack's name, ${PACK_NAME}`, `its name: reads ${show(pack.name)}`);
+    if (pack.extensionTargets !== `{${PACK_TARGET}: '*'}`) no(`the pack's extension target, ${PACK_TARGET} alone`, `its extensionTargets: reads ${show(pack.extensionTargets)}, and the list actions/unpinned-tag reads lives in ${PACK_TARGET}`);
+    let model = null;
+    try { model = JSON.parse(ran.model ?? ''); } catch { /* refused below */ }
+    const ext = Array.isArray(model?.extensions) && model.extensions.length === 1 ? model.extensions[0] : null;
+    if (!exactly(model, ['extensions']) || !exactly(ext, ['addsTo', 'data']) || !same(ext?.addsTo, { pack: PACK_TARGET, extensible: TRUSTED_LIST })) {
+      no(`one data extension in ${MODEL_FILE}, adding to ${TRUSTED_LIST} of ${PACK_TARGET}`, `it reads ${show(ran.model)}`);
+    }
+    if (!same(ext?.data, TRUSTED_ROWS)) no(`the one data row ${JSON.stringify(TRUSTED_ROWS[0])} in ${TRUSTED_LIST}`, `its data reads ${show(ext?.data)}, and the list names dazzer-io alone (decision 165): any other owner's call without a commit still raises the alert`);
+  }
+  // No --additional-packs anywhere: the action passes its own for a pull request's diff-informed
+  // analysis, and CodeQL's manual says a later one overrides it (decision 166).
+  for (const [l, n] of live) {
+    if (/additional-packs/.test(l)) no('a scan free of --additional-packs', `line ${n} reads ${l.trim()}, and the action passes its own --additional-packs for a pull request's diff-informed analysis, which a later one overrides`);
+  }
+
   const want = ['actions/checkout', `${CODEQL}init`, `${CODEQL}analyze`, 'actions/upload-artifact'];
-  const steps = stepsOf(rest, 'analysis', want);
+  const steps = stepsOf(rest, 'analysis', want, (st) => (actionOf(st) === `${CODEQL}analyze` ? ANALYZE_STEP_KEYS : STEP_KEYS));
   const [checkout, init, analyze, keep] = steps;
+  // The option naming the pack, on the analyze step alone: --model-packs for actions, empty (no
+  // options) for every other language.
+  if (!same(analyze?.env, { CODEQL_ACTION_EXTRA_OPTIONS: EXTRA_OPTIONS })) {
+    no(`the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS: ${EXTRA_OPTIONS}`, `its env reads ${show(analyze?.env)}`);
+  }
+  const options = ALLOWED.map((l) => [l, forLanguage(analyze?.env?.CODEQL_ACTION_EXTRA_OPTIONS, l)]);
+  if (!same(options, ALLOWED.map((l) => [l, l === 'actions' ? EXTRA : '']))) {
+    no(`the option ${EXTRA} for actions and an empty one for every other language`, `CODEQL_ACTION_EXTRA_OPTIONS gives ${show(options)}, and the action reads an empty value as no options`);
+  }
+  const named = String(options[0]?.[1] ?? '').match(/--model-packs=([^"@]+)@([^"]+)"/);
+  if (!named || `.codeql/packages/${named[1]}/${named[2]}` !== PACK_DIR) no(`the option naming the pack the trusted-publisher step writes, ${PACK_NAME}@${PACK_VERSION}`, `for actions it names ${show(named ? `${named[1]}@${named[2]}` : options[0]?.[1])}`);
   if (!same(checkout?.with, { 'fetch-depth': '1', 'persist-credentials': 'false' })) no('a checkout of one commit keeping no credential (fetch-depth: 1, persist-credentials: false, and nothing else)', `the checkout takes ${show(checkout?.with)}`);
   if (!same(init?.with, { languages: LANGUAGE, 'build-mode': 'none', queries: 'security-extended' })) no('init with the language, build-mode none and the security-extended suite, and nothing else', `init takes ${show(init?.with)}`);
   const aw = analyze?.with ?? {};
@@ -355,11 +521,12 @@ function judgeShared(text) {
   const passes = RESULTS_OF_A_JOB.flatMap((x) => RESULTS_OF_A_JOB.map((y) => [x, y])).filter(([x, y]) => typeof done?.run === 'string' && completeStatus(done.run, x, y) === 0);
   if (!same(passes, [['success', 'success']])) no('a final job passing only when the analysis and the upload both succeeded', `run under bash, it passes on ${show(passes)}`);
 
-  // Every action by commit; CodeQL's three by one pin.
-  for (const st of [...steps, ...usteps]) {
+  // Every action by commit, wherever its step sits; CodeQL's three by one pin.
+  const used = [...(Array.isArray(a.steps) ? a.steps : []), ...usteps].filter((st) => st?.uses !== undefined);
+  for (const st of used) {
     if (!/^[0-9a-f]{40}$/.test(refOf(st))) no(`a commit as the ref of ${actionOf(st)}`, `it is used at ${show(st?.uses)}`);
   }
-  const codeqlRefs = [...steps, ...usteps].filter((st) => actionOf(st).startsWith(CODEQL)).map(refOf);
+  const codeqlRefs = used.filter((st) => actionOf(st).startsWith(CODEQL)).map(refOf);
   if (!codeqlRefs.length || codeqlRefs.some((r) => r !== PIN)) no(`one pin, ${PIN} (v4.39.3), for CodeQL's actions`, `they are used at ${show(codeqlRefs)}`);
   return refusals;
 }
@@ -528,6 +695,70 @@ plant('${{ }} in the final job\'s script', inJob('complete', '          if [ "$A
 plant('the final job\'s header as |-', inJob('complete', '        run: |', '        run: |-'), /the final job's script written as a literal block \(run: \|\) in the shared scan \S+: its run: line reads run: \|-/);
 // The fourth note: a double-quoted value not closed on its line is refused by name.
 plant('a double-quoted value not closed on its line', (t) => t.replace('      - name: Check out the code\n', '      - name: "Check out the code\n'), /Could not find a reading of \S+: line \d+ holds a double-quoted value not closed on its line/);
+
+// The trusted publishers (decisions 165 and 166): the step, its pack and the option naming it.
+const TRUST_HEAD = `      - name: ${TRUST_NAME}`;
+// The trusted-publisher step's lines, from its name line to the empty line after it: [start, end).
+const trustBlock = (all) => {
+  const at = all.indexOf(TRUST_HEAD);
+  if (at < 0) return null;
+  let end = at + 1;
+  while (end < all.length && all[end] !== '') end++;
+  return [at, end];
+};
+const withoutTrust = (t) => {
+  const all = t.split('\n');
+  const b = trustBlock(all);
+  return b ? [...all.slice(0, b[0]), ...all.slice(b[1] + 1)].join('\n') : t;
+};
+// The step moved to just before the analyze step, after the checkout.
+const trustAfterCheckout = (t) => {
+  const all = t.split('\n');
+  const b = trustBlock(all);
+  if (!b) return t;
+  const block = all.slice(b[0], b[1]);
+  const rest = [...all.slice(0, b[0]), ...all.slice(b[1] + 1)];
+  const at = rest.indexOf('      - name: Perform CodeQL analysis');
+  if (at < 0) return t;
+  const lead = rest[at - 1]?.trim().startsWith('#') ? rest.slice(0, at).findLastIndex((l) => !l.trim().startsWith('#')) + 1 : at;
+  return [...rest.slice(0, lead), ...block, '', ...rest.slice(lead)].join('\n');
+};
+const trustLine = (from, to) => (t) => {
+  const all = t.split('\n');
+  const b = trustBlock(all);
+  if (!b) return t;
+  const k = all.findIndex((l, n) => n >= b[0] && n < b[1] && l.trim() === from);
+  if (k < 0) return t;
+  all[k] = to === null ? null : `${all[k].match(/^ */)[0]}${to}`;
+  return all.filter((l) => l !== null).join('\n');
+};
+const EXTRA_LINE = `          CODEQL_ACTION_EXTRA_OPTIONS: ${EXTRA_OPTIONS}`;
+const extraAs = (value) => (t) => t.replace(`${EXTRA_LINE}\n`, `          CODEQL_ACTION_EXTRA_OPTIONS: ${value}\n`);
+plant('the trusted-publisher step removed', withoutTrust, /the trusted-publisher step as the analysis's second step/);
+plant('the trusted-publisher step after the checkout', trustAfterCheckout, [/the trusted-publisher step as the analysis's second step, before the checkout/, /the analysis's steps, exactly actions\/checkout/]);
+plant('the trusted-publisher step for every language', trustLine(`if: ${ACTIONS_ONLY}`, 'if: ${{ always() }}'), [/the trusted-publisher step running for actions alone/, /running for actions and no other language in the shared scan \S+: its if: runs it for \[\]/]);
+plant('the trusted-publisher step without its condition', trustLine(`if: ${ACTIONS_ONLY}`, null), [/the trusted-publisher step as the analysis's second step.*holding exactly name, if, run/, /the trusted-publisher step running for actions alone/]);
+plant('the trusted-publisher step for python', trustLine(`if: ${ACTIONS_ONLY}`, "if: ${{ matrix.language == 'python' }}"), /running for actions and no other language in the shared scan \S+: its if: runs it for \["python"\]/);
+plant('a token handed to the trusted-publisher step', trustLine(`if: ${ACTIONS_ONLY}`, `if: ${ACTIONS_ONLY}\n        env:\n          GH_TOKEN: \${{ github.token }}`), /the trusted-publisher step as the analysis's second step.*holding exactly name, if, run in the shared scan \S+: the second step reads .*GH_TOKEN/);
+plant('a token read in the trusted-publisher step\'s script', trustLine('mkdir -p "$pack/models"', 'mkdir -p "$pack/models" && echo "${{ github.token }}" > /dev/null'), /the trusted-publisher step's script free of \$\{\{ \}\} and of any token/);
+plant('another owner trusted', trustLine(MODEL_LINE, MODEL_LINE.replace('[["dazzer-io"]]', '[["dazzer-io"], ["octodemo"]]')), /the one data row \["dazzer-io"\] in trustedActionsOwnerDataModel in the shared scan \S+: its data reads \[\["dazzer-io"\],\["octodemo"\]\]/);
+plant('every owner trusted in place of dazzer-io', trustLine(MODEL_LINE, MODEL_LINE.replace('[["dazzer-io"]]', '[[""]]')), /the one data row \["dazzer-io"\]/);
+plant('the data added to another list', trustLine(MODEL_LINE, MODEL_LINE.replace(TRUSTED_LIST, 'immutableActionsDataModel')), /one data extension in \S+, adding to trustedActionsOwnerDataModel of codeql\/actions-all/);
+plant('the pack extending another language', trustLine(`extensionTargets: {${PACK_TARGET}: '*'}`, "extensionTargets: {codeql/javascript-all: '*'}"), /the pack's extension target, codeql\/actions-all alone in the shared scan \S+: its extensionTargets: reads \{codeql\/javascript-all: '\*'\}/);
+plant('the pack under another name', trustLine(`name: ${PACK_NAME}`, 'name: shared-scan/other-publishers'), /the pack's name, shared-scan\/trusted-publishers in the shared scan \S+: its name: reads shared-scan\/other-publishers/);
+plant('the pack written as a query pack', trustLine('library: true', 'library: false'), /the pack \S+ holding exactly name, version, library, extensionTargets, dataExtensions, version 1\.0\.0, library: true/);
+plant('the pack written into the working folder', trustLine(`pack="$HOME/${PACK_DIR}"`, `pack="./${PACK_DIR}"`), /exactly the two files of the pack written, .*it leaves .* in the working folder/);
+plant('the leftover pack files kept', trustLine('rm -rf "$pack"', null), /exactly the two files of the pack written, .*it leaves \[[^\]]*leftover\.model\.json/);
+plant('a line of the pack indented further', trustLine('library: true', '  library: true'), /the trusted-publisher step's script with every line at one indent/);
+plant('the trusted-publisher step\'s header as |-', trustLine('run: |', 'run: |-'), /the trusted-publisher step's script written as a literal block \(run: \|\) in the shared scan \S+: its run: line reads run: \|-/);
+plant('the option for every language', extraAs(`'${EXTRA}'`), [/the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS/, /an empty one for every other language in the shared scan \S+: CODEQL_ACTION_EXTRA_OPTIONS gives \[\["actions",null\]/]);
+plant('the option for python as well', extraAs(EXTRA_OPTIONS.replace("matrix.language == 'actions'", "matrix.language != 'javascript-typescript'")), /the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS/);
+plant('the option empty for actions', extraAs("''"), /the option \{"database".*\} for actions and an empty one for every other language/);
+plant('the option naming another version', extraAs(EXTRA_OPTIONS.replace(`@${PACK_VERSION}`, '@1.0.1')), [/the option \{"database".*for actions and an empty one/, /the option naming the pack the trusted-publisher step writes, shared-scan\/trusted-publishers@1\.0\.0 in the shared scan \S+: for actions it names shared-scan\/trusted-publishers@1\.0\.1/]);
+plant('the option passing --additional-packs', extraAs(EXTRA_OPTIONS.replace('["--model-packs=', '["--additional-packs=/tmp/trusted","--model-packs=')), [/a scan free of --additional-packs in the shared scan \S+: line \d+ reads CODEQL_ACTION_EXTRA_OPTIONS/, /the analyze step's env exactly/]);
+plant('the option removed', (t) => t.replace(`        env:\n${EXTRA_LINE}\n`, ''), [/step github\/codeql-action\/analyze of the analysis holding exactly name, uses, env, with/, /the option \{"database".*for actions and an empty one/]);
+plant('another variable beside the option', (t) => t.replace(`${EXTRA_LINE}\n`, `${EXTRA_LINE}\n          CODEQL_ACTION_DEBUG: true\n`), /the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS/);
+plant('the option on init in place of analyze', (t) => t.replace(`        env:\n${EXTRA_LINE}\n`, '').replace('      - name: Initialize CodeQL\n', `      - name: Initialize CodeQL\n        env:\n${EXTRA_LINE}\n`), [/step github\/codeql-action\/init of the analysis holding exactly name, uses, with/, /the analyze step's env exactly/]);
 
 // The reader.
 plant('a key written twice', (t) => t.replace('          upload: never\n', '          upload: never\n          upload: always\n'), /a second time in one mapping/);

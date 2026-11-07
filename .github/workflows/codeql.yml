@@ -20,6 +20,34 @@
 # what the change wrote on the scan machines; and Go, Swift and Kotlin cannot be scanned without a
 # build at all. So a later language joins by its own decision, never by a caller naming it.
 #
+# DAZZER-IO IS A TRUSTED PUBLISHER. CodeQL's actions/unpinned-tag query warns on every action or
+# reusable workflow used at a branch or tag rather than a commit, unless its owner is on the list
+# of trusted publishers the query reads (trustedActionsOwnerDataModel, which CodeQL fills with
+# actions, github and advanced-security). Calling the organisation's own shared workflows at main
+# is the design (decisions 118 and 119), so every caller carried a warning on its own call of this
+# scan, and a required results check failing on warnings refused the change. Ben chose to trust
+# dazzer-io's own (decision 165), so this scan adds dazzer-io to that list. It names dazzer-io and
+# no other owner: an action or workflow of any other owner, used without a commit, still warns.
+# It touches the analysis of actions alone; every other language and every other query is as before.
+#   - How. The analysis's second step, run for actions only, writes a model pack,
+#     shared-scan/trusted-publishers, whose one row adds dazzer-io to that list, into CodeQL's own
+#     package cache under the runner's home folder (~/.codeql/packages/<scope>/<name>/<version>),
+#     where CodeQL finds a pack named without a registry. Its scope, shared-scan, is a CodeQL pack
+#     scope and not the organisation's name, since the pack is no GitHub project and no line here
+#     names a project by hand (decision 167). The analyze step names it to the queries
+#     through CODEQL_ACTION_EXTRA_OPTIONS, an option GitHub documents on that step, as
+#     --model-packs of database run-queries; for any other language the option is empty, which the
+#     action reads as no options. It passes no --additional-packs, since the action passes its own
+#     for a pull request's diff-informed analysis and CodeQL's manual says a later one overrides it.
+#   - Written as two files of fixed text, not by CodeQL's own pack commands: the step then runs
+#     before the checkout, so it reads nothing the change wrote, and it runs no tool but the shell,
+#     holds no token and takes no input. CodeQL 2.27.4, the version this pin of the action runs,
+#     reads the pack from that folder, and a pack it cannot find stops the analysis, so a pack
+#     written wrongly turns the run red rather than passing unseen.
+#   - Nothing is published (decision 166). GitHub's own route for an organisation's packs is its
+#     package registry, but a public package cannot be made private again, and a private one needs
+#     a grant for each repository's workflows, which a new repository would wait on.
+#
 # WHY IT IS SPLIT IN TWO.
 #   - analyze runs on the scan machines, by ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}, so an
 #     empty setting keeps it on GitHub's computers (decision 93). A called workflow reads its
@@ -118,6 +146,28 @@ jobs:
               ;;
           esac
 
+      # Actions only: dazzer-io joins CodeQL's trusted publishers (decision 165, DAZZER-IO IS A
+      # TRUSTED PUBLISHER above). It runs before the checkout, so it reads nothing the change wrote,
+      # and holds no token. It first removes the pack's folder, so a file left there by an earlier
+      # run on the same machine is never read as part of it. Every line of its script sits at one
+      # indent, so each file it writes is exactly the lines between its two markers.
+      - name: Add dazzer-io to CodeQL's trusted publishers
+        if: ${{ matrix.language == 'actions' }}
+        run: |
+          pack="$HOME/.codeql/packages/shared-scan/trusted-publishers/1.0.0"
+          rm -rf "$pack"
+          mkdir -p "$pack/models"
+          cat > "$pack/codeql-pack.yml" <<'PACK'
+          name: shared-scan/trusted-publishers
+          version: 1.0.0
+          library: true
+          extensionTargets: {codeql/actions-all: '*'}
+          dataExtensions: [models/*.json]
+          PACK
+          cat > "$pack/models/trusted-publishers.model.json" <<'MODEL'
+          {"extensions": [{"addsTo": {"pack": "codeql/actions-all", "extensible": "trustedActionsOwnerDataModel"}, "data": [["dazzer-io"]]}]}
+          MODEL
+
       - name: Check out the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -133,8 +183,12 @@ jobs:
 
       # upload: never keeps the token read-only; the post-processed results are what an upload
       # would send. The database is not uploaded either, since that also needs security-events: write.
+      # For actions, the queries read the trusted-publisher pack the second step wrote; for any
+      # other language the option is empty, which the action reads as no options.
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        env:
+          CODEQL_ACTION_EXTRA_OPTIONS: ${{ matrix.language == 'actions' && '{"database":{"run-queries":["--model-packs=shared-scan/trusted-publishers@1.0.0"]}}' || '' }}
         with:
           category: /language:${{ matrix.language }}
           upload: never

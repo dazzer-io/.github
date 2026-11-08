@@ -1086,6 +1086,33 @@ function namesIn(what, text) {
   return onPlainLines.test(plain.join('\n')) || expressionsInText(every.join('\n')).some((e) => inAnExpression.test(e));
 }
 
+// What a call hands the workflow it calls under with:, each a refusal (decisions 93, 171, 181): a
+// secret by name, secrets.GITHUB_TOKEN, the whole secrets context, a secret looked up by a name
+// worked out as it runs, the workflow's token (as dazzer-app's holdsMoreThanTheCode reads it) and
+// any other spelling of GITHUB_TOKEN. The called workflow's jobs hold the token their own
+// permissions: grant, and the shared scans hold no secret, so a caller hands on neither.
+function handsOn(job, target) {
+  const out = [];
+  if (!isObj(job.with)) return out;
+  const exprs = expressionsInData(job.with);
+  const secrets = contextReads(exprs, 'secrets');
+  for (const n of secrets.names) {
+    if (n === 'GITHUB_TOKEN') out.push(`calls ${target} and hands it secrets.GITHUB_TOKEN under with:, the workflow's token: the called workflow's jobs hold the token their own permissions: grant, and a caller hands on no other (decision 171).`);
+    else out.push(`calls ${target} and hands it secrets.${n} under with:, a secret: a caller hands no secret to a shared workflow, whose jobs may run on machines of ours and hold none (decision 93).`);
+  }
+  if (secrets.whole) out.push(`calls ${target} and hands it the whole secrets context under with: (as toJSON(secrets) does), every secret the repository holds: a caller hands no secret to a shared workflow (decision 93).`);
+  if (secrets.computed) out.push(`calls ${target} and hands it a secret looked up by a name worked out as it runs under with: (secrets[ followed by no quoted name), which could be any secret the repository holds: a caller hands no secret to a shared workflow (decision 93).`);
+  if (exprs.some((e) => READS_THE_TOKEN.test(e.blanked))) out.push(`calls ${target} and hands on the workflow's token under with: (github.token, github[...], toJSON(github), a github.* filter or the github context whole): the called workflow's jobs hold the token their own permissions: grant (decision 171).`);
+  const other = exprs.find((e) => /(?<![\w-])github_token(?![\w-])/i.test(e.blanked.replace(/(?<![\w.-])secrets\s*\.\s*github_token(?![\w-])/gi, '')));
+  if (other) out.push(`calls ${target} and hands it \${{${other.raw}}} under with:, a GITHUB_TOKEN spelling, which reads the workflow's token wherever it was put: the called workflow's jobs hold the token their own permissions: grant (decision 171).`);
+  return out;
+}
+
+// Every vars name of a setting family's spelling that is no setting family name (vars.CHECKS_DIR,
+// vars.LOCKED_UNTIL): this repository's runs-on test refused each one in every job here but the
+// scans' read-only jobs, so none is taken for a setting (decisions 36, 104).
+const familySpelled = (x) => unique(contextReads(expressionsInData(x), 'vars').names.filter((n) => /^(CHECKS|SCAN|LOCKED)_/.test(n) && !familyOf(n)));
+
 // ================================================================ the lists
 const nonEmpty = (x) => typeof x === 'string' && x.trim() !== '';
 const wholeNumber = (x) => Number.isInteger(x) && x > 0;
@@ -1263,6 +1290,9 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
     const { path, wf } = r;
     const file = basename(path);
     for (const m of wf.misread) say(path, m.line, null, m.why);
+    // A workflow no event starts is refused in every repository (this repository's runs-on test
+    // refused it so, decision 181): nothing says when its jobs run, so no class of them can be read.
+    if (wf.js && wf.triggers.length === 0) say(path, 1, null, `names no trigger it can read (${'on' in wf.js ? `on: ${show(wf.js.on)}` : 'no on: key'}), so nothing says when its jobs run or which class they are in; it is refused in every repository. Write on: with the events that start it.`);
     if (!wf.hasJobs) {
       say(path, 1, null, 'holds no job this rule can read (a jobs: key at the top whose value is a block map of at least one job), so its machines were never judged; it is refused rather than passed.');
       continue;
@@ -1277,6 +1307,9 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
     const isScanFile = shared && SHARED_SCANS.includes(path);
     const holding = shared && SHARED_HOLDING.includes(path);
     const prStarted = triggers.some((t) => PULL_REQUEST_EVENTS.includes(t));
+    // The write token the workflow holds, if any: on pull_request_target every job holds one, and
+    // elsewhere the first write any job is granted, by the workflow or itself (decision 36).
+    const workflowWrite = triggers.includes('pull_request_target') ? 'pull_request_target, which runs with the base repository\'s token' : (wf.jobs.map((x) => (isObj(x.js) ? writeGrantOf(js, x.js) : null)).find(Boolean) ?? null);
     const fileEntries = entries.filter((e) => e.workflow === file);
     const wholeEntry = fileEntries.find((e) => Array.isArray(e.jobs)) ?? null;
     const ids = wf.jobs.map((j) => j.id);
@@ -1329,9 +1362,27 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
       if (scanNames.length) no(`reads ${routes.scanWords(scanNames)}.`, { scan: true });
 
       // ------------------------------------------------------------ a call
+      // A call is held to every class rule any other job is (decision 181): judgeCall's exact
+      // admission (decision 171), no secret or token handed on, and the class of its workflow.
       if ('uses' in job) {
         for (const why of await judgeCall({ path, id, job, signs, shared, calls, compare })) no(why.why, why.scan ? { scan: true } : {});
-        if (strictRepo) strictWorkflow = true;
+        const target = typeof job.uses === 'string' ? basename(job.uses.split('@')[0]) : 'a workflow';
+        const handed = handsOn(job, target);
+        for (const why of handed) no(why);
+        // On pull_request_target every job holds the base repository's token on a fork's change,
+        // so it stays on GitHub's standard machine written as a label (decision 36; dazzer's
+        // kindOf classes it write-token), which a call, naming no machine, never is.
+        if (triggers.includes('pull_request_target')) no(`calls ${target} in a workflow on pull_request_target, which runs with the base repository's token on a fork's change: every job there holds a write token and stays on GitHub's standard machine written as a label (decision 36), and a call names no machine at all. Call it from a workflow on pull_request.`);
+        // Unclassified, as any job of a workflow that neither signs in nor runs on pull_request
+        // is in such a repository (dazzer's kindOf); no kept.json entry keeps a call.
+        else if (isMoving && !signs && !triggers.includes('pull_request')) no(`calls ${target} from a workflow that signs in to nothing and is not started by pull_request (it runs on ${triggers.join(', ') || 'no trigger it can read'}), in ${repository}, whose workflows read a CHECKS_ or LOCKED_ setting, so whether its jobs may run on our machines is a decision nobody has made (dazzer's kindOf calls it unclassified), and no kept.json entry keeps a call, which names no machine. Call it from a workflow started by pull_request.`);
+        if (strictRepo) {
+          strictWorkflow = true;
+          // dazzer-app's holdsMoreThanTheCode read a call's every line, comments included.
+          if (!handed.length && namesIn('secret', j.text)) no('calls a workflow in a repository strict.json names, and names a secret: such a job may run on machines of ours, which hold no more than the code.');
+          if (!handed.length && namesIn('token', j.text)) no('calls a workflow in a repository strict.json names, and hands on the workflow\'s token (github.token, github[...], toJSON(github), a github.* filter or the github context whole inside ${{ }}).');
+        }
+        if (shared) for (const n of familySpelled({ job, top })) no(`is a call of ${SHARED} and reads vars.${n}, a name spelled as a CHECKS_, SCAN_ or LOCKED_ setting is: a job here but the scans' read-only jobs reads no variable so named, so none is taken for a setting (decisions 36, 104).`);
         continue;
       }
 
@@ -1341,8 +1392,13 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
       if (typeof runsOn !== 'string') { noAt(`runs-on ${show(runsOn)} names no machine this rule can read.`); continue; }
       if (literal !== null && OUR_MACHINE.test(literal) && effect !== 'canary') noAt(`names one of our own machines literally, '${literal}', so it would run there with no setting naming it, and the watcher, which empties the setting to send a waiting job back to GitHub's, could never move it. Read the setting: \${{ vars.<FAMILY>_RUNNER_<N> || '<GitHub's machine>' }}.`);
       else if (literal !== null && !isGitHubMachine(literal) && effect !== 'canary') noAt(`names the machine '${literal}' literally, which is neither GitHub's machine (${GITHUB_MACHINE}) nor a setting, so where it runs could not be judged.`);
-      const offLiteral = literal === null || !isStandard(literal);
-      if (strictRepo && offLiteral) strictWorkflow = true;
+      // dazzer-app's stricter class exempts the literal ubuntu-latest alone (its holdsMoreThanTheCode,
+      // verdict.test.ts:1253) and holds every other job, whatever its class, to no more than the code.
+      const offLiteral = literal !== 'ubuntu-latest';
+      if (strictRepo && offLiteral) {
+        strictWorkflow = true;
+        judgeStrict({ job, text: j.text, no });
+      }
 
       // A job running CodeQL's scan reads no CHECKS_ setting (decision 91).
       if (Array.isArray(job.steps) && job.steps.some((s) => isObj(s) && typeof s.uses === 'string' && SCANNER_ACTIONS.test(s.uses.trim())) && families(['CHECKS']).length) no(`runs CodeQL's scan (github/codeql-action/init or analyze) and reads ${families(['CHECKS']).join(', ')}: on the change-check machines the change's own code can reach the scan (decision 91). Call the shared scan instead.`);
@@ -1354,6 +1410,9 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
         finalChecks += 1;
         if (finalChecks > 1) no('is a second job of codeql.yml granted no token: the shared scan holds one final check on GitHub\'s machines (decision 135), every other read-only job on the scan machines.');
       }
+      // In dazzer-io/.github, every job but the scans' read-only jobs reads no vars name spelled as
+      // a setting is (this repository's runs-on test held it so).
+      if (shared && !(isScanFile && !write && !final)) for (const n of familySpelled({ job, top })) no(`is a job of ${SHARED} ${isScanFile ? `that ${write ? `holds a write token (${write})` : 'is the final check of a scan'}` : 'outside the shared scans'} and reads vars.${n}, a name spelled as a CHECKS_, SCAN_ or LOCKED_ setting is: a job here but the scans' read-only jobs reads no variable so named, so none is taken for a setting (decisions 36, 104).`);
 
       // ------------------------------------------------------------ the entry's effect
       if (effect === 'canary') {
@@ -1366,8 +1425,11 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
         const outsideEnv = settingReadsIn({ job: withoutStepEnv(job), top });
         const own = [...outsideEnv.families.CHECKS, ...reads.families.LOCKED, ...reads.families.SCAN];
         if (own.length || outsideEnv.whole) no(`is kept on GitHub's computers by kept.json (effect stay) and reads ${unique(own).join(', ') || VARS_WHOLE} beyond a step's env: a stay job reads no CHECKS_, LOCKED_ or SCAN_ setting as its own machine, and hands CHECKS_RUNNER_<N> on only in a step's env, as dazzer-app's plan jobs do (decision 34).`);
+        // That hand-on is admitted only where decision 34 decided it, a workflow that neither signs
+        // in nor holds a write token (decisions 9, 23, 36, 181).
+        const handedOn = [...[...reads.families.CHECKS].filter((n) => !outsideEnv.families.CHECKS.has(n)), ...(reads.whole && !outsideEnv.whole ? [VARS_WHOLE] : [])];
+        if (handedOn.length && (signs || workflowWrite)) no(`is kept on GitHub's computers by kept.json (effect stay) and hands ${handedOn.join(', ')} on in a step's env in a workflow that ${signs ? 'signs in (id-token: write, write-all or an environment), which reads no CHECKS_ setting (decisions 9, 23)' : `holds a write token (${workflowWrite}), whose jobs read no CHECKS_ setting (decision 36)`}: decision 34 admits that hand-on only in a workflow that does neither, as dazzer-app's ci.yml and split-trial.yml are.`);
         if (isPublic && families(['CHECKS', 'LOCKED', 'SCAN']).length) no(`is a job of ${repository}, a public repository, and reads ${families(['CHECKS', 'LOCKED', 'SCAN']).join(', ')}: in a public repository no job but the shared scans' reads a setting (decision 104).`);
-        if (strictRepo && offLiteral) judgeStrict({ job, text: j.text, no });
         continue;
       }
 
@@ -1394,7 +1456,6 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
           else if (coresFromLabel(label) !== Number(n)) noAt(`reads ${name}, a ${n}-core machine, but its fallback '${label}' has ${coresFromLabel(label)} cores, so the job would run on a different width depending on the setting. Read LOCKED_RUNNER_${coresFromLabel(label)}.`);
           if (isPublic) noAt(`is a job of ${repository}, a public repository, and reads ${name}: in a public repository no job but the shared scans' reads a setting (decision 104).`);
         }
-        if (strictRepo && offLiteral) judgeStrict({ job, text: j.text, no });
         continue;
       }
 
@@ -1404,7 +1465,6 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
 
       if (effect === 'checks') {
         judgeChecks({ repository, js, job, runsOn, literal, write, entry, secretReads, allowedSecrets, triggers, no, noAt, routes, w, id });
-        if (strictRepo && offLiteral) judgeStrict({ job, text: j.text, no });
         continue;
       }
 
@@ -1459,7 +1519,6 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
       }
       if (writeHeld) continue;
       judgeChecks({ repository, js, job, runsOn, literal, write, entry: null, secretReads, allowedSecrets, triggers, no, noAt, routes, w, id });
-      if (strictRepo && offLiteral) judgeStrict({ job, text: j.text, no });
     }
 
     // dazzer-app's stricter class, the workflow's part: top permissions exactly contents: read,
@@ -1665,7 +1724,8 @@ const sharedScanCall = (uses) => {
 // repository at its own ref; ./<path> there too when the calling file is one of the repositories
 // read, and unread inside a called workflow. A call to an owner other than dazzer-io, to a file
 // outside .github/workflows, or that GitHub does not answer at its ref is unread. A call into a
-// shared scan at any ref but main is already a scan read and is not read again.
+// shared scan at any ref but main, or spelled in another letter case, is not followed: the judge
+// refuses it at the first level (judgeCall) and scanReadsOfCalled at every level below.
 export async function readCalls({ call, reads }) {
   const lower = (s) => String(s).toLowerCase();
   const readOf = new Map(reads.map((r) => [lower(r.repo), r]));
@@ -1738,19 +1798,29 @@ export async function readCalls({ call, reads }) {
 }
 
 // Every SCAN_ read in workflows read at a ref for a call, outside the shared scans at main: each
-// one's file, job and names, said as a refusal of the repository whose run reaches it.
+// one's file, job and names, said as a refusal of the repository whose run reaches it. So is every
+// call such a workflow makes of a shared scan not spelled exactly at main, at whatever level the
+// call is (runners' switch-on S6, scanReadsOf), and every spelling a called workflow holds that the
+// judge refuses, since what it reads could not be judged (runners' check-repos-read-setting.mjs
+// 728, switch-on.mjs 623).
 export function scanReadsOfCalled(called) {
   const found = [];
   for (const g of called) {
     for (const f of g.files) {
       if (lower(g.repo) === '.github' && AT_MAIN.has(g.ref) && SHARED_SCANS.includes(f.path)) continue;
       const wf = readWorkflow(f.text);
+      if (wf.misread.length) {
+        const m = wf.misread[0];
+        found.push({ top: f.top, line: `${ORG}/${g.repo} ${f.path} at ${g.ref}, in ${ORG}/${f.top}'s run, holds a spelling this rule refuses, so what it reads could not be judged: line ${m.line} ${m.why}${wf.misread.length > 1 ? ` (and ${wf.misread.length - 1} more)` : ''}` });
+      }
       if (!wf.js || !isObj(wf.js.jobs)) { found.push({ top: f.top, line: `${ORG}/${g.repo} ${f.path} at ${g.ref} could not be read: it has no jobs mapping it can read` }); continue; }
       const top = settingReadsIn(topOf(wf.js)).scans;
       if (top.length) found.push({ top: f.top, line: `${ORG}/${g.repo} ${f.path} (the workflow's top) at ${g.ref} reads ${top.join(', ')}, a scan setting, in ${ORG}/${f.top}'s run` });
       for (const [id, job] of Object.entries(wf.js.jobs)) {
         const names = settingReadsIn(job).scans;
         if (names.length) found.push({ top: f.top, line: `${ORG}/${g.repo} ${f.path} ${id} at ${g.ref} reads ${names.join(', ')}, a scan setting, in ${ORG}/${f.top}'s run: the scan runner group gives a machine to the shared scans at main alone` });
+        const scan = isObj(job) && typeof job.uses === 'string' ? sharedScanCall(job.uses) : null;
+        if (scan && !(scan.exact && AT_MAIN.has(scan.ref))) found.push({ top: f.top, line: `${ORG}/${g.repo} ${f.path} ${id} at ${g.ref} calls the shared scan ${scan.path} ${scan.exact ? `at ${scan.ref}` : `as ${job.uses}`}, not at main spelled exactly ${ORG}/.github/${scan.path}@main, in ${ORG}/${f.top}'s run: the scan runner group gives a machine to the shared scans at main alone (decisions 93, 160, 171)` });
       }
     }
   }

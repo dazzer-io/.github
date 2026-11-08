@@ -199,7 +199,7 @@ jobs:
       - name: Install osv-scanner by pinned version and checksum
         run: |
           set -euo pipefail
-          curl -fsSL -o "$RUNNER_TEMP/osv-scanner" \
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/osv-scanner" \
             "https://github.com/google/osv-scanner/releases/download/${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
           echo "${OSV_SCANNER_SHA256}  $RUNNER_TEMP/osv-scanner" | sha256sum --check --strict -
           chmod +x "$RUNNER_TEMP/osv-scanner"
@@ -277,7 +277,7 @@ jobs:
         run: |
           set -euo pipefail
           archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/$archive" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
           echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks

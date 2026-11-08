@@ -164,6 +164,23 @@ public one.
   both (`holdsMoreThanTheCode`, verdict.test.ts:1248, 1258; decision 184). Its workflow's top
   grants exactly `contents: read` and names no secret or token.
 
+  One shape is exempt beside the literal `ubuntu-latest` (decision 190), the one r-3.8 teaches
+  the app's own `holdsMoreThanTheCode`: the locked setting held to main, falling back to the
+  literal `ubuntu-latest`,
+  `${{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_<N> || 'ubuntu-latest' }}`, as a
+  job's whole `runs-on`, on a workflow no pull-request event starts (`pull_request`,
+  `pull_request_target`, `pull_request_review`, `pull_request_review_comment`, `merge_group`).
+  On `pull_request_target`, `github.ref` is the default branch whatever started the run, so the
+  main guard would hand a fork's change the locked set. Such a job still meets every class rule
+  above: its workflow signs in, or decision 9's `LOCKED_` class refuses it; it is started by no
+  tag or deployment; and its `LOCKED_RUNNER_<N>` is declared and as wide as its fallback. Still
+  held to no more than the code, in a repository strict.json names:
+  - the same shape on a workflow a pull-request event starts;
+  - a `LOCKED_` setting read without the main guard;
+  - a `CHECKS_` setting, held to main or not;
+  - a fallback other than the literal `ubuntu-latest`, `ubuntu-24.04` and `ubuntu-<N>-core`
+    among them.
+
 ## Calls (decision 171)
 
 A job may call only those of dazzer-io/.github's shared workflows (`codeql.yml`,
@@ -219,6 +236,16 @@ fails its check leaves the rule unread.
   182).
   An entry naming a job or file not there yet is a note, not a refusal; a job beside those a
   whole-file entry lists is judged like any other.
+
+  dazzer-app's production and scheduled workflows (decisions 54, 190): `release-check`,
+  `canary-drill`, `scorecard` and `lane-times` sign in and are started by no pull request or
+  deployment, so kept.json names none of them; they read the locked shape the stricter class
+  exempts (r-3.8). Until r-3.8 merges, their literal `ubuntu-latest` jobs are refused by the
+  rule run over the app's main. Three stay, each entry saying why:
+  - `sweep` and `contract-watch` write issues with main's token but sign in to nothing, so
+    decision 9 keeps them off the locked set, which takes only workflows that sign in;
+  - `promote-production` is started by `deployment_status`, and the deployed commit's own file
+    decides its `runs-on`, so no main guard holds it to main-line code.
 - **`secrets.json`**: the secrets a change check may read, per repository (decision 121).
 - **`strict.json`**: the repositories held to the stricter class (decision 54).
 

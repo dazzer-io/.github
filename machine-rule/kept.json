@@ -165,37 +165,14 @@
     },
     {
       "repository": "dazzer-io/dazzer-app",
-      "workflow": "canary-drill.yml",
-      "jobs": [
-        "drill"
-      ],
-      "effect": "stay",
-      "reason": "a production or scheduled job: it drills the release canary in the release environment, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
-      "decision": 54,
-      "source": "dazzer-app .github/workflows/canary-drill.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
-    },
-    {
-      "repository": "dazzer-io/dazzer-app",
       "workflow": "contract-watch.yml",
       "jobs": [
         "watch"
       ],
       "effect": "stay",
-      "reason": "a production or scheduled job: a scheduled watch that writes issues with main's token, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
-      "decision": 54,
-      "source": "dazzer-app .github/workflows/contract-watch.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
-    },
-    {
-      "repository": "dazzer-io/dazzer-app",
-      "workflow": "lane-times.yml",
-      "jobs": [
-        "refresh",
-        "open"
-      ],
-      "effect": "stay",
-      "reason": "a production or scheduled job: it rewrites the lanes' timings and opens them as a pull request, in the lane-refresh environment, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
-      "decision": 54,
-      "source": "dazzer-app .github/workflows/lane-times.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+      "reason": "a scheduled job: a watch that writes issues with main's token and signs in to nothing (no environment, no id-token: write), so decision 9 keeps it off the locked set, which takes only workflows that sign in; it keeps GitHub's literal machine at cents a day, and a main-only environment that would make it sign in is a repository setting, Ben's, not asked for so little (decision 190)",
+      "decision": 190,
+      "source": "dazzer-app .github/workflows/contract-watch.yml at main 4b236f2e, read 2026-11-08; work/checks-on-google decision 190 (builder r-3.8's report, 8 Nov: machine-rule/judge.mjs over the planned move)"
     },
     {
       "repository": "dazzer-io/dazzer-app",
@@ -205,34 +182,9 @@
         "promote"
       ],
       "effect": "stay",
-      "reason": "a production or scheduled job: it promotes main's production build in the release environment, started by deployment_status, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
-      "decision": 54,
-      "source": "dazzer-app .github/workflows/promote-production.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
-    },
-    {
-      "repository": "dazzer-io/dazzer-app",
-      "workflow": "release-check.yml",
-      "jobs": [
-        "find",
-        "check",
-        "act",
-        "handover"
-      ],
-      "effect": "stay",
-      "reason": "a production or scheduled job: it checks the release in the release and live-check environments, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
-      "decision": 54,
-      "source": "dazzer-app .github/workflows/release-check.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
-    },
-    {
-      "repository": "dazzer-io/dazzer-app",
-      "workflow": "scorecard.yml",
-      "jobs": [
-        "scorecard"
-      ],
-      "effect": "stay",
-      "reason": "a production or scheduled job: it reads the week's scorecard in the release environment, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
-      "decision": 54,
-      "source": "dazzer-app .github/workflows/scorecard.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+      "reason": "a production job: it promotes main's production build in the release environment, started by deployment_status, and a deployment can name any commit, so the deployed commit's own file decides its runs-on and no main guard there can hold the locked set to main-line code; it keeps GitHub's literal machine at cents a day (decision 190)",
+      "decision": 190,
+      "source": "dazzer-app .github/workflows/promote-production.yml at main 4b236f2e, read 2026-11-08; work/checks-on-google decision 190 (builder r-3.8's report, 8 Nov: machine-rule/judge.mjs over the planned move)"
     },
     {
       "repository": "dazzer-io/dazzer-app",
@@ -241,9 +193,9 @@
         "sweep"
       ],
       "effect": "stay",
-      "reason": "a production or scheduled job: a daily sweep that writes issues with main's token, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
-      "decision": 54,
-      "source": "dazzer-app .github/workflows/sweep.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+      "reason": "a scheduled job: a daily sweep that writes issues with main's token and signs in to nothing (no environment, no id-token: write), so decision 9 keeps it off the locked set, which takes only workflows that sign in; it keeps GitHub's literal machine at cents a day, and a main-only environment that would make it sign in is a repository setting, Ben's, not asked for so little (decision 190)",
+      "decision": 190,
+      "source": "dazzer-app .github/workflows/sweep.yml at main 4b236f2e, read 2026-11-08; work/checks-on-google decision 190 (builder r-3.8's report, 8 Nov: machine-rule/judge.mjs over the planned move)"
     },
     {
       "repository": "dazzer-io/brain-builder",

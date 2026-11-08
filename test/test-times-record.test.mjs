@@ -279,6 +279,25 @@ test('finish.mjs writes "the test runner never started" when no record was writt
   assert.equal(rec.run.started_at, '2026-10-01T08:00:00.000Z');
 });
 
+// parseRecord takes a deal line from anywhere after the run line, so only its place pins it;
+// compareRecords reads lines in order, and the adapters write it second (record.mjs, finish).
+test('finish.mjs writes a dealt part\'s deal line second, after its run line and before its end, as the adapters do', () => {
+  const t = tmp();
+  const file = path.join(t, 'test-times.jsonl');
+  fs.writeFileSync(`${file}.run.json`, JSON.stringify({ repo: 'acme-labs/widget', job_key: 'unit', runner_name: 'gh-2',
+    run_attempt: 1, setup_at: '2026-10-01T08:00:00.000Z' }));
+  const deal = { type: 'deal', parts: 3, part: 2, files: [], discovered: 'a'.repeat(64), discovered_count: 2, history: 'b'.repeat(64) };
+  fs.writeFileSync(`${file}.deal`, JSON.stringify(deal) + '\n');
+  const r = spawnSync(process.execPath, [path.join(DIR, 'finish.mjs')], {
+    env: cleanEnv({ TEST_TIMES_FILE: file, TEST_TIMES_ID: 'unit-2-gh-2-1700000000000' }), encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const text = fs.readFileSync(file, 'utf8');
+  const kept = text.trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(kept[1]?.type, 'deal', `the deal line is not second, after the run line:\n${text}`);
+  assert.deepEqual(kept.map((l) => l.type), ['run', 'deal', 'end'], `a dealt part's never-started record is its run line, its deal line and its end:\n${text}`);
+  assert.deepEqual(kept[1], deal, 'the deal line is the one the part left beside the record');
+});
+
 test('finish.mjs leaves a record that stopped partway as it is', () => {
   const file = path.join(tmp(), 'test-times.jsonl');
   const partial = JSON.stringify({ v: 1, type: 'run', runner_name: 'gh-1' }) + '\n';

@@ -28,8 +28,12 @@ its origin does not say so, or GitHub could not be asked about a commit.
   holds no secret, and both checkouts keep no git credential. The rule is checked out of
   `job.workflow_repository` at `job.workflow_sha`, its own commit, and the change at its head
   commit. actionlint is a pinned release, checked by its SHA-256 before it runs, with shellcheck
-  and pyflakes off. Its one ignore is narrow: actionlint 1.7.12 does not know the job context's
-  `workflow_repository` and `workflow_sha`, which GitHub gives.
+  and pyflakes off. Its two ignores are narrow. actionlint 1.7.12 does not know the job context's
+  `workflow_repository` and `workflow_sha`, which GitHub gives. And actionlint knows GitHub's
+  labels alone, so it calls each of our own sets unknown: the step drops its unknown-label error
+  for exactly a name `judge.mjs`'s `OUR_MACHINE` matches, anchored at the message's start, and
+  still reports any other label it does not know, so the judge alone rules where our names stand
+  (decisions 198, 201).
 - **The ruleset `machine-rule-required`** (`ruleset.json`) is a workflows rule. It runs that
   file, read from dazzer-io/.github by its repository id at `refs/heads/main`, on the default
   branch of every repository, and not when a branch is created. It is written in `evaluate`
@@ -38,11 +42,42 @@ its origin does not say so, or GitHub could not be asked about a commit.
   conditions cannot include `~ALL`"), and a renamed repository stays in `~ALL` anyway, so the
   check refuses the pairing in GitHub's words, and the read-back counts a `protected` read back
   as false the same as the file leaving it out (decision 187).
-- **`apply-ruleset.mjs`** prints how the live ruleset differs from the file, with no flag.
-  `--apply` writes the file's version, and only to the ruleset of that name: a security
-  setting, so this is Ben's own command, run after the merge (decisions 121, 177). Before
-  writing it checks the file and checks that dazzer-io/.github's live repository id is the one
-  the file names, and after writing it reads the ruleset back. `--readings [--moving a,b]
+- **The ruleset `main-spelling-refused`** (`main-spelling.json`) refuses the creation of a branch
+  spelled main in other letters in dazzer and dazzer-app (decisions 188, 192). It names the two
+  by name, with `protected: true` so neither can be renamed out of it, is `active`, names no
+  bypass actor, and holds one rule, `creation`: only someone with bypass permission may create a
+  branch it matches, and it names no one. Its refs are `refs/heads/M[Aa][Ii][Nn]`,
+  `refs/heads/mA[Ii][Nn]`, `refs/heads/maI[Nn]` and `refs/heads/maiN`, with nothing excluded.
+  GitHub reads a ruleset's patterns with fnmatch and `File::FNM_PATHNAME`, bracket classes
+  included, and its pages say nothing of case. Matched case-sensitively, the four take exactly
+  the fifteen other spellings of main and never `main` itself; folded, they take `main` too, and
+  only creation is restricted, which never touches a push to a branch that is there. So it holds
+  either way. Its check refuses a bypass actor, another repository, an exclude, a rule other than
+  creation, and a pattern set that, matched case-sensitively, misses a spelling or matches
+  `main`, and a wildcard, a complemented class or a backslash, whose names cannot be listed.
+- **The ruleset `codeql-complete-required`** (`codeql-complete.json`) requires the shared scan's
+  `codeql / CodeQL complete` before a merge to the default branch of dazzer and dazzer-app
+  (decisions 188, 192). It names the same two repositories the same way, is `active`, names no
+  bypass actor, includes `~DEFAULT_BRANCH`, and holds one `required_status_checks` rule: that
+  one context from integration 15368, GitHub Actions, with `do_not_enforce_on_create: true` and
+  the strict policy off, so a branch need not be up to date to merge. Its check refuses another
+  context, another integration or none, and a bypass. `--apply` writes it only once each
+  repository's default-branch head carries that check passed: the latest run of that name from
+  integration 15368, completed, concluded success. A missing, failed, unfinished or other-app
+  check refuses with its reason, and nothing is written.
+- **Why `main-spelling-refused` comes first** (decision 195). GitHub compares strings without
+  regard to case (its expressions page: "GitHub ignores case when comparing strings"), so the
+  guard `github.ref == 'refs/heads/main'` is true on a branch named `MAIN`. The locked shape
+  below is held to main only once `main-spelling-refused` is live, and runners'
+  `switch-on --locked` gate (r-2.3) keeps every `LOCKED_` setting empty until then.
+- **`apply-ruleset.mjs`** prints how each live ruleset differs from its file, with no flag, and,
+  where `codeql-complete-required` is absent or differs, what its guard reads today.
+  `node machine-rule/apply-ruleset.mjs --apply` writes each file's version, and only to the
+  ruleset of its name, each to its own id: security settings, so this is Ben's own command, run
+  after the merge (decisions 121, 177, 192). Before writing anything it checks every file, checks
+  that dazzer-io/.github's live repository id is the one `ruleset.json` names, and reads
+  `codeql-complete-required`'s guard: one refusal and nothing is written. After writing it reads
+  each ruleset back. `--readings [--moving a,b]
   [--only a,b] [--class production]` runs the judge over every private, non-archived
   repository's workflow folder at its default branch, read with `gh`. It follows every call at
   the ref it names, up to GitHub's ten levels, and lists each refusal. A workflow a call reaches
@@ -106,7 +141,8 @@ public one.
 - **A workflow that signs in** (`id-token: write`, `write-all` or an `environment`) reads no
   `CHECKS_` or `SCAN_` setting. Each of its jobs reads the locked setting in its `runs-on`,
   held to main: `${{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_<N> || '<GitHub's
-  machine>' }}`, and nowhere else (decisions 9, 23, 40). Unless kept.json keeps it on GitHub,
+  machine>' }}`, and nowhere else (decisions 9, 23, 40); the guard holds it to main alone once
+  `main-spelling-refused` is live (decision 195, above). Unless kept.json keeps it on GitHub,
   such a workflow is refused when it is started:
   - by `pull_request_target` or `workflow_run`, where `github.ref` is the default branch
     whatever started the run;

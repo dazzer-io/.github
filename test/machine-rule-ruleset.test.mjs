@@ -61,6 +61,18 @@ const scratch = (name, text) => {
   if (text !== undefined) writeFileSync(path, text);
   return path;
 };
+// Each [name, change, says] case run against apply-ruleset.mjs's check of that name: a clone of base,
+// changed, then checked, and a miss for each case whose problems hold none that says matches.
+const refusalsMissed = (check, base, cases) => {
+  const misses = [];
+  for (const [name, change, says] of cases) {
+    const r = clone(base);
+    change(r);
+    const problems = A[check](r);
+    if (!problems.some((p) => says.test(p))) misses.push(`Could not find ${check} refusing ${name}: ${JSON.stringify(problems)}`);
+  }
+  return misses;
+};
 
 test('ruleset.json is the rule\'s ruleset: machine-rule.yml of dazzer-io/.github at refs/heads/main, every repository\'s default branch, evaluate first', () => {
   need();
@@ -100,13 +112,7 @@ test('checkRuleset refuses each way a ruleset could run another workflow, from e
     ['another name', (r) => { r.name = 'made-up'; }, /not machine-rule-required/],
     ['a tag target', (r) => { r.target = 'tag'; }, /its target is "tag", not branch/],
   ];
-  const misses = [];
-  for (const [name, change, says] of cases) {
-    const r = clone(base);
-    change(r);
-    const problems = A.checkRuleset(r);
-    if (!problems.some((p) => says.test(p))) misses.push(`Could not find checkRuleset refusing ${name}: ${JSON.stringify(problems)}`);
-  }
+  const misses = refusalsMissed('checkRuleset', base, cases);
   const active = clone(base);
   active.enforcement = 'active';
   if (A.checkRuleset(active).length) misses.push(`Could not find the same ruleset made active passing: ${JSON.stringify(A.checkRuleset(active))}`);
@@ -489,13 +495,7 @@ test('checkMainSpelling refuses a bypass, another repository, an exclude, a rule
     ['another name', (r) => { r.name = 'made-up'; }, /not main-spelling-refused/],
     ['a tag target', (r) => { r.target = 'tag'; }, /its target is "tag", not branch/],
   ];
-  const misses = [];
-  for (const [name, change, says] of cases) {
-    const r = clone(base);
-    change(r);
-    const problems = A.checkMainSpelling(r);
-    if (!problems.some((p) => says.test(p))) misses.push(`Could not find checkMainSpelling refusing ${name}: ${JSON.stringify(problems)}`);
-  }
+  const misses = refusalsMissed('checkMainSpelling', base, cases);
   const reordered = clone(base);
   reordered.conditions.ref_name.include.reverse();
   if (A.checkMainSpelling(reordered).length) misses.push(`Could not find the same four patterns in another order passing: ${JSON.stringify(A.checkMainSpelling(reordered))}`);
@@ -544,13 +544,7 @@ test('checkCodeqlComplete accepts evaluate or active and nothing else, and refus
     ['another name', (r) => { r.name = 'made-up'; }, /not codeql-complete-required/],
     ['a tag target', (r) => { r.target = 'tag'; }, /not branch/],
   ];
-  const misses = [];
-  for (const [name, change, says] of cases) {
-    const r = clone(base);
-    change(r);
-    const problems = A.checkCodeqlComplete(r);
-    if (!problems.some((x) => says.test(x))) misses.push(`Could not find checkCodeqlComplete refusing ${name}: ${JSON.stringify(problems)}`);
-  }
+  const misses = refusalsMissed('checkCodeqlComplete', base, cases);
   // Evaluate, as written, and active, as r-3.27 makes it once its readings show no merge it would have refused.
   for (const enforcement of ['evaluate', 'active']) {
     const r = clone(base);

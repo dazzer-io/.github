@@ -39,7 +39,7 @@
 //     a caller names, runs always after both on GitHub's ubuntu-latest with no token
 //     (permissions: {}), and its script, taking the two results through env alone and holding no
 //     ${{ }}, passes only when both succeeded: the one check a caller requires (decision 135);
-//   - every action is pinned by commit, and CodeQL's three actions share one pin, PIN below: the
+//   - CodeQL's three actions share one pin, PIN below (zizmor holds every action by commit): the
 //     newer of the two the product copies held on 7 Nov 2026 (dazzer v4.39.3; dazzer-app v4.39.1);
 //   - dazzer-io is a trusted publisher for the analysis of actions alone (decisions 165 to 167):
 //     the analysis's second step, before the checkout, written exactly as TRUST below, runs only
@@ -573,11 +573,8 @@ function judgeShared(text) {
   const passes = RESULTS_OF_A_JOB.flatMap((x) => RESULTS_OF_A_JOB.map((y) => [x, y])).filter(([x, y]) => typeof done?.run === 'string' && completeStatus(done.run, x, y) === 0);
   if (!same(passes, [['success', 'success']])) no('a final job passing only when the analysis and the upload both succeeded', `run under bash, it passes on ${show(passes)}`);
 
-  // Every action by commit, wherever its step sits; CodeQL's three by one pin.
+  // CodeQL's three actions by one pin; that each is by commit, zizmor in the shared check holds.
   const used = [...(Array.isArray(a.steps) ? a.steps : []), ...usteps].filter((st) => st?.uses !== undefined);
-  for (const st of used) {
-    if (!/^[0-9a-f]{40}$/.test(refOf(st))) no(`a commit as the ref of ${actionOf(st)}`, `it is used at ${show(st?.uses)}`);
-  }
   const codeqlRefs = used.filter((st) => actionOf(st).startsWith(CODEQL)).map(refOf);
   if (!codeqlRefs.length || codeqlRefs.some((r) => r !== PIN)) no(`one pin, ${PIN} (v4.39.3), for CodeQL's actions`, `they are used at ${show(codeqlRefs)}`);
   return refusals;
@@ -696,7 +693,6 @@ plant('an older run\'s artifact fetched', intoWith('actions/download-artifact', 
 plant('another category on upload-sarif', (t) => t.replace(`          sarif_file: \${{ runner.temp }}/codeql-sarif\n          category: ${CATEGORY}`, '          sarif_file: ${{ runner.temp }}/codeql-sarif\n          category: /scan:${{ matrix.language }}'), /upload-sarif sending the fetched results under the category/);
 plant('upload-sarif sending another file', (t) => t.replace('          sarif_file: ${{ runner.temp }}/codeql-sarif\n', '          sarif_file: results.sarif\n'), /upload-sarif sending the fetched results/);
 // Pins.
-plant('an action by tag', (t) => t.replace('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/checkout@v7'), /a commit as the ref of actions\/checkout/);
 plant('an older CodeQL pin on one action', (t) => t.replace(`${CODEQL}init@${PIN}`, `${CODEQL}init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370`), /one pin, 33d7b85/);
 // The second review (decision 133): a secret spelled with a YAML escape in a double-quoted value.
 const BS = String.fromCharCode(92);

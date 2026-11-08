@@ -21,7 +21,7 @@ its origin does not say so, or GitHub could not be asked about a commit.
 
 ## Where it runs
 
-- **`.github/workflows/machine-rule.yml`** runs the judge, then actionlint, on a pull request's
+- **`.github/workflows/machine-rule.yml`** runs the judge, then two linters, on a pull request's
   or merge queue entry's workflow folder. It runs on the literal `ubuntu-latest`, a job of under
   a minute that reads no setting, so it stays off our machines in public repositories, where the
   fallback watcher does not read the runs (decision 104). Its token reads the code alone, it
@@ -33,7 +33,9 @@ its origin does not say so, or GitHub could not be asked about a commit.
   labels alone, so it calls each of our own sets unknown: the step drops its unknown-label error
   for exactly a name `judge.mjs`'s `OUR_MACHINE` matches, anchored at the message's start, and
   still reports any other label it does not know, so the judge alone rules where our names stand
-  (decisions 198, 201).
+  (decisions 198, 201). zizmor is pinned and checked the same way, run offline and honouring no
+  ignore comment, by `zizmor.yml`: it refuses only an action not pinned by commit, the
+  organisation's own workflows excepted, and counts its other findings without refusing them.
 - **The ruleset `machine-rule-required`** (`ruleset.json`) is a workflows rule. It runs that
   file, read from dazzer-io/.github by its repository id at `refs/heads/main`, on the default
   branch of every repository, and not when a branch is created. It is written in `evaluate`

@@ -13,9 +13,13 @@
 # no setting keeps it off our machines in public repositories, where the fallback watcher does not
 # read the runs (decision 104); kept.json names it. Its token reads the code alone, and it holds no
 # secret. actionlint is a pinned release, checked by its SHA-256 before it runs, with shellcheck and
-# pyflakes off. Its one ignore is narrow: actionlint 1.7.12's job context lacks workflow_repository
+# pyflakes off. Its two ignores are narrow. actionlint 1.7.12's job context lacks workflow_repository
 # and workflow_sha, which GitHub's job context gives and this repository's engineer-review.yml,
-# security-scan.yml and this file read, so without it this repository's own folder is never clean.
+# security-scan.yml and this file read, so without the first this repository's own folder is never
+# clean. actionlint knows GitHub's labels alone, so it calls each of our own sets unknown, while the
+# judge alone rules where our names may stand: it admits them literally in runners' canary alone
+# (decision 50). So the second drops actionlint's unknown-label error for exactly a name judge.mjs's
+# OUR_MACHINE matches, and any other label actionlint does not know is still reported (decision 198).
 name: Machine rule
 
 on:
@@ -100,4 +104,4 @@ jobs:
           echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
           cd .change
-          "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes= -ignore 'property "workflow_(repository|sha)" is not defined in object type'
+          "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes= -ignore 'property "workflow_(repository|sha)" is not defined in object type' -ignore '^label "dazzer-(checks|checks-regular|locked|scan)-[1-9][0-9]*-core" is unknown\. available labels are'

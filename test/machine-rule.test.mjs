@@ -484,6 +484,7 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
     ['brain-builder', 'release.yml', 'tag', 'checks', 47], ['scheduler', 'tick.yml', 'runner-readings', 'stay', 22],
     ['runners', 'apply.yml', 'apply', 'stay', 9], ['runners', 'image.yml', 'build', 'stay', 9], ['runners', 'image.yml', 'push', 'stay', 9],
     ['runners', 'canary.yml', 'canary', 'canary', 50], ['runners', 'canary.yml', 'scan', 'canary', 50],
+    ['runners', 'canary.yml', 'nvmrc-exact-v7', 'canary', 50], ['runners', 'canary.yml', 'nvmrc-exact-v7-in-a-container', 'canary', 50],
     ['.github', 'codeql.yml', 'upload', 'stay', 36], ['.github', 'codeql.yml', 'complete', 'stay', 93], ['.github', 'engineer-review.yml', 'engineer-review', 'stay', 36], ['.github', 'machine-rule.yml', 'machine-rule', 'stay', 104],
   ];
   const misses = [];
@@ -879,6 +880,53 @@ test('machine-rule.yml runs the judge, then a pinned actionlint, on the change\'
     [runs.indexOf('judge.mjs') < runs.indexOf('actionlint'), 'the judge before actionlint'],
   ];
   const misses = checks.filter(([ok]) => !ok).map(([, what]) => `Could not find machine-rule.yml holding ${what}`);
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+// actionlint 1.7.12's runner-label errors, word for word as it writes them (its labels list as it
+// printed them over runners' canary.yml at f56d757). It knows GitHub's labels alone, so it calls
+// each of our own sets unknown, though the judge alone rules where our names may stand (decision 198).
+const ACTIONLINT_LABELS = ['windows-latest', 'windows-latest-8-cores', 'windows-2025', 'windows-2025-vs2026', 'windows-2022', 'windows-11-arm', 'ubuntu-slim', 'ubuntu-latest', 'ubuntu-latest-4-cores', 'ubuntu-latest-8-cores', 'ubuntu-latest-16-cores', 'ubuntu-24.04', 'ubuntu-24.04-arm', 'ubuntu-22.04', 'ubuntu-22.04-arm', 'macos-latest', 'macos-latest-xlarge', 'macos-latest-large', 'macos-26-intel', 'macos-26-xlarge', 'macos-26-large', 'macos-26', 'macos-15-intel', 'macos-15-xlarge', 'macos-15-large', 'macos-15', 'macos-14-xlarge', 'macos-14-large', 'macos-14', 'self-hosted', 'x64', 'arm', 'arm64', 'linux', 'macos', 'windows'];
+const unknownLabel = (label) => `label "${label}" is unknown. available labels are ${ACTIONLINT_LABELS.map((l) => `"${l}"`).join(', ')}. if it is a custom label for self-hosted runner, set list of labels in actionlint.yaml config file`;
+const conflictingLabel = (label) => `label "${label}" conflicts with label "ubuntu-latest" defined at line:31,col:14. note: to run your job on each workers, use matrix`;
+
+test('machine-rule.yml\'s lint step ignores actionlint\'s unknown-label error for exactly the names OUR_MACHINE matches, and still reports every near miss (decision 198)', () => {
+  need();
+  const text = readFileSync(join(ROOT, '.github/workflows/machine-rule.yml'), 'utf8');
+  const steps = Object.values(J.readWorkflow(text).js?.jobs ?? {})[0]?.steps ?? [];
+  const lint = steps.find((s) => /^Lint .*actionlint/.test(s.name ?? ''));
+  const call = String(lint?.run ?? '').split('\n').find((l) => l.trim().startsWith('"$RUNNER_TEMP/actionlint"'));
+  assert.ok(call, `Could not find machine-rule.yml's lint step calling actionlint: ${JSON.stringify(lint?.run ?? null)}`);
+  // actionlint drops an error whose message an -ignore pattern matches anywhere in it; each pattern
+  // is read here as JavaScript reads it, which is Go's reading for the anchors, groups, classes and
+  // escapes such a pattern uses.
+  const ignores = [...call.matchAll(/ -ignore '([^']*)'/g)].map((m) => m[1]);
+  const ignoredBy = (message) => ignores.filter((p) => new RegExp(p).test(message));
+  const sets = /^\^dazzer-\(([a-z|-]+)\)-/.exec(J.OUR_MACHINE.source)?.[1].split('|') ?? [];
+  assert.ok(sets.length >= 4, `Could not find OUR_MACHINE's sets read from machine-rule/judge.mjs: ${J.OUR_MACHINE}`);
+  const ours = sets.flatMap((set) => [1, 2, 8, 16, 32].map((n) => `dazzer-${set}-${n}-core`));
+  const nearMisses = [
+    ['a misspelt set', 'dazzer-chekcs-2-core'], ['a misspelt set', 'dazzer-check-8-core'], ['a misspelt set', 'dazzer-scans-2-core'], ['a misspelt set', 'dazzer-locked-regular-2-core'],
+    ['GitHub\'s machine misspelt', 'ubuntu-lates'],
+    ['a name with no core count', 'dazzer-checks-core'], ['a name with no core count', 'dazzer-scan--core'], ['a name with no core count', 'dazzer-checks-regular-core'],
+    ['a core count OUR_MACHINE reads as none', 'dazzer-checks-0-core'], ['a core count OUR_MACHINE reads as none', 'dazzer-checks-02-core'], ['a core count OUR_MACHINE reads as none', 'dazzer-checks-two-core'],
+    ['a name in other letters', 'DAZZER-CHECKS-2-CORE'],
+    ['an unknown label merely containing one of ours', 'my-dazzer-checks-2-core'], ['an unknown label merely containing one of ours', 'dazzer-checks-2-core-arm'], ['an unknown label merely containing one of ours', 'dazzer-scan-2-cores'],
+  ];
+  const misses = [];
+  for (const label of ours) {
+    if (!J.OUR_MACHINE.test(label)) misses.push(`Could not find ${label} matched by OUR_MACHINE, so it is no name of ours to try`);
+    else if (!ignoredBy(unknownLabel(label)).length) misses.push(`Could not find actionlint's unknown-label error for ${label} ignored by machine-rule.yml's lint step, so a canary naming it fails the lint: its ignores are ${JSON.stringify(ignores)}`);
+  }
+  for (const [what, label] of nearMisses) {
+    if (J.OUR_MACHINE.test(label)) misses.push(`Could not find ${label} (${what}) a near miss: OUR_MACHINE matches it`);
+    const by = ignoredBy(unknownLabel(label));
+    if (by.length) misses.push(`Could not find actionlint's unknown-label error for ${label} (${what}) still reported: machine-rule.yml's lint step ignores it by ${JSON.stringify(by)}`);
+  }
+  for (const label of ['dazzer-checks-2-core', 'dazzer-scan-2-core']) {
+    const by = ignoredBy(conflictingLabel(label));
+    if (by.length) misses.push(`Could not find actionlint's other label error, a conflict, still reported for ${label}: machine-rule.yml's lint step ignores it by ${JSON.stringify(by)}`);
+  }
   assert.ok(!misses.length, misses.join('\n'));
 });
 

@@ -1,17 +1,18 @@
 // Proves machine-rule/ruleset.json, main-spelling.json, codeql-complete.json and
-// machine-rule/apply-ruleset.mjs (decisions 121, 177, 192): the organisation ruleset
+// machine-rule/apply-ruleset.mjs (decisions 121, 177, 192, 210): the organisation ruleset
 // machine-rule-required runs .github/workflows/machine-rule.yml, read from dazzer-io/.github by its
 // repository id at refs/heads/main, on the default branch of every repository; main-spelling-refused
 // restricts the creation of the fifteen other spellings of main in dazzer and dazzer-app; and
-// codeql-complete-required requires codeql / CodeQL complete from GitHub Actions there. Each file is
-// checked by its own check, each way it could be wrong red alone; the command's diff, write, guard
-// and readings modes are run against a fake GitHub that answers lists a page at a time, holds each
-// repository's branches, closed pull requests, branch rules and merge-group runs, and leaves each
-// default branch's own head with no run, as a bot's merge does (decision 208), so nothing here
-// reaches the network and no ruleset is written anywhere. Every failure starts "Could not find".
+// codeql-complete-required requires codeql / CodeQL complete from GitHub Actions there, written in
+// evaluate, so it blocks nothing until it is made active. Each file is checked by its own check, each
+// way it could be wrong red alone; the command's read, write and readings modes are run against a
+// fake GitHub that answers the organisation's rulesets a page at a time and dazzer-io/.github's id,
+// and nothing else, so each kept ruleset is seen standing alone, nothing here reaches the network,
+// and no ruleset is written anywhere. Every failure starts "Could not find".
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,6 +37,7 @@ const spellingFile = () => readJson('machine-rule/main-spelling.json');
 const codeqlFile = () => readJson('machine-rule/codeql-complete.json');
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const ID = 1433582766;
+const MR = 'machine-rule-required';
 const SPELLING = 'main-spelling-refused';
 const CODEQL = 'codeql-complete-required';
 const CONTEXT = 'codeql / CodeQL complete';
@@ -51,6 +53,13 @@ const SPELLINGS = Array.from({ length: 16 }, (_, m) => `refs/heads/${[...'main']
 const needKept = () => {
   need();
   for (const k of ['checkMainSpelling', 'checkCodeqlComplete', 'namesMatched']) assert.equal(typeof A[k], 'function', `Could not find apply-ruleset.mjs's ${k}, so the rulesets main-spelling-refused and codeql-complete-required are not held to their files (decision 192)`);
+};
+// A file of its own in a fresh folder under the system's temp folder, for a case that hands the
+// command a file other than the one kept here.
+const scratch = (name, text) => {
+  const path = join(mkdtempSync(join(tmpdir(), 'machine-rule-ruleset-')), name);
+  if (text !== undefined) writeFileSync(path, text);
+  return path;
 };
 
 test('ruleset.json is the rule\'s ruleset: machine-rule.yml of dazzer-io/.github at refs/heads/main, every repository\'s default branch, evaluate first', () => {
@@ -123,60 +132,18 @@ const refuses = (body) => {
     ? { status: 422, text: JSON.stringify({ message: 'Validation Failed', errors: [GITHUB_REFUSAL], documentation_url: 'https://docs.github.com/rest/orgs/rules#create-an-organization-repository-ruleset', status: '422' }) }
     : null;
 };
-// A check run as GitHub lists one (gh api repos/<o>/<r>/commits/<sha>/check-runs): its id, the commit,
-// its name, status and conclusion, and the app that posted it.
-const checkRun = (sha, over = {}) => ({ id: 5000, head_sha: sha, name: CONTEXT, status: 'completed', conclusion: 'success', app: { id: ACTIONS, slug: 'github-actions' }, ...over });
-// A made-up commit: forty hex digits from a short seed.
-const sha = (seed) => String(seed).repeat(40).slice(0, 40);
-// A closed pull request as GitHub lists one (gh api repos/<o>/<r>/pulls?state=closed): its number,
-// when it was merged (null when closed unmerged) and last updated, its base and its head commit.
-const pull = (number, head, merged_at, updated_at, base = 'main') => ({ number, state: 'closed', merged_at, updated_at, base: { ref: base }, head: { sha: head } });
-// A workflow run a merge queue started (gh api repos/<o>/<r>/actions/runs?event=merge_group): its
-// id, its event, its merge-group commit and when it was made.
-const groupRun = (id, head, created_at, event = 'merge_group') => ({ id, event, head_sha: head, head_branch: `gh-readonly-queue/main/pr-${id}-${head}`, created_at });
-// A repository whose default branch's own head is a merge by a bot, carrying no run at all, as
-// dazzer-app's a9d93a8 did (decision 208), and whose newest pull request merged into that branch,
-// #30, carries codeql / CodeQL complete passed from GitHub Actions on its head, beside a run of
-// another name. Beside it: #31, closed unmerged and updated since, and #29, merged before it, each
-// head's check failed; a branch whose name merely holds main; and no merge queue.
-const passingRepo = (seed, mainSeed, branch = 'main') => {
-  const head = sha(seed);
-  const unmerged = sha(`${seed}1`);
-  const older = sha(`${seed}2`);
-  return {
-    default_branch: branch,
-    head: sha(mainSeed),
-    branches: [branch, 'made-up-feature', 'maintenance', 'domain'],
-    pulls: [
-      pull(29, older, '2026-11-07T11:00:00Z', '2026-11-07T11:00:02Z', branch),
-      pull(30, head, '2026-11-08T11:00:00Z', '2026-11-08T11:00:03Z', branch),
-      pull(31, unmerged, null, '2026-11-08T12:00:00Z', branch),
-    ],
-    runs: {
-      [head]: [checkRun(head), checkRun(head, { id: 4000, name: 'codeql / Analyze (actions)' })],
-      [unmerged]: [checkRun(unmerged, { conclusion: 'failure' })],
-      [older]: [checkRun(older, { conclusion: 'failure' })],
-    },
-    rules: [{ type: 'deletion' }, { type: 'non_fast_forward' }],
-    groups: [],
-  };
-};
-const passingRepos = () => ({ dazzer: passingRepo('a', 'd'), 'dazzer-app': passingRepo('b', 'e') });
-// dazzer-app's newest merged head, and its default branch's own head, in passingRepos.
-const APP_HEAD = sha('b');
-const APP_MAIN = sha('e');
-// A fake GitHub holding the organisation's rulesets, dazzer-io/.github's id, and, for each repository
-// repos names, its default branch and that branch's own head, its branches, its closed pull
-// requests, the rules on its default branch, the workflow runs its merge queue started, and each
-// commit's check runs; every call kept. Each list is answered a page at a time, as GitHub answers
-// one: per_page 30 unless asked, at most 100, and page 1 unless asked. Pull requests are sorted as
-// the List pull requests page says: by created (here their number) unless sort names updated, desc
-// when sort is created or not given and asc otherwise unless direction says. write turns what a
-// write sends into what GitHub keeps, for a GitHub that keeps something else; rejects names a
-// ruleset whose write GitHub answers 422.
-function fakeGitHub({ rulesets = [], sharedId = ID, write = null, rejects = null, repos = passingRepos() } = {}) {
+// A fake GitHub holding the organisation's rulesets and dazzer-io/.github's id, every call kept, and
+// answering nothing else: any other path is a 404, kept with the rest. The rulesets are listed a
+// page at a time, as GitHub lists them: per_page 30 unless asked, at most 100, and page 1 unless
+// asked. write turns what a write sends into what GitHub keeps, for a GitHub that keeps something
+// else; rejects names a ruleset whose write GitHub answers 422; listStatus gives the status each
+// page of the list is answered with; sharedStatus is dazzer-io/.github's; unreadable holds the ids of
+// rulesets GitHub will not answer for, read alone; unreadBack holds the names of rulesets GitHub
+// will not answer for once written.
+function fakeGitHub({ rulesets = [], sharedId = ID, write = null, rejects = null, listStatus = () => 200, sharedStatus = 200, unreadable = [], unreadBack = [] } = {}) {
   const calls = [];
   const held = rulesets.map((r) => clone(r));
+  const written = new Set();
   let next = 900;
   const kept = (body) => clone(write ? write(clone(body)) : body);
   const ok = (x) => ({ status: 200, text: JSON.stringify(x) });
@@ -185,59 +152,29 @@ function fakeGitHub({ rulesets = [], sharedId = ID, write = null, rejects = null
     const at = Number(u.searchParams.get('page') ?? 1);
     return items.slice((at - 1) * per, at * per);
   };
-  const sortPulls = (u, pulls) => {
-    const sort = u.searchParams.get('sort') ?? 'created';
-    const desc = (u.searchParams.get('direction') ?? (sort === 'created' ? 'desc' : 'asc')) === 'desc';
-    const key = (x) => (sort === 'updated' ? Date.parse(x.updated_at) : x.number);
-    return [...pulls].sort((a, b) => (desc ? key(b) - key(a) : key(a) - key(b)));
-  };
   const no422 = (body) => (rejects && body?.name === rejects ? { status: 422, text: JSON.stringify({ message: 'Validation Failed', errors: ['made-up refusal'], status: '422' }) } : refuses(body));
   const request = async ({ method = 'GET', path, body }) => {
     calls.push({ method, path, body });
     const u = new URL(`https://api.github.com${path}`);
     const p = u.pathname;
     let m;
-    if (method === 'GET' && p === '/orgs/dazzer-io/rulesets') return ok(page(u, held.map((r) => ({ id: r.id, name: r.name }))));
+    if (method === 'GET' && p === '/orgs/dazzer-io/rulesets') {
+      const status = listStatus(Number(u.searchParams.get('page') ?? 1));
+      return status === 200 ? ok(page(u, held.map((r) => ({ id: r.id, name: r.name })))) : { status, text: '{}' };
+    }
     if (method === 'GET' && (m = /^\/orgs\/dazzer-io\/rulesets\/(\d+)$/.exec(p))) {
       const r = held.find((x) => String(x.id) === m[1]);
+      if (r && (unreadable.includes(r.id) || (written.has(r.id) && unreadBack.includes(r.name)))) return { status: 503, text: '{}' };
       return r ? ok(readBack(r)) : { status: 404, text: '{}' };
     }
-    if (method === 'GET' && p === '/repos/dazzer-io/.github') return ok({ id: sharedId, name: '.github', default_branch: 'main' });
-    if (method === 'GET' && (m = /^\/repos\/dazzer-io\/([^/]+)(\/.*)?$/.exec(p)) && repos[m[1]]) {
-      const h = repos[m[1]];
-      const rest = m[2] ?? '';
-      let n;
-      if (h.status) return { status: h.status, text: '{}' };
-      if (rest === '') return ok({ id: 77, name: m[1], default_branch: h.default_branch });
-      if (rest === '/branches') return ok(page(u, h.branches.map((name) => ({ name, commit: { sha: name === h.default_branch ? h.head : sha('0') }, protected: name === h.default_branch }))));
-      if ((n = /^\/branches\/(.+)$/.exec(rest))) return decodeURIComponent(n[1]) === h.default_branch ? ok({ name: h.default_branch, commit: { sha: h.head } }) : { status: 404, text: '{}' };
-      if (rest === '/pulls') {
-        if (h.pullsStatus) return { status: h.pullsStatus, text: '{}' };
-        const state = u.searchParams.get('state') ?? 'open';
-        const base = u.searchParams.get('base');
-        return ok(page(u, sortPulls(u, h.pulls.filter((x) => (state === 'all' || x.state === state) && (base === null || x.base.ref === base)))));
-      }
-      if ((n = /^\/rules\/branches\/(.+)$/.exec(rest))) return ok(page(u, decodeURIComponent(n[1]) === h.default_branch ? h.rules : []));
-      if (rest === '/actions/runs') {
-        const event = u.searchParams.get('event');
-        const runs = h.groups.filter((r) => event === null || r.event === event);
-        return ok({ total_count: runs.length, workflow_runs: page(u, runs) });
-      }
-      if ((n = /^\/commits\/([^/]+)\/check-runs$/.exec(rest))) {
-        // GitHub's page does not say whether check_name folds case, so this one folds it, and
-        // the guard must hold the name exactly itself.
-        const name = u.searchParams.get('check_name');
-        const runs = (h.runs[n[1]] ?? []).filter((c) => name === null || c.name.toLowerCase() === name.toLowerCase());
-        return ok({ total_count: runs.length, check_runs: runs });
-      }
-      return { status: 404, text: '{}' };
-    }
+    if (method === 'GET' && p === '/repos/dazzer-io/.github') return sharedStatus === 200 ? ok({ id: sharedId, name: '.github', default_branch: 'main' }) : { status: sharedStatus, text: '{}' };
     if (method === 'PUT' && (m = /^\/orgs\/dazzer-io\/rulesets\/(\d+)$/.exec(p))) {
       const at = held.findIndex((x) => String(x.id) === m[1]);
       if (at === -1) return { status: 404, text: '{}' };
       const no = no422(body);
       if (no) return no;
       held[at] = { ...kept(body), id: held[at].id };
+      written.add(held[at].id);
       return ok(readBack(held[at]));
     }
     if (method === 'POST' && p === '/orgs/dazzer-io/rulesets') {
@@ -245,6 +182,7 @@ function fakeGitHub({ rulesets = [], sharedId = ID, write = null, rejects = null
       if (no) return no;
       const r = { ...kept(body), id: next++ };
       held.push(r);
+      written.add(r.id);
       return { status: 201, text: JSON.stringify(readBack(r)) };
     }
     return { status: 404, text: '{}' };
@@ -253,22 +191,23 @@ function fakeGitHub({ rulesets = [], sharedId = ID, write = null, rejects = null
 }
 // The three rulesets the files keep, as GitHub would hold them, at ids of their own.
 const allThree = () => [{ ...fileRuleset(), id: 7 }, { ...spellingFile(), id: 10 }, { ...codeqlFile(), id: 11 }];
-async function run(argv, gh) {
+async function run(argv, gh, options = {}) {
   const out = [];
   const err = [];
-  const code = await A.main(argv, { request: gh.request, out: (l) => out.push(l), err: (l) => err.push(l) });
-  return { code, all: [...out, ...err].join('\n') };
+  const code = await A.main(argv, { request: gh.request, out: (l) => out.push(l), err: (l) => err.push(l), ...options });
+  return { code, all: [...out, ...err].join('\n'), out: out.join('\n'), err: err.join('\n') };
 }
 const writes = (gh) => gh.calls.filter((c) => c.method !== 'GET');
+const nowFile = (name) => new RegExp(`^${name} \\(\\d+\\) on dazzer-io now is the file's version, enforcement (evaluate|active)$`, 'm');
 
-test('the diff: exit 0 when every live ruleset is its file\'s, 1 naming each field when one differs or is absent, and it writes nothing', async () => {
+test('the read: exit 0 when every live ruleset is its file\'s, 1 naming each field when one differs or is absent, and it writes nothing', async () => {
   need();
   const file = fileRuleset();
   const misses = [];
   const same = fakeGitHub({ rulesets: [...allThree(), { id: 8, name: 'made-up-other', rules: [] }] });
   const s = await run([], same);
   if (s.code !== 0 || !/machine-rule-required \(7\) on dazzer-io is the file's version, enforcement evaluate/.test(s.all)) misses.push(`Could not find the matching ruleset read as the file's version, exit 0: ${s.code} ${s.all}`);
-  for (const [name, id] of [[SPELLING, 10], [CODEQL, 11]]) if (!s.all.includes(`${name} (${id}) on dazzer-io is the file's version, enforcement active`)) misses.push(`Could not find ${name} read as its file's version: ${s.all}`);
+  for (const [name, id, r] of [[SPELLING, 10, spellingFile()], [CODEQL, 11, codeqlFile()]]) if (!s.all.includes(`${name} (${id}) on dazzer-io is the file's version, enforcement ${r.enforcement}`)) misses.push(`Could not find ${name} read as its file's version: ${s.all}`);
   const drifted = clone(file);
   drifted.rules[0].parameters.workflows[0].ref = 'refs/heads/made-up-branch';
   const d = fakeGitHub({ rulesets: [{ ...drifted, id: 7 }, ...allThree().slice(1)] });
@@ -277,14 +216,11 @@ test('the diff: exit 0 when every live ruleset is its file\'s, 1 naming each fie
   const absent = fakeGitHub({ rulesets: [{ id: 8, name: 'made-up-other' }] });
   const ab = await run([], absent);
   if (ab.code !== 1 || !/is not on dazzer-io: --apply would create it/.test(ab.all)) misses.push(`Could not find an absent ruleset said as absent, exit 1: ${ab.code} ${ab.all}`);
-  for (const gh of [same, d, absent]) if (writes(gh).length) misses.push(`Could not find the diff writing nothing: ${JSON.stringify(writes(gh))}`);
-  const twice = fakeGitHub({ rulesets: [{ ...file, id: 7 }, { ...file, id: 9 }] });
-  const tw = await run([], twice);
-  if (tw.code !== 2 || !/holds 2 rulesets named machine-rule-required/.test(tw.all)) misses.push(`Could not find two rulesets of the name read as unread, exit 2: ${tw.code} ${tw.all}`);
+  for (const gh of [same, d, absent]) if (writes(gh).length) misses.push(`Could not find the read writing nothing: ${JSON.stringify(writes(gh))}`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('--apply writes each file\'s version to the ruleset of its name alone: a PUT to its own id, a POST when absent, refused when the repository id differs', async () => {
+test('--apply writes each file\'s version to the ruleset of its name alone, a PUT to its own id or a POST when absent, and reads each back by that id', async () => {
   need();
   const file = fileRuleset();
   const spelling = spellingFile();
@@ -295,7 +231,7 @@ test('--apply writes each file\'s version to the ruleset of its name alone: a PU
   const put = await run(['--apply'], there);
   const w = writes(there);
   const byName = (ws, name) => ws.filter((c) => c.body?.name === name);
-  const mr = byName(w, 'machine-rule-required');
+  const mr = byName(w, MR);
   if (put.code !== 0 || mr.length !== 1 || mr[0].method !== 'PUT' || mr[0].path !== '/orgs/dazzer-io/rulesets/7' || JSON.stringify(mr[0].body) !== JSON.stringify(file)) misses.push(`Could not find --apply writing ruleset.json as one PUT to ruleset 7 alone: ${put.code} ${put.all} ${JSON.stringify(w)}`);
   const sp = byName(w, SPELLING);
   if (sp.length !== 1 || sp[0].method !== 'PUT' || sp[0].path !== '/orgs/dazzer-io/rulesets/10' || JSON.stringify(sp[0].body) !== JSON.stringify(spelling)) misses.push(`Could not find --apply writing main-spelling.json as one PUT to ruleset 10, its own id: ${JSON.stringify(sp)}`);
@@ -304,40 +240,36 @@ test('--apply writes each file\'s version to the ruleset of its name alone: a PU
   if (w.length !== 3) misses.push(`Could not find --apply making three writes, one a file: ${JSON.stringify(w.map((c) => `${c.method} ${c.path} ${c.body?.name}`))}`);
   if (w.some((c) => /\/rulesets\/8$/.test(c.path))) misses.push('Could not find the other ruleset left unwritten');
   if (JSON.stringify(there.held.find((r) => r.id === 8)) !== JSON.stringify(other)) misses.push('Could not find the other ruleset left as it was');
-  for (const name of ['machine-rule-required', SPELLING, CODEQL]) if (!new RegExp(`${name} \\(\\d+\\) on dazzer-io now is the file's version`).test(put.all)) misses.push(`Could not find --apply saying ${name} as read back is its file's version: ${put.all}`);
+  for (const name of [MR, SPELLING, CODEQL]) if (!nowFile(name).test(put.all)) misses.push(`Could not find --apply saying ${name} as read back is its file's version: ${put.all}`);
+  // Each written one is read back by its own id: 7 and 10 as they were, the created one by the id
+  // GitHub's answer gave it.
+  const backs = there.calls.filter((c) => c.method === 'GET' && /^\/orgs\/dazzer-io\/rulesets\/\d+$/.test(c.path)).map((c) => c.path);
+  for (const id of [7, 10, 900]) if (backs.filter((p) => p === `/orgs/dazzer-io/rulesets/${id}`).length < (id === 900 ? 1 : 2)) misses.push(`Could not find ruleset ${id} read by its own id ${id === 900 ? 'after its creation' : 'before and after its write'}: ${JSON.stringify(backs)}`);
   const none = fakeGitHub({ rulesets: [other] });
   const post = await run(['--apply'], none);
   const p = writes(none);
-  if (post.code !== 0 || p.length !== 3 || p.some((c) => c.method !== 'POST' || c.path !== '/orgs/dazzer-io/rulesets') || JSON.stringify(p.map((c) => c.body?.name)) !== JSON.stringify(['machine-rule-required', SPELLING, CODEQL])) misses.push(`Could not find --apply creating each absent ruleset with one POST of its own: ${post.code} ${post.all} ${JSON.stringify(p)}`);
-  const moved = fakeGitHub({ rulesets: [{ ...file, id: 7 }], sharedId: 42 });
-  const mv = await run(['--apply'], moved);
-  if (mv.code !== 2 || writes(moved).length || !/repository id is 42 on GitHub, not 1433582766/.test(mv.all)) misses.push(`Could not find --apply refusing, writing nothing, when dazzer-io/.github's live id is not the file's: ${mv.code} ${mv.all}`);
-  const ignored = fakeGitHub({ rulesets: allThree(), write: (b) => (b.name === 'machine-rule-required' ? { ...b, enforcement: 'disabled' } : b) });
-  const ig = await run(['--apply'], ignored);
-  if (ig.code !== 2 || !/machine-rule-required as read back still differs from the file/.test(ig.all)) misses.push(`Could not find --apply reading the ruleset back and refusing when it still differs: ${ig.code} ${ig.all}`);
-  const spellingIgnored = fakeGitHub({ rulesets: allThree(), write: (b) => (b.name === SPELLING ? { ...b, rules: [] } : b) });
-  const si = await run(['--apply'], spellingIgnored);
-  if (si.code !== 2 || !/main-spelling-refused as read back still differs from the file/.test(si.all)) misses.push(`Could not find --apply reading main-spelling-refused back and refusing when GitHub kept it without its rule: ${si.code} ${si.all}`);
-  const twice = fakeGitHub({ rulesets: [...allThree(), { ...spelling, id: 12 }] });
-  const tw = await run(['--apply'], twice);
-  if (tw.code !== 2 || writes(twice).length || !/holds 2 rulesets named main-spelling-refused/.test(tw.all)) misses.push(`Could not find two rulesets named main-spelling-refused read as unread, nothing written: ${tw.code} ${tw.all}`);
+  if (post.code !== 0 || p.length !== 3 || p.some((c) => c.method !== 'POST' || c.path !== '/orgs/dazzer-io/rulesets') || JSON.stringify(p.map((c) => c.body?.name)) !== JSON.stringify([MR, SPELLING, CODEQL])) misses.push(`Could not find --apply creating each absent ruleset with one POST of its own: ${post.code} ${post.all} ${JSON.stringify(p)}`);
+  // A GitHub that keeps something else than was written: that ruleset is said as differing, exit 1,
+  // and the others are read back as their files'.
+  for (const [name, change] of [[MR, (b) => ({ ...b, enforcement: 'disabled' })], [SPELLING, (b) => ({ ...b, rules: [] })]]) {
+    const gh = fakeGitHub({ rulesets: allThree(), write: (b) => (b.name === name ? change(b) : b) });
+    const r = await run(['--apply'], gh);
+    if (r.code !== 1 || !new RegExp(`REFUSED: ${name} as read back still differs from the file`).test(r.all)) misses.push(`Could not find --apply reading ${name} back and saying it still differs, exit 1: ${r.code} ${r.all}`);
+    for (const n of [MR, SPELLING, CODEQL].filter((x) => x !== name)) if (!nowFile(n).test(r.all)) misses.push(`Could not find ${n} read back as its file's though ${name} differs: ${r.all}`);
+  }
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('a ruleset file that fails checkRuleset is never written, and the modes are one at a time', async () => {
+test('a ruleset.json that fails checkRuleset is never written, the others are, and the modes are one at a time', async () => {
   need();
   const misses = [];
   const gh = fakeGitHub({ rulesets: [] });
-  const out = [];
-  const err = [];
   const bad = clone(fileRuleset());
   bad.conditions.repository_name.include = ['dazzer'];
-  const { mkdtempSync, writeFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const dir = mkdtempSync(join(tmpdir(), 'machine-rule-ruleset-'));
-  writeFileSync(join(dir, 'ruleset.json'), JSON.stringify(bad));
-  const code = await A.main(['--apply'], { request: gh.request, out: (l) => out.push(l), err: (l) => err.push(l), file: join(dir, 'ruleset.json') });
-  if (code !== 2 || gh.calls.length || !/is not the rule's ruleset: .*narrower than every repository/.test(err.join('\n'))) misses.push(`Could not find a narrowed ruleset file refused before any call: ${code} ${err.join('\n')} ${JSON.stringify(gh.calls)}`);
+  const r = await run(['--apply'], gh, { file: scratch('ruleset.json', JSON.stringify(bad)) });
+  const names = writes(gh).map((c) => c.body?.name);
+  if (r.code !== 1 || names.includes(MR) || !/is not the rule's ruleset: .*narrower than every repository/.test(r.err)) misses.push(`Could not find a narrowed ruleset file refused and left unwritten, exit 1: ${r.code} ${r.all} ${JSON.stringify(names)}`);
+  if (JSON.stringify(names) !== JSON.stringify([SPELLING, CODEQL])) misses.push(`Could not find the other two written though ruleset.json is refused: ${JSON.stringify(names)}`);
   const both = await run(['--apply', '--readings'], fakeGitHub());
   if (both.code !== 2 || !/two runs/.test(both.all)) misses.push(`Could not find --apply with --readings refused: ${both.code} ${both.all}`);
   const cls = await run(['--readings', '--class', 'made-up'], fakeGitHub());
@@ -384,7 +316,7 @@ test('ruleset.json names every repository in a shape GitHub accepts: ~ALL, nothi
   assert.notEqual(repo?.protected, true, `Could not find the repository condition free of protected: true, which GitHub refuses beside ~ALL with 422 (decision 187): ${JSON.stringify(repo)}`);
 });
 
-test('checkRuleset refuses protected: true beside ~ALL in GitHub\'s own words, and --apply then calls nothing', async () => {
+test('checkRuleset refuses protected: true beside ~ALL in GitHub\'s own words, and --apply then never writes machine-rule-required', async () => {
   need();
   const misses = [];
   const bad = clone(fileRuleset());
@@ -397,14 +329,9 @@ test('checkRuleset refuses protected: true beside ~ALL in GitHub\'s own words, a
     if (protectedIs !== undefined) ok.conditions.repository_name.protected = protectedIs;
     if (A.checkRuleset(ok).length) misses.push(`Could not find ~ALL with ${name} passing checkRuleset: ${JSON.stringify(A.checkRuleset(ok))}`);
   }
-  const { mkdtempSync, writeFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const dir = mkdtempSync(join(tmpdir(), 'machine-rule-ruleset-'));
-  writeFileSync(join(dir, 'ruleset.json'), JSON.stringify(bad));
   const gh = fakeGitHub({ rulesets: [] });
-  const err = [];
-  const code = await A.main(['--apply'], { request: gh.request, out: () => {}, err: (l) => err.push(l), file: join(dir, 'ruleset.json') });
-  if (code !== 2 || gh.calls.length || !err.join('\n').includes(GITHUB_REFUSAL)) misses.push(`Could not find a ruleset file with protected: true beside ~ALL refused before any call to GitHub, in GitHub's words: ${code} ${err.join('\n')} ${JSON.stringify(gh.calls)}`);
+  const r = await run(['--apply'], gh, { file: scratch('ruleset.json', JSON.stringify(bad)) });
+  if (r.code !== 1 || writes(gh).some((c) => c.body?.name === MR) || !r.err.includes(GITHUB_REFUSAL)) misses.push(`Could not find a ruleset file with protected: true beside ~ALL refused in GitHub's words and never sent to GitHub, exit 1: ${r.code} ${r.all} ${JSON.stringify(writes(gh).map((c) => c.body?.name))}`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 
@@ -435,14 +362,15 @@ test('the read-back counts a repository condition GitHub reads as protected: fal
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-// ================================================================ the two rules on main (decisions 188, 192, 195)
+// ================================================================ the two rules on main (decisions 188, 192, 195, 210)
 // main-spelling-refused restricts creating a branch spelled main in other letters in dazzer and
-// dazzer-app, and codeql-complete-required requires the shared scan's codeql / CodeQL complete from
-// GitHub Actions there before a merge. Both are kept as files beside ruleset.json and written by
-// the same --apply. GitHub's rulesets pages name fnmatch with File::FNM_PATHNAME and say nothing
-// of case, so the patterns hold either way: matched case-sensitively they take the fifteen other
-// spellings and never main; folded, they take main too, and creation alone is restricted, which
-// never touches a push to a branch that exists.
+// dazzer-app, and codeql-complete-required, written in evaluate, reads the shared scan's codeql /
+// CodeQL complete from GitHub Actions there before a merge. Both are kept as files beside
+// ruleset.json and written by the same --apply. GitHub's rulesets pages name fnmatch with
+// File::FNM_PATHNAME and say nothing of case, so the patterns hold either way among the sixteen
+// ASCII spellings: matched case-sensitively they take the fifteen other spellings and never main;
+// folded, they take main too, and creation alone is restricted, which never touches a push to a
+// branch that exists.
 
 // fnmatch of literal characters and bracket classes alone, as a regular expression: this test's
 // own reading, apart from apply-ruleset.mjs's, case-sensitive unless folded.
@@ -574,21 +502,22 @@ test('checkMainSpelling refuses a bypass, another repository, an exclude, a rule
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('codeql-complete.json is codeql-complete-required: branches, active, no bypass, the two repositories\' default branch, codeql / CodeQL complete from integration 15368, not on create, strict off', () => {
+test('codeql-complete.json is codeql-complete-required: branches, evaluate, no bypass, the two repositories\' default branch, codeql / CodeQL complete from integration 15368, not on create, strict off', () => {
   needKept();
   const r = codeqlFile();
   assert.deepEqual(A.checkCodeqlComplete(r), [], `Could not find machine-rule/codeql-complete.json passing checkCodeqlComplete: ${JSON.stringify(A.checkCodeqlComplete(r))}`);
+  assert.equal(r.enforcement, 'evaluate', `Could not find codeql-complete-required written in evaluate, so it blocks nothing and records each merge it would have refused until it is made active (decision 210): ${JSON.stringify(r.enforcement)}`);
   assert.deepEqual(r, {
     name: CODEQL,
     target: 'branch',
-    enforcement: 'active',
+    enforcement: 'evaluate',
     bypass_actors: [],
     conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] }, repository_name: { include: REPOSITORIES, exclude: [], protected: true } },
     rules: [{ type: 'required_status_checks', parameters: { do_not_enforce_on_create: true, required_status_checks: [{ context: CONTEXT, integration_id: ACTIONS }], strict_required_status_checks_policy: false } }],
-  }, `Could not find codeql-complete.json holding exactly decision 192's ruleset: ${JSON.stringify(r)}`);
+  }, `Could not find codeql-complete.json holding exactly decisions 192's and 210's ruleset: ${JSON.stringify(r)}`);
 });
 
-test('checkCodeqlComplete refuses another context, another integration, a bypass, and each way it could require less or elsewhere, each red alone', () => {
+test('checkCodeqlComplete accepts evaluate or active and nothing else, and refuses another context, another integration, a bypass, and each way it could require less or elsewhere, each red alone', () => {
   needKept();
   const base = codeqlFile();
   const p = (r) => r.rules[0].parameters;
@@ -610,7 +539,8 @@ test('checkCodeqlComplete refuses another context, another integration, a bypass
     ['a ref exclude', (r) => { r.conditions.ref_name.exclude = ['refs/heads/main']; }, /not the default branch alone/],
     ['a rule of another type', (r) => { r.rules = [{ type: 'creation' }]; }, /a rule of type "creation", not required_status_checks/],
     ['a second rule beside it', (r) => { r.rules.push({ type: 'deletion' }); }, /holds 2 rules, not one required_status_checks rule/],
-    ['evaluate for active', (r) => { r.enforcement = 'evaluate'; }, /not active/],
+    ['enforcement disabled', (r) => { r.enforcement = 'disabled'; }, /its enforcement is "disabled", neither evaluate nor active/],
+    ['no enforcement', (r) => { delete r.enforcement; }, /its enforcement is undefined, neither evaluate nor active/],
     ['another name', (r) => { r.name = 'made-up'; }, /not codeql-complete-required/],
     ['a tag target', (r) => { r.target = 'tag'; }, /not branch/],
   ];
@@ -621,198 +551,129 @@ test('checkCodeqlComplete refuses another context, another integration, a bypass
     const problems = A.checkCodeqlComplete(r);
     if (!problems.some((x) => says.test(x))) misses.push(`Could not find checkCodeqlComplete refusing ${name}: ${JSON.stringify(problems)}`);
   }
+  // Evaluate, as written, and active, as r-3.27 makes it once its readings show no merge it would have refused.
+  for (const enforcement of ['evaluate', 'active']) {
+    const r = clone(base);
+    r.enforcement = enforcement;
+    if (A.checkCodeqlComplete(r).length) misses.push(`Could not find codeql-complete-required in ${enforcement} passing its check: ${JSON.stringify(A.checkCodeqlComplete(r))}`);
+  }
   assert.ok(!misses.length, misses.join('\n'));
 });
 
 // What a run without --apply says --apply would do, read from its closing line: each ruleset it would
-// write, in order, with create, update or unchanged, and the one it would hold back, if any.
-const planOf = (all) => {
-  const m = /^--apply would write (.+?)(?:, and hold back (\S+), its guard refusing)?$/m.exec(all);
+// write, in order, with create, update or unchanged, and each it would hold back.
+const saidPlan = (all) => {
+  const m = /^--apply would write (.+?)(?:, and hold back (.+))?$/m.exec(all);
   if (!m) return null;
-  return { write: m[1].split(', ').map((x) => { const y = /^(\S+) \((create|update|unchanged)\)$/.exec(x); return y ? [y[1], y[2]] : x; }), held: m[2] ?? null };
-};
-const MR = 'machine-rule-required';
-// passingRepos with dazzer-app's newest merged head carrying a failed check.
-const failingApp = () => {
-  const repos = passingRepos();
-  repos['dazzer-app'].runs[APP_HEAD] = [checkRun(APP_HEAD, { conclusion: 'failure' })];
-  return repos;
-};
-
-test('codeql-complete-required\'s guard reads the head of the newest pull request merged into each default branch, never the branch\'s own head', async () => {
-  needKept();
-  const misses = [];
-  // passingRepos: each default branch's own head carries no run, as a bot's merge leaves it; #31,
-  // closed unmerged and updated last, and #29, merged before #30, each carry a failed check.
-  const gh = fakeGitHub({ rulesets: [] });
-  const r = await run(['--apply'], gh);
-  const names = writes(gh).map((c) => c.body?.name);
-  if (r.code !== 0 || !names.includes(CODEQL)) misses.push(`Could not find --apply writing codeql-complete-required once each newest merged pull request's head carries the check passed, though each default branch's own head carries no run: ${r.code} ${r.all} ${JSON.stringify(names)}`);
-  for (const [repo, seed] of [['dazzer', 'a'], ['dazzer-app', 'b']]) if (!new RegExp(`dazzer-io/${repo}'s newest pull request merged into main, #30, head ${seed}{40} carries codeql / CodeQL complete passed from integration 15368`).test(r.all)) misses.push(`Could not find the guard saying it read ${repo}'s newest merged pull request, #30, at its head: ${r.all}`);
-  const ownHeads = gh.calls.filter((c) => [sha('d'), APP_MAIN].some((h) => c.path.includes(h)) || /\/branches\/main$/.test(c.path));
-  if (ownHeads.length) misses.push(`Could not find the guard leaving each default branch's own head unread: ${JSON.stringify(ownHeads.map((c) => c.path))}`);
-  for (const repo of ['dazzer', 'dazzer-app']) if (!gh.calls.some((c) => c.path.startsWith(`/repos/dazzer-io/${repo}/pulls?`) && /[?&]state=closed(&|$)/.test(c.path) && /[?&]base=main(&|$)/.test(c.path))) misses.push(`Could not find the guard listing ${repo}'s closed pull requests into main: ${JSON.stringify(gh.calls.map((c) => c.path))}`);
-  // The read reads the same commits.
-  const rd = await run([], fakeGitHub({ rulesets: [] }));
-  if (!/its guard reads: dazzer-io\/dazzer-app's newest pull request merged into main, #30, head b{40} carries codeql \/ CodeQL complete passed from integration 15368/.test(rd.all)) misses.push(`Could not find the read saying what the guard read: ${rd.all}`);
-  // The default branch is read whatever it is named, and a pull request merged into another branch,
-  // later, is not its.
-  const trunk = { dazzer: passingRepo('a', 'd'), 'dazzer-app': passingRepo('c', 'e', 'trunk') };
-  trunk['dazzer-app'].pulls.push(pull(40, sha('c3'), '2026-11-08T11:30:00Z', '2026-11-08T11:30:02Z', 'made-up-release'));
-  trunk['dazzer-app'].runs[sha('c3')] = [checkRun(sha('c3'), { conclusion: 'failure' })];
-  const t = fakeGitHub({ rulesets: [], repos: trunk });
-  const tr = await run(['--apply'], t);
-  if (tr.code !== 0 || !/dazzer-io\/dazzer-app's newest pull request merged into trunk, #30, head c{40} carries codeql \/ CodeQL complete passed/.test(tr.all) || !t.calls.some((c) => c.path.startsWith('/repos/dazzer-io/dazzer-app/pulls?') && /[?&]base=trunk(&|$)/.test(c.path))) misses.push(`Could not find the guard reading the newest pull request merged into dazzer-app's default branch trunk, and no other branch's: ${tr.code} ${tr.all}`);
-  // The newest merged pull request is found on a later page, past a full page of pull requests
-  // closed unmerged and updated since.
-  const many = passingRepos();
-  for (let i = 0; i < 100; i++) many['dazzer-app'].pulls.push(pull(100 + i, sha(`f${i % 10}`), null, `2026-11-08T13:${String(i % 60).padStart(2, '0')}:${String(Math.floor(i / 60)).padStart(2, '0')}Z`));
-  const mg = fakeGitHub({ rulesets: [], repos: many });
-  const mr = await run(['--apply'], mg);
-  if (mr.code !== 0 || !/dazzer-io\/dazzer-app's newest pull request merged into main, #30, head b{40} carries/.test(mr.all)) misses.push(`Could not find the guard reading past a full first page of closed pull requests to the newest merged one: ${mr.code} ${mr.all}`);
-  assert.ok(!misses.length, misses.join('\n'));
-});
-
-test('the guard holds codeql-complete-required back alone, saying why and what would pass it: no run, a failed, unfinished or other-app run, a newer run failed, a run on another commit', async () => {
-  needKept();
-  const misses = [];
-  const heldFor = async (label, change, says, repo = 'dazzer-app') => {
-    const repos = passingRepos();
-    change(repos[repo], repo === 'dazzer-app' ? APP_HEAD : sha('a'));
-    const gh = fakeGitHub({ rulesets: [], repos });
-    const r = await run(['--apply'], gh);
-    const names = writes(gh).map((c) => c.body?.name);
-    if (r.code !== 1 || JSON.stringify(names) !== JSON.stringify([MR, SPELLING]) || !says.test(r.all) || !/REFUSED: codeql-complete-required was not written/.test(r.all) || !/it passes once/.test(r.all)) misses.push(`Could not find --apply holding codeql-complete-required back alone when ${label}, writing the other two, exit 1, saying ${says} and what would pass it: ${r.code} ${r.all} ${JSON.stringify(names)}`);
+  return {
+    write: m[1] === 'nothing' ? [] : m[1].split(', ').map((x) => { const y = /^(\S+) \((create|update|unchanged)\)$/.exec(x); return y ? [y[1], y[2]] : [x, null]; }),
+    held: m[2] ? m[2].split(', ') : [],
   };
-  const at = "dazzer-io/dazzer-app's newest pull request merged into main, #30, head b{40}";
-  await heldFor('the head carries no such check', (h, s) => { h.runs[s] = [checkRun(s, { name: 'codeql / Analyze (actions)' })]; }, new RegExp(`${at} carries no check run named codeql / CodeQL complete`));
-  await heldFor('the check failed', (h, s) => { h.runs[s] = [checkRun(s, { conclusion: 'failure' })]; }, new RegExp(`${at}: its latest codeql / CodeQL complete from integration 15368 concluded failure, not success`));
-  await heldFor('the check was skipped', (h, s) => { h.runs[s] = [checkRun(s, { conclusion: 'skipped' })]; }, /concluded skipped, not success/);
-  await heldFor('the check is still running', (h, s) => { h.runs[s] = [checkRun(s, { status: 'in_progress', conclusion: null })]; }, /is in_progress, not completed/);
-  await heldFor('the check passed from another app alone', (h, s) => { h.runs[s] = [checkRun(s, { app: { id: 57789, slug: 'made-up-app' } })]; }, /carries codeql \/ CodeQL complete only from integration 57789 \(made-up-app\), not from GitHub Actions \(integration 15368\)/);
-  // The newer run is listed last, so a guard taking the first run listed passes it.
-  await heldFor('a newer run failed after one passed', (h, s) => { h.runs[s] = [checkRun(s, { id: 5000 }), checkRun(s, { id: 6000, conclusion: 'failure' })]; }, /concluded failure, not success/);
-  // GitHub answers a run on another commit under this one: it counts for nothing.
-  await heldFor('the one passing run is on another commit', (h, s) => { h.runs[s] = [checkRun(sha('c'))]; }, new RegExp(`${at} carries no check run named codeql / CodeQL complete`));
-  // The fake's check_name folds case, as GitHub's page does not say it does not; the name is held exactly.
-  await heldFor('the one passing run is named in other letters', (h, s) => { h.runs[s] = [checkRun(s, { name: 'CodeQL / CodeQL Complete' })]; }, new RegExp(`${at} carries no check run named codeql / CodeQL complete`));
-  await heldFor('another app passes beside a failure from GitHub Actions', (h, s) => { h.runs[s] = [checkRun(s, { conclusion: 'failure' }), checkRun(s, { id: 7000, app: { id: 57789, slug: 'made-up-app' } })]; }, /concluded failure, not success/);
-  await heldFor('no pull request has been merged into main', (h) => { h.pulls = h.pulls.filter((x) => !x.merged_at); }, /dazzer-io\/dazzer-app has no pull request merged into main/);
-  await heldFor('dazzer\'s check failed', (h, s) => { h.runs[s] = [checkRun(s, { conclusion: 'failure' })]; }, /dazzer-io\/dazzer's newest pull request merged into main, #30, head a{40}: its latest .* concluded failure/, 'dazzer');
-  // A newer run that passed after one failed passes: the check was run again.
-  const again = passingRepos();
-  again['dazzer-app'].runs[APP_HEAD] = [checkRun(APP_HEAD, { id: 5000, conclusion: 'failure' }), checkRun(APP_HEAD, { id: 6000 })];
-  const ag = fakeGitHub({ rulesets: [], repos: again });
-  const a = await run(['--apply'], ag);
-  if (a.code !== 0 || !writes(ag).some((c) => c.body?.name === CODEQL)) misses.push(`Could not find a newer run passing after one failed letting codeql-complete-required be written: ${a.code} ${a.all}`);
-  assert.ok(!misses.length, misses.join('\n'));
-});
+};
+// The rulesets a run named as held back, from its lines: REFUSED or UNREAD, then the name.
+const heldNamed = (all, verb) => [...all.matchAll(new RegExp(`^(?:REFUSED|UNREAD): (\\S+) ${verb} held back`, 'gm'))].map((m) => m[1]);
 
-test('the guard runs only when codeql-complete-required would be created or changed, in the read and --apply alike, and the read says exactly what --apply then does', async () => {
+test('each kept ruleset stands alone: a refusal of one holds back that one alone and names it, the others are written and read back, and the read says exactly what --apply does', async () => {
   needKept();
   const misses = [];
-  const strict = () => { const c = clone(codeqlFile()); c.rules[0].parameters.strict_required_status_checks_policy = true; return c; };
+  // machine-rule-required its file's version, main-spelling-refused absent, codeql-complete-required
+  // live as active, which its file is not: unchanged, create and update.
+  const live = () => [{ ...fileRuleset(), id: 7 }, { ...codeqlFile(), id: 11, enforcement: 'active' }];
+  const plan = [[MR, 'unchanged'], [SPELLING, 'create'], [CODEQL, 'update']];
+  const badSpelling = clone(spellingFile());
+  badSpelling.conditions.ref_name.exclude = ['refs/heads/MAIN'];
+  const badRule = clone(fileRuleset());
+  badRule.conditions.repository_name.include = ['dazzer'];
   const scenarios = [
-    ['every ruleset absent, the guard passing', () => [], passingRepos, { write: [[MR, 'create'], [SPELLING, 'create'], [CODEQL, 'create']], held: null }],
-    ['every ruleset absent, the guard refusing', () => [], failingApp, { write: [[MR, 'create'], [SPELLING, 'create']], held: CODEQL }],
-    ['codeql-complete-required differing, the guard refusing', () => [{ ...fileRuleset(), id: 7 }, { ...spellingFile(), id: 10, enforcement: 'evaluate' }, { ...strict(), id: 11 }], failingApp, { write: [[MR, 'unchanged'], [SPELLING, 'update']], held: CODEQL }],
-    // The next change to machine-rule-required, codeql-complete-required live as its file and the
-    // newest merged head failing: the guard is not read, and every ruleset is written.
-    ['codeql-complete-required its file\'s version, the guard refusing', () => [{ ...fileRuleset(), id: 7, enforcement: 'active' }, ...allThree().slice(1)], failingApp, { write: [[MR, 'update'], [SPELLING, 'unchanged'], [CODEQL, 'unchanged']], held: null }],
+    ['main-spelling.json fails its check', SPELLING, () => ({ files: { [SPELLING]: scratch('main-spelling.json', JSON.stringify(badSpelling)) } }), {}, /^REFUSED: main-spelling-refused (?:would be|was) held back[^\n]*: \S+main-spelling\.json is not the ruleset main-spelling-refused: [^\n]*excludes/m],
+    ['codeql-complete.json is not there to read', CODEQL, () => ({ files: { [CODEQL]: scratch('codeql-complete.json') } }), {}, /^REFUSED: codeql-complete-required (?:would be|was) held back[^\n]*: \S+codeql-complete\.json could not be read as JSON/m],
+    ['codeql-complete.json is not JSON', CODEQL, () => ({ files: { [CODEQL]: scratch('codeql-complete.json', '{ "name": ') } }), {}, /^REFUSED: codeql-complete-required (?:would be|was) held back[^\n]*: \S+codeql-complete\.json could not be read as JSON/m],
+    ['ruleset.json fails its check', MR, () => ({ file: scratch('ruleset.json', JSON.stringify(badRule)) }), {}, /^REFUSED: machine-rule-required (?:would be|was) held back[^\n]*: \S+ruleset\.json is not the rule's ruleset: [^\n]*narrower than every repository/m],
+    ['dazzer-io/.github\'s live id is not the one ruleset.json names', MR, () => ({}), { sharedId: 42 }, /^REFUSED: machine-rule-required (?:would be|was) held back[^\n]*: dazzer-io\/\.github's repository id is 42 on GitHub, not 1433582766/m],
+    ['dazzer-io/.github cannot be read', MR, () => ({}), { sharedStatus: 503 }, /^UNREAD: machine-rule-required (?:would be|was) held back[^\n]*: could not read dazzer-io\/\.github: GitHub answered 503/m],
+    ['two live rulesets are named main-spelling-refused', SPELLING, () => ({}), { extra: [{ ...spellingFile(), id: 10 }, { ...spellingFile(), id: 12 }] }, /^REFUSED: main-spelling-refused (?:would be|was) held back[^\n]*: dazzer-io holds 2 rulesets named main-spelling-refused \(10, 12\)/m],
+    ['two live rulesets are named codeql-complete-required', CODEQL, () => ({}), { extra: [{ ...codeqlFile(), id: 13 }] }, /^REFUSED: codeql-complete-required (?:would be|was) held back[^\n]*: dazzer-io holds 2 rulesets named codeql-complete-required \(11, 13\)/m],
+    ['codeql-complete-required cannot be read by its id', CODEQL, () => ({}), { unreadable: [11] }, /^UNREAD: codeql-complete-required (?:would be|was) held back[^\n]*: could not read the ruleset codeql-complete-required \(11\): GitHub answered 503/m],
   ];
-  for (const [label, rulesets, repos, want] of scenarios) {
-    const readGh = fakeGitHub({ rulesets: rulesets(), repos: repos() });
-    const d = await run([], readGh);
-    const said = planOf(d.all);
-    if (JSON.stringify(said) !== JSON.stringify(want)) misses.push(`Could not find the read saying what --apply would do when ${label}: ${JSON.stringify(said)} for ${JSON.stringify(want)}\n${d.all}`);
-    if (d.code !== 1 || writes(readGh).length) misses.push(`Could not find the read exiting 1, writing nothing, when ${label}: ${d.code} ${JSON.stringify(writes(readGh))}`);
-    const applyGh = fakeGitHub({ rulesets: rulesets(), repos: repos() });
-    const a = await run(['--apply'], applyGh);
+  for (const [label, name, options, gitHub, says] of scenarios) {
+    const { extra = [], ...rest } = gitHub;
+    const fake = () => fakeGitHub({ rulesets: [...live(), ...extra], ...rest });
+    const opts = options();
+    const others = plan.filter(([n]) => n !== name);
+    const readGh = fake();
+    const d = await run([], readGh, opts);
+    const said = saidPlan(d.out);
+    if (JSON.stringify(said) !== JSON.stringify({ write: others, held: [name] })) misses.push(`Could not find the read saying --apply would write the others and hold back ${name} alone when ${label}: ${JSON.stringify(said)}\n${d.all}`);
+    if (d.code !== 1 || writes(readGh).length || !says.test(d.all) || JSON.stringify(heldNamed(d.all, 'would be')) !== JSON.stringify([name])) misses.push(`Could not find the read naming ${name} alone as held back and why, writing nothing, exit 1, when ${label}: ${d.code} ${d.all}`);
+    const applyGh = fake();
+    const a = await run(['--apply'], applyGh, opts);
     const did = writes(applyGh).map((c) => [c.body?.name, c.method]);
-    const expected = want.write.map(([n, act]) => [n, act === 'create' ? 'POST' : 'PUT']);
-    if (JSON.stringify(did) !== JSON.stringify(expected)) misses.push(`Could not find --apply doing what the read said when ${label}: ${JSON.stringify(did)} for ${JSON.stringify(expected)}\n${a.all}`);
-    if (a.code !== (want.held ? 1 : 0)) misses.push(`Could not find --apply exiting ${want.held ? 1 : 0} when ${label}: ${a.code} ${a.all}`);
-    const reads = want.held !== null || want.write.some(([n, act]) => n === CODEQL && act !== 'unchanged');
-    for (const [mode, gh] of [['the read', readGh], ['--apply', applyGh]]) {
-      const guarded = gh.calls.some((c) => /^\/repos\/dazzer-io\/[^/]+\/pulls\?/.test(c.path));
-      if (guarded !== reads) misses.push(`Could not find ${mode} ${reads ? 'reading' : 'leaving unread'} the guard when ${label}: ${JSON.stringify(gh.calls.map((c) => c.path))}`);
-    }
-    if (want.held) {
-      if (!/its guard refuses: dazzer-io\/dazzer-app's newest pull request merged into main, #30, head b{40}: its latest codeql \/ CodeQL complete from integration 15368 concluded failure, not success/.test(d.all) || !/it passes once/.test(d.all)) misses.push(`Could not find the read saying why the guard refuses and what would pass it when ${label}: ${d.all}`);
-      for (const n of [MR, SPELLING]) if (!new RegExp(`${n} \\(\\d+\\) on dazzer-io now is the file's version`).test(a.all)) misses.push(`Could not find --apply writing and reading back ${n} though the guard refused when ${label}: ${a.all}`);
-    }
+    const expected = others.map(([n, act]) => [n, act === 'create' ? 'POST' : 'PUT']);
+    if (JSON.stringify(did) !== JSON.stringify(expected)) misses.push(`Could not find --apply writing exactly what the read said, the others, when ${label}: ${JSON.stringify(did)} for ${JSON.stringify(expected)}\n${a.all}`);
+    if (a.code !== 1 || !says.test(a.all) || JSON.stringify(heldNamed(a.all, 'was')) !== JSON.stringify([name])) misses.push(`Could not find --apply naming ${name} alone as held back and why, exit 1, when ${label}: ${a.code} ${a.all}`);
+    for (const [n] of others) if (!nowFile(n).test(a.out)) misses.push(`Could not find --apply reading ${n} back as its file's version though ${name} was held back when ${label}: ${a.all}`);
   }
+  // Nothing held back: the read says all three, and --apply writes and reads back all three, exit 0.
+  const d = await run([], fakeGitHub({ rulesets: live() }));
+  if (d.code !== 1 || JSON.stringify(saidPlan(d.out)) !== JSON.stringify({ write: plan, held: [] })) misses.push(`Could not find the read saying --apply would write all three, holding none back: ${d.code} ${JSON.stringify(saidPlan(d.out))}\n${d.all}`);
+  const gh = fakeGitHub({ rulesets: live() });
+  const a = await run(['--apply'], gh);
+  if (a.code !== 0 || JSON.stringify(writes(gh).map((c) => [c.body?.name, c.method])) !== JSON.stringify([[MR, 'PUT'], [SPELLING, 'POST'], [CODEQL, 'PUT']])) misses.push(`Could not find --apply writing all three, exit 0, when none is held back: ${a.code} ${a.all}`);
+  const after = await run([], gh);
+  if (after.code !== 0 || JSON.stringify(saidPlan(after.out)) !== JSON.stringify({ write: [[MR, 'unchanged'], [SPELLING, 'unchanged'], [CODEQL, 'unchanged']], held: [] })) misses.push(`Could not find the read after --apply saying every ruleset is its file's, exit 0: ${after.code} ${after.all}`);
+  // Every one held back: the read says --apply would write nothing; --apply writes nothing, exit 1.
+  const allBad = { file: scratch('ruleset.json', JSON.stringify(badRule)), files: { [SPELLING]: scratch('main-spelling.json', JSON.stringify(badSpelling)), [CODEQL]: scratch('codeql-complete.json') } };
+  const n = await run([], fakeGitHub({ rulesets: live() }), allBad);
+  if (n.code !== 1 || JSON.stringify(saidPlan(n.out)) !== JSON.stringify({ write: [], held: [MR, SPELLING, CODEQL] })) misses.push(`Could not find the read saying --apply would write nothing and hold back all three when every file is refused: ${n.code} ${JSON.stringify(saidPlan(n.out))}\n${n.all}`);
+  const ng = fakeGitHub({ rulesets: live() });
+  const na = await run(['--apply'], ng, allBad);
+  if (na.code !== 1 || writes(ng).length || JSON.stringify(heldNamed(na.all, 'was')) !== JSON.stringify([MR, SPELLING, CODEQL])) misses.push(`Could not find --apply writing nothing and naming all three held back, exit 1, when every file is refused: ${na.code} ${na.all}`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('where the default branch\'s rules hold a merge queue, the guard also reads the newest merge-group commit', async () => {
+test('a write GitHub refuses, or a ruleset GitHub will not read back, is that ruleset\'s alone: the others are still written and read back, exit 1', async () => {
   needKept();
   const misses = [];
-  const G1 = sha('c1');
-  const G2 = sha('c2');
-  const queue = { type: 'merge_queue', parameters: { check_response_timeout_minutes: 60, grouping_strategy: 'ALLGREEN', max_entries_to_build: 5, max_entries_to_merge: 5, merge_method: 'SQUASH', min_entries_to_merge: 1, min_entries_to_merge_wait_minutes: 5 } };
-  // dazzer-app queued: an older merge group whose check failed, a later push whose check failed, and
-  // the newest merge group, listed last.
-  const queued = (newest) => {
-    const repos = passingRepos();
-    const h = repos['dazzer-app'];
-    h.rules.push(queue);
-    h.groups = [groupRun(800, G1, '2026-11-08T10:00:00Z'), groupRun(805, sha('c4'), '2026-11-08T12:30:00Z', 'push'), ...(newest ? [groupRun(801, G2, '2026-11-08T11:30:00Z')] : [])];
-    h.runs[G1] = [checkRun(G1, { conclusion: 'failure' })];
-    h.runs[sha('c4')] = [checkRun(sha('c4'), { conclusion: 'failure' })];
-    return repos;
-  };
-  const passing = queued(true);
-  passing['dazzer-app'].runs[G2] = [checkRun(G2)];
-  const p = fakeGitHub({ rulesets: [], repos: passing });
-  const pr = await run(['--apply'], p);
-  if (pr.code !== 0 || !writes(p).some((c) => c.body?.name === CODEQL) || !/dazzer-io\/dazzer-app's newest merge-group commit (c2){20} carries codeql \/ CodeQL complete passed from integration 15368/.test(pr.all) || !/dazzer-io\/dazzer-app's newest pull request merged into main, #30, head b{40} carries/.test(pr.all)) misses.push(`Could not find the guard reading dazzer-app's newest merge-group commit beside its newest merged pull request, and passing when both carry the check: ${pr.code} ${pr.all}`);
-  const missing = fakeGitHub({ rulesets: [], repos: queued(true) });
-  const mr = await run(['--apply'], missing);
-  if (mr.code !== 1 || writes(missing).some((c) => c.body?.name === CODEQL) || !/dazzer-io\/dazzer-app's newest merge-group commit (c2){20} carries no check run named codeql \/ CodeQL complete/.test(mr.all) || !/it passes once[^\n]*merge_group/.test(mr.all)) misses.push(`Could not find the guard holding codeql-complete-required back when the newest merge-group commit carries no such check, though the pull request's head does, saying merge_group would pass it: ${mr.code} ${mr.all}`);
-  const none = fakeGitHub({ rulesets: [], repos: (() => { const repos = queued(false); repos['dazzer-app'].groups = []; return repos; })() });
-  const nr = await run(['--apply'], none);
-  if (nr.code !== 1 || writes(none).some((c) => c.body?.name === CODEQL) || !/dazzer-io\/dazzer-app's main holds a merge queue, and no workflow run started by merge_group names a merge-group commit/.test(nr.all)) misses.push(`Could not find the guard holding codeql-complete-required back when a queue is held and no merge group has run: ${nr.code} ${nr.all}`);
-  // Without a queue no workflow runs are read; the rules on each default branch are.
-  const plain = fakeGitHub({ rulesets: [] });
-  await run(['--apply'], plain);
-  if (plain.calls.some((c) => /\/actions\/runs/.test(c.path))) misses.push(`Could not find the guard leaving workflow runs unread where no merge queue is held: ${JSON.stringify(plain.calls.map((c) => c.path))}`);
-  for (const repo of ['dazzer', 'dazzer-app']) if (!plain.calls.some((c) => c.path.startsWith(`/repos/dazzer-io/${repo}/rules/branches/main`))) misses.push(`Could not find the guard reading the rules on ${repo}'s main: ${JSON.stringify(plain.calls.map((c) => c.path))}`);
+  const gh = fakeGitHub({ rulesets: [], rejects: SPELLING });
+  const r = await run(['--apply'], gh);
+  const tried = writes(gh).map((c) => c.body?.name);
+  if (r.code !== 1 || !/^REFUSED: GitHub answered 422 to the creation of main-spelling-refused/m.test(r.err)) misses.push(`Could not find --apply naming GitHub's 422 to main-spelling-refused, exit 1: ${r.code} ${r.all}`);
+  if (JSON.stringify(tried) !== JSON.stringify([MR, SPELLING, CODEQL]) || JSON.stringify(gh.held.map((x) => x.name)) !== JSON.stringify([MR, CODEQL])) misses.push(`Could not find --apply still writing codeql-complete-required after GitHub refused main-spelling-refused: ${JSON.stringify(tried)} ${JSON.stringify(gh.held.map((x) => x.name))}`);
+  for (const n of [MR, CODEQL]) if (!nowFile(n).test(r.out)) misses.push(`Could not find ${n} read back as its file's version though GitHub refused main-spelling-refused: ${r.all}`);
+  const u = fakeGitHub({ rulesets: [], unreadBack: [MR] });
+  const ur = await run(['--apply'], u);
+  if (ur.code !== 1 || !/^UNREAD: machine-rule-required was written, and not read back: could not read the ruleset machine-rule-required \(900\): GitHub answered 503/m.test(ur.err)) misses.push(`Could not find --apply naming machine-rule-required written and not read back, exit 1: ${ur.code} ${ur.all}`);
+  for (const n of [SPELLING, CODEQL]) if (!nowFile(n).test(ur.out)) misses.push(`Could not find ${n} read back as its file's version though machine-rule-required was not: ${ur.all}`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('the read and --apply refuse while a branch spelled main in other letters exists in dazzer or dazzer-app, naming it, and write nothing', async () => {
+test('exit 2 when GitHub could not be read at all: the organisation\'s rulesets unlisted, any page of them, in the read and --apply alike, and nothing is written', async () => {
   needKept();
   const misses = [];
-  const cases = [
-    ['MAIN in dazzer', (repos) => { repos.dazzer.branches.push('MAIN'); }, /dazzer-io\/dazzer holds the branch MAIN/],
-    ['Main in dazzer-app', (repos) => { repos['dazzer-app'].branches.push('Main'); }, /dazzer-io\/dazzer-app holds the branch Main/],
-    ['maiN past dazzer\'s first page of branches', (repos) => { for (let i = 0; i < 120; i++) repos.dazzer.branches.push(`made-up-${i}`); repos.dazzer.branches.push('maiN'); }, /dazzer-io\/dazzer holds the branch maiN/],
-  ];
-  for (const [label, change, says] of cases) {
+  const many = Array.from({ length: 130 }, (_, i) => ({ id: 1000 + i, name: `made-up-${i}`, target: 'branch', enforcement: 'active', rules: [] }));
+  for (const [label, rulesets, listStatus] of [['every page answered 503', allThree(), () => 503], ['the second page answered 502', [...many, ...allThree()], (page) => (page === 2 ? 502 : 200)]]) {
     for (const argv of [[], ['--apply']]) {
-      const repos = passingRepos();
-      change(repos);
-      const gh = fakeGitHub({ rulesets: [], repos });
+      const gh = fakeGitHub({ rulesets, listStatus });
       const r = await run(argv, gh);
-      const mode = argv.length ? '--apply' : 'the read';
-      const nothing = argv.length ? /so nothing was written/ : /so --apply would write nothing/;
-      if (r.code !== 2 || writes(gh).length || !says.test(r.all) || !/^REFUSED: /m.test(r.all) || !nothing.test(r.all)) misses.push(`Could not find ${mode} refusing, writing nothing, while ${label} exists, naming it: ${r.code} ${r.all} ${JSON.stringify(writes(gh))}`);
+      if (r.code !== 2 || writes(gh).length || !/^UNREAD: could not list dazzer-io's rulesets: GitHub answered 50[23]/m.test(r.err)) misses.push(`Could not find ${argv.length ? '--apply' : 'the read'} exiting 2, writing nothing, when ${label}: ${r.code} ${r.all} ${JSON.stringify(writes(gh).map((c) => c.path))}`);
     }
   }
-  // A name that only holds main, or spells it with a letter outside ASCII, is no spelling of main.
-  const others = passingRepos();
-  others.dazzer.branches.push('mainline', 'MAIN-made-up', 'ma\u0131n', 'remain');
-  const o = fakeGitHub({ rulesets: [], repos: others });
-  const or = await run(['--apply'], o);
-  if (or.code !== 0) misses.push(`Could not find branches that only hold main left unrefused: ${or.code} ${or.all}`);
-  for (const repo of ['dazzer', 'dazzer-app']) if (!o.calls.some((c) => c.path.startsWith(`/repos/dazzer-io/${repo}/branches?`))) misses.push(`Could not find ${repo}'s branches listed: ${JSON.stringify(o.calls.map((c) => c.path))}`);
-  // A repository whose branches cannot be listed is unread, and nothing is written.
-  const gone = passingRepos();
-  gone['dazzer-app'] = { status: 404 };
-  const g = fakeGitHub({ rulesets: [], repos: gone });
-  const gr = await run(['--apply'], g);
-  if (gr.code !== 2 || writes(g).length || !/UNREAD: could not list dazzer-io\/dazzer-app's branches: GitHub answered 404/.test(gr.all)) misses.push(`Could not find --apply unread, writing nothing, when dazzer-app's branches cannot be listed: ${gr.code} ${gr.all}`);
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+test('the command reads only the organisation\'s rulesets and dazzer-io/.github\'s id: no branch, pull request, branch rule, workflow run or check run (decision 210)', async () => {
+  needKept();
+  const misses = [];
+  const ours = (path) => /^\/orgs\/dazzer-io\/rulesets(\/\d+)?(\?|$)/.test(path) || path === '/repos/dazzer-io/.github';
+  for (const [label, rulesets] of [['every ruleset absent', () => []], ['every ruleset its file\'s', allThree], ['codeql-complete-required live as active', () => [{ ...fileRuleset(), id: 7 }, { ...spellingFile(), id: 10 }, { ...codeqlFile(), id: 11, enforcement: 'active' }]]]) {
+    for (const argv of [[], ['--apply']]) {
+      const gh = fakeGitHub({ rulesets: rulesets() });
+      const r = await run(argv, gh);
+      const beyond = gh.calls.filter((c) => !ours(c.path)).map((c) => `${c.method} ${c.path}`);
+      if (beyond.length) misses.push(`Could not find ${argv.length ? '--apply' : 'the read'} reading only the organisation's rulesets and dazzer-io/.github when ${label}: ${JSON.stringify(beyond)}`);
+      if (argv.length && r.code !== 0) misses.push(`Could not find --apply writing all three and reading them back, exit 0, when ${label}: ${r.code} ${r.all}`);
+    }
+  }
   assert.ok(!misses.length, misses.join('\n'));
 });
 
@@ -830,22 +691,7 @@ test('the organisation\'s rulesets are read across every page, so a kept one pas
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('--apply says which rulesets it wrote before GitHub refused a later write, and a guard GitHub does not answer holds codeql-complete-required back alone', async () => {
-  needKept();
-  const misses = [];
-  const gh = fakeGitHub({ rulesets: [], rejects: SPELLING });
-  const r = await run(['--apply'], gh);
-  if (r.code !== 2 || !/REFUSED: GitHub answered 422 to the creation of main-spelling-refused/.test(r.all) || !/written before it: machine-rule-required$/m.test(r.all) || writes(gh).length !== 2) misses.push(`Could not find --apply saying machine-rule-required was written before GitHub refused main-spelling-refused, and writing nothing after: ${r.code} ${r.all} ${JSON.stringify(writes(gh).map((c) => c.body?.name))}`);
-  const unread = passingRepos();
-  unread['dazzer-app'].pullsStatus = 503;
-  const u = fakeGitHub({ rulesets: [], repos: unread });
-  const ur = await run(['--apply'], u);
-  const names = writes(u).map((c) => c.body?.name);
-  if (ur.code !== 2 || JSON.stringify(names) !== JSON.stringify([MR, SPELLING]) || !/UNREAD: could not list dazzer-io\/dazzer-app's closed pull requests into main: GitHub answered 503/.test(ur.all) || !/codeql-complete-required was not written/.test(ur.all)) misses.push(`Could not find an unanswered guard holding codeql-complete-required back alone, unread, exit 2: ${ur.code} ${ur.all} ${JSON.stringify(names)}`);
-  assert.ok(!misses.length, misses.join('\n'));
-});
-
-test('without --apply, each of the three is said as its file\'s version, differing field by field, or absent, with the codeql guard\'s reading, and nothing is written', async () => {
+test('without --apply, each of the three is said as its file\'s version, differing field by field, or absent, closing on what --apply would do, and nothing is written', async () => {
   needKept();
   const misses = [];
   const gh = fakeGitHub({ rulesets: [{ ...fileRuleset(), id: 7 }] });
@@ -853,52 +699,38 @@ test('without --apply, each of the three is said as its file\'s version, differi
   if (r.code !== 1) misses.push(`Could not find exit 1 while two rulesets are absent: ${r.code} ${r.all}`);
   if (!/machine-rule-required \(7\) on dazzer-io is the file's version/.test(r.all)) misses.push(`Could not find machine-rule-required said as its file's version: ${r.all}`);
   for (const [name, file] of [[SPELLING, 'main-spelling.json'], [CODEQL, 'codeql-complete.json']]) if (!new RegExp(`${name} is not on dazzer-io: --apply would create it from \\S*machine-rule/${file.replace('.', '\\.')}`).test(r.all)) misses.push(`Could not find ${name} said as absent, created from ${file}: ${r.all}`);
-  if (!/its guard reads: dazzer-io\/dazzer's newest pull request merged into main, #30, head a{40} carries codeql \/ CodeQL complete passed from integration 15368/.test(r.all)) misses.push(`Could not find the guard's reading said beside the absent codeql-complete-required: ${r.all}`);
-  if (writes(gh).length) misses.push(`Could not find the diff writing nothing: ${JSON.stringify(writes(gh))}`);
-  const f = fakeGitHub({ rulesets: [{ ...fileRuleset(), id: 7 }], repos: failingApp() });
-  const fr = await run([], f);
-  if (fr.code !== 1 || !/codeql-complete-required is not on dazzer-io: --apply would not create it, its guard refusing/.test(fr.all) || !/its guard refuses: dazzer-io\/dazzer-app's newest pull request merged into main, #30, head b{40}: its latest codeql \/ CodeQL complete from integration 15368 concluded failure, not success/.test(fr.all) || !/main-spelling-refused is not on dazzer-io: --apply would create it/.test(fr.all)) misses.push(`Could not find the diff saying the guard holds codeql-complete-required back alone today: ${fr.code} ${fr.all}`);
+  if (JSON.stringify(saidPlan(r.out)) !== JSON.stringify({ write: [[MR, 'unchanged'], [SPELLING, 'create'], [CODEQL, 'create']], held: [] })) misses.push(`Could not find the read closing on what --apply would do with each: ${JSON.stringify(saidPlan(r.out))}\n${r.all}`);
+  if (writes(gh).length) misses.push(`Could not find the read writing nothing: ${JSON.stringify(writes(gh))}`);
   const drifted = clone(spellingFile());
   drifted.conditions.ref_name.exclude = ['refs/heads/MAIN'];
   const d = fakeGitHub({ rulesets: [{ ...fileRuleset(), id: 7 }, { ...drifted, id: 10 }, { ...codeqlFile(), id: 11 }] });
   const dr = await run([], d);
   if (dr.code !== 1 || !dr.all.includes('main-spelling-refused (10) on dazzer-io differs from') || !dr.all.includes('conditions.ref_name.exclude[0]: live "refs/heads/MAIN", file (none)')) misses.push(`Could not find a live exclude on main-spelling-refused named field by field, exit 1: ${dr.code} ${dr.all}`);
-  if (/its guard/.test(dr.all)) misses.push(`Could not find the guard left unread while codeql-complete-required is its file's version: ${dr.all}`);
+  if (JSON.stringify(saidPlan(dr.out)) !== JSON.stringify({ write: [[MR, 'unchanged'], [SPELLING, 'update'], [CODEQL, 'unchanged']], held: [] })) misses.push(`Could not find the read saying --apply would update main-spelling-refused alone: ${JSON.stringify(saidPlan(dr.out))}\n${dr.all}`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('a file that fails its check is never written, nor any other: every file is checked before GitHub is called', async () => {
-  needKept();
-  const misses = [];
-  const { mkdtempSync, writeFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  for (const [name, file, change, says] of [
-    [SPELLING, 'main-spelling.json', (r) => { r.conditions.ref_name.exclude = ['refs/heads/MAIN']; }, /is not the ruleset main-spelling-refused: .*excludes/],
-    [CODEQL, 'codeql-complete.json', (r) => { r.rules[0].parameters.required_status_checks[0].integration_id = 57789; }, /is not the ruleset codeql-complete-required: .*integration 57789/],
-  ]) {
-    const bad = clone(name === SPELLING ? spellingFile() : codeqlFile());
-    change(bad);
-    const dir = mkdtempSync(join(tmpdir(), 'machine-rule-ruleset-'));
-    writeFileSync(join(dir, file), JSON.stringify(bad));
-    const gh = fakeGitHub({ rulesets: [] });
-    const err = [];
-    const code = await A.main(['--apply'], { request: gh.request, out: () => {}, err: (l) => err.push(l), files: { [name]: join(dir, file) } });
-    if (code !== 2 || gh.calls.length || !says.test(err.join('\n'))) misses.push(`Could not find a bad ${file} refused before any call, nothing written: ${code} ${err.join('\n')} ${JSON.stringify(gh.calls)}`);
-  }
-  assert.ok(!misses.length, misses.join('\n'));
-});
-
-test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'s command, where main-spelling-refused holds the locked shape to main, what the guard reads and gates, and the lint step\'s two ignores', () => {
+test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'s command, that each ruleset stands alone and what each exit code means, where the locked shape is held to main, that codeql-complete-required watches in evaluate, and the lint step\'s two ignores', () => {
   const md = readFileSync(join(ROOT, 'machine-rule/README.md'), 'utf8');
   const plain = md.replace(/\s+/g, ' ');
   const misses = [];
-  for (const words of ['`main-spelling-refused`', '`main-spelling.json`', '`codeql-complete-required`', '`codeql-complete.json`', 'node machine-rule/apply-ruleset.mjs --apply', "Ben's own command", 'refs/heads/M[Aa][Ii][Nn]', 'refs/heads/mA[Ii][Nn]', 'refs/heads/maI[Nn]', 'refs/heads/maiN', 'integration 15368', 'do_not_enforce_on_create', 'without regard to case', "github.ref == 'refs/heads/main'", 'a branch named `MAIN`', 'held to main only in dazzer and dazzer-app, once `main-spelling-refused` is live and no other spelling of main exists there', 'keeps every `LOCKED_` setting empty until then', 'Holding it to main in any other repository is other work', 'the head of the newest pull request merged into', 'the newest merge-group commit', "never the branch's own head", 'still writes `machine-rule-required` and `main-spelling-refused`', 'a branch spelled main in other letters already exists', 'Its two ignores are narrow']) if (!plain.includes(words)) misses.push(`Could not find machine-rule/README.md saying ${JSON.stringify(words)}`);
+  for (const words of [
+    '`main-spelling-refused`', '`main-spelling.json`', '`codeql-complete-required`', '`codeql-complete.json`', 'node machine-rule/apply-ruleset.mjs --apply', "Ben's own command",
+    'refs/heads/M[Aa][Ii][Nn]', 'refs/heads/mA[Ii][Nn]', 'refs/heads/maI[Nn]', 'refs/heads/maiN', 'integration 15368', 'do_not_enforce_on_create',
+    'without regard to case', "github.ref == 'refs/heads/main'", 'a branch named `MAIN`',
+    "held to main only in dazzer and dazzer-app, once `main-spelling-refused` is live and the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included",
+    'keeps every `LOCKED_` setting empty until then', 'Holding it to main in any other repository is other work', 'this command reads no branch',
+    'watches, in `evaluate`, until it is made active once its readings show no merge it would have refused',
+    'Each kept ruleset stands alone', 'holds back that one alone and names it', 'the others are still written and read back',
+    "Exit 0 means every ruleset is its file's version", 'exit 1 means one or more were held back or differ', 'exit 2 means GitHub could not be read at all',
+    'Its two ignores are narrow',
+  ]) if (!plain.includes(words)) misses.push(`Could not find machine-rule/README.md saying ${JSON.stringify(words)}`);
   // Every sentence saying main-spelling-refused is live bounds the claim to the two repositories and
-  // to no other spelling there (decision 208).
-  for (const s of plain.split(/(?<=\.) /)) if (s.includes('`main-spelling-refused` is live') && !(s.includes('dazzer and dazzer-app') && s.includes('no other spelling of main'))) misses.push(`Could not find this sentence of machine-rule/README.md bounded to dazzer and dazzer-app, with no other spelling of main there: ${s}`);
+  // to the locked switch-on finding no other spelling there, non-ASCII ones included (decision 210).
+  for (const s of plain.split(/(?<=\.) /)) if (s.includes('`main-spelling-refused` is live') && !(s.includes('dazzer and dazzer-app') && s.includes("the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included"))) misses.push(`Could not find this sentence of machine-rule/README.md bounded to dazzer and dazzer-app, with the locked switch-on finding no other spelling of main there, non-ASCII ones included: ${s}`);
   if (/Its one ignore/.test(plain)) misses.push('Could not find machine-rule/README.md rid of "Its one ignore": the lint step holds two (decision 201)');
-  if (/default-branch head carries/.test(plain)) misses.push('Could not find machine-rule/README.md rid of the guard reading the default branch\'s own head (decision 208)');
-  if (/one refusal and nothing is written/.test(plain)) misses.push('Could not find machine-rule/README.md rid of one guard refusal writing nothing (decision 208)');
+  // The guard and the branch read are gone, and their account with them (decision 210).
+  for (const words of ['default-branch head carries', 'one refusal and nothing is written', 'Any of these and nothing is written', 'the head of the newest pull request merged into', 'the newest merge-group commit', 'a branch spelled main in other letters already exists', 'its guard reads']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}, the guard or the branch read decision 210 removed`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 

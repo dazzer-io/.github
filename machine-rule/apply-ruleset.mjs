@@ -6,44 +6,45 @@
 //   main-spelling-refused (machine-rule/main-spelling.json): in dazzer and dazzer-app, creating a
 //     branch spelled main in other letters is refused, with no bypass (decisions 188, 192);
 //   codeql-complete-required (machine-rule/codeql-complete.json): in dazzer and dazzer-app, the
-//     shared scan's codeql / CodeQL complete from GitHub Actions (integration 15368) is required
-//     on the default branch, not on create (decisions 188, 192).
+//     shared scan's codeql / CodeQL complete from GitHub Actions (integration 15368) on the default
+//     branch, not on create, written in evaluate: GitHub then blocks no merge and records each one
+//     the rule would have refused, until r-3.27 makes it active (decisions 188, 192, 210).
 //
-//   node machine-rule/apply-ruleset.mjs              reads each live ruleset with gh and prints how it
-//                                                    differs from its file, and exactly what --apply
-//                                                    would then do (exit 0 when every one matches,
-//                                                    1 when one differs or is not there, 2 refused
-//                                                    or unread)
+//   node machine-rule/apply-ruleset.mjs              reads each live ruleset with gh and says, for
+//                                                    each, how it differs from its file and exactly
+//                                                    what --apply would do with it: create, update,
+//                                                    write again as it is, or hold back
 //   node machine-rule/apply-ruleset.mjs --apply      writes each file's version, and only those
 //                                                    rulesets: they are security settings, so this is
 //                                                    Ben's own command (decisions 121, 177, 192);
-//                                                    nothing else runs it (exit 0 when each is read
-//                                                    back as its file's, 1 when the guard held
-//                                                    codeql-complete-required back and the others
-//                                                    were, 2 refused or unread)
+//                                                    nothing else runs it
 //   node machine-rule/apply-ruleset.mjs --readings [--moving <a,b>] [--only <a,b>] [--class production]
 //                                                    runs machine-rule/judge.mjs over every private,
 //                                                    non-archived repository's workflow folder at its
 //                                                    default branch, read with gh, and lists each
-//                                                    refusal (exit 0 none, 1 some, 2 unread)
+//                                                    refusal
+//
+// Exit codes. The read and --apply: 0 when every kept ruleset is its file's version (for --apply,
+// as read back after the writes); 1 when one or more were held back or differ (for the read, one
+// --apply would create, update or hold back), each named; 2 when GitHub could not be read at all:
+// the organisation's rulesets could not be listed, so nothing was written. --readings: 0 when
+// nothing is refused, 1 when something is, 2 when a repository could not be read. A wrong argument
+// is 2.
 //
 // --moving treats the named repositories as moving (their literal-label jobs need kept.json
 // entries) even where they read no setting; --only reads just those repositories; --class
 // production lists only the refusals of jobs in workflows that sign in, so each milestone's
 // finish check reads exactly what that milestone delivers.
 //
-// Before anything is written, every file must pass its own check, the live repository id of
-// dazzer-io/.github must equal the one ruleset.json names, and no branch spelled main in other
-// letters may exist in dazzer or dazzer-app, since main-spelling-refused's creation rule never
-// touches one already there: one of those refusals and nothing is written (decision 208).
-// codeql-complete-required's guard is read, in the read and in --apply alike, only when that
-// ruleset would be created or changed, and gates its write alone: each repository the file names
-// must carry codeql / CodeQL complete passed from integration 15368 on the head of the newest pull
-// request merged into its default branch, and on the newest merge-group commit where that branch's
-// rules hold a merge queue, never on the branch's own head. While it refuses, the others are still
-// written, and the refusal says what would pass it. Each write goes to the ruleset of its file's
-// name alone: a PUT to its own id when it is there, a POST when it is not. No other ruleset is read
-// for writing or written. Each written one is read back after. Every GitHub call goes through the
+// Each kept ruleset stands alone (decision 210): its file, read and checked; its own check on
+// GitHub, which for machine-rule-required is that dazzer-io/.github's live repository id is the one
+// its file names; its live version, found by name and read by its own id; its write; and its
+// read-back. A refusal of one, a file that cannot be read or fails its check, a wrong repository
+// id, two live rulesets of its name, a write GitHub refuses, or an answer GitHub does not give about
+// it, holds back that one alone and names it, while the others are still written and read back.
+// Each write goes to the ruleset of its file's name alone: a PUT to its own id when it is there, a
+// POST when it is not, then read back by that id. No other ruleset is read for writing or written,
+// and nothing else is read: no branch, pull request or check run. Every GitHub call goes through the
 // request handed to main(), so tests need no network.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -163,15 +164,16 @@ export function namesMatched(pattern) {
   return { names };
 }
 
-// What the two rules on main share: a branch ruleset, active, with no bypass, in dazzer and
-// dazzer-app by name, protected so that renaming either cannot take it out of the rule, holding
-// the conditions ref_name and repository_name alone, and one rule of the type it names.
-function checkOnMain(r, name, ruleType) {
+// What the two rules on main share: a branch ruleset in one of the enforcements it is given, with
+// no bypass, in dazzer and dazzer-app by name, protected so that renaming either cannot take it out
+// of the rule, holding the conditions ref_name and repository_name alone, and one rule of the type
+// it names.
+function checkOnMain(r, name, ruleType, enforcements) {
   const problems = [];
   if (!isObj(r)) return { problems: ['the ruleset is not an object'], rule: null };
   if (r.name !== name) problems.push(`it is named ${JSON.stringify(r.name)}, not ${name}`);
   if (r.target !== 'branch') problems.push(`its target is ${JSON.stringify(r.target)}, not branch`);
-  if (r.enforcement !== 'active') problems.push(`its enforcement is ${JSON.stringify(r.enforcement)}, not active`);
+  if (!enforcements.includes(r.enforcement)) problems.push(`its enforcement is ${JSON.stringify(r.enforcement)}, ${enforcements.length === 1 ? `not ${enforcements[0]}` : `neither ${enforcements.join(' nor ')}`}`);
   if (!Array.isArray(r.bypass_actors) || r.bypass_actors.length) problems.push('it names bypass actors, so someone could pass the rule');
   const repo = r.conditions?.repository_name;
   if (!isObj(repo) || !same(repo.include, RULE_REPOSITORIES)) problems.push(`its repository condition includes ${JSON.stringify(isObj(repo) ? repo.include : repo)}, not dazzer and dazzer-app by name`);
@@ -184,12 +186,13 @@ function checkOnMain(r, name, ruleType) {
   return { problems, rule: rules.length === 1 && rules[0]?.type === ruleType ? rules[0] : null };
 }
 
-// Every way a ruleset differs from main-spelling-refused, each as a sentence. Its patterns,
-// matched case-sensitively, must match exactly the fifteen other spellings of main and never main
-// itself, with no exclude, and its one rule is creation: so it holds whether GitHub folds case or
-// not, and even folded it restricts only the creation of main, never a push to it (decision 192).
+// Every way a ruleset differs from main-spelling-refused, each as a sentence. It is active. Its
+// patterns, matched case-sensitively, must match exactly the fifteen other spellings of main and
+// never main itself, with no exclude, and its one rule is creation: so among those sixteen it holds
+// whether GitHub folds case or not, and even folded it restricts only the creation of main, never a
+// push to it (decision 192).
 export function checkMainSpelling(r) {
-  const { problems, rule } = checkOnMain(r, MAIN_SPELLING_NAME, 'creation');
+  const { problems, rule } = checkOnMain(r, MAIN_SPELLING_NAME, 'creation', ['active']);
   if (!isObj(r)) return problems;
   if (rule && Object.keys(rule).some((k) => k !== 'type')) problems.push(`its creation rule holds ${JSON.stringify(Object.keys(rule).filter((k) => k !== 'type'))} beside its type`);
   const ref = r.conditions?.ref_name;
@@ -209,11 +212,12 @@ export function checkMainSpelling(r) {
   return problems;
 }
 
-// Every way a ruleset differs from codeql-complete-required, each as a sentence: the default
-// branch alone, one required check, codeql / CodeQL complete from integration 15368, not enforced
-// on create, strict policy off.
+// Every way a ruleset differs from codeql-complete-required, each as a sentence: evaluate, as its
+// file is written, or active, as r-3.27 makes it once its readings show no merge it would have
+// refused, and nothing else (decision 210); the default branch alone, one required check, codeql /
+// CodeQL complete from integration 15368, not enforced on create, strict policy off.
 export function checkCodeqlComplete(r) {
-  const { problems, rule } = checkOnMain(r, CODEQL_COMPLETE_NAME, 'required_status_checks');
+  const { problems, rule } = checkOnMain(r, CODEQL_COMPLETE_NAME, 'required_status_checks', ['evaluate', 'active']);
   if (!isObj(r)) return problems;
   const ref = r.conditions?.ref_name;
   if (!isObj(ref) || !same(ref.include, ['~DEFAULT_BRANCH']) || !same(ref.exclude ?? [], [])) problems.push(`its ref condition is ${JSON.stringify(ref)}, not the default branch alone (include ~DEFAULT_BRANCH, exclude nothing)`);
@@ -229,15 +233,6 @@ export function checkCodeqlComplete(r) {
   }
   return problems;
 }
-
-// The rulesets this command keeps, each with its file in this folder and its check, in the order
-// they are written. A guard, read only when its ruleset would be created or changed, gates that
-// ruleset's own write alone.
-const KEPT = [
-  { name: RULESET_NAME, file: 'ruleset.json', what: "the rule's ruleset", check: (r) => checkRuleset(r) },
-  { name: MAIN_SPELLING_NAME, file: 'main-spelling.json', what: `the ruleset ${MAIN_SPELLING_NAME}`, check: checkMainSpelling },
-  { name: CODEQL_COMPLETE_NAME, file: 'codeql-complete.json', what: `the ruleset ${CODEQL_COMPLETE_NAME}`, check: checkCodeqlComplete, guard: (request, body) => readCodeqlGuard(request, body.conditions.repository_name.include) },
-];
 
 // GitHub reads a repository name condition back with protected always there, false where the
 // write left it out (decision 187), so a protected left out and one set false mean the same.
@@ -291,177 +286,117 @@ export function ghRequest({ method = 'GET', path, body, accept = 'application/vn
 const parse = (r, what) => {
   try { return JSON.parse(r.text); } catch { throw new ReadFailure(`${what}: GitHub's answer is not JSON`); }
 };
-// Every page of a list GitHub answers a page at a time. Each list page below takes per_page, "The
-// number of results per page (max 100)", and page, "The page number of the results to fetch", so
-// pages 1, 2, ... are read until one holds fewer than 100, or until done, given every item so far,
-// says no later page can matter. pick takes the list out of an answer that wraps it.
+// Every page of a list GitHub answers a page at a time. The list takes per_page, "The number of
+// results per page (max 100)", and page, "The page number of the results to fetch", so pages 1,
+// 2, ... are read until one holds fewer than 100.
 const PER_PAGE = 100;
 const MOST_PAGES = 50;
-async function readPages(request, path, what, { pick = (x) => x, done = () => false } = {}) {
+async function readPages(request, path, what) {
   const all = [];
   for (let page = 1; page <= MOST_PAGES; page++) {
     const r = await request({ path: `${path}${path.includes('?') ? '&' : '?'}per_page=${PER_PAGE}&page=${page}` });
     if (r.status !== 200) throw new ReadFailure(`could not list ${what}: GitHub answered ${r.status}`);
-    const items = pick(parse(r, what));
+    const items = parse(r, what);
     if (!Array.isArray(items)) throw new ReadFailure(`could not list ${what}: the answer is no list`);
     all.push(...items);
-    if (items.length < PER_PAGE || done(all)) return all;
+    if (items.length < PER_PAGE) return all;
   }
   throw new ReadFailure(`${what} run past ${MOST_PAGES} pages of ${PER_PAGE}, more than this command reads`);
 }
-const segments = (branch) => branch.split('/').map(encodeURIComponent).join('/');
-
-// Each kept ruleset as GitHub holds it, by name, read by its own id: null when it is not there.
-// The organisation's rulesets are listed across every page (docs.github.com, rest/orgs/rules, "Get
-// all organization repository rulesets", per_page and page, each carrying id and name), so a kept
-// one past the first hundred is never read as absent and created twice.
-async function liveRulesets(request) {
-  const found = await readPages(request, `/orgs/${ORG}/rulesets`, `${ORG}'s rulesets`);
-  const live = new Map();
-  for (const { name } of KEPT) {
-    const named = found.filter((r) => r?.name === name);
-    if (named.length > 1) throw new ReadFailure(`${ORG} holds ${named.length} rulesets named ${name}, so which one is the rule's is unknown`);
-    if (!named.length) { live.set(name, null); continue; }
-    const one = await request({ path: `/orgs/${ORG}/rulesets/${named[0].id}` });
-    if (one.status !== 200) throw new ReadFailure(`could not read the ruleset ${name} (${named[0].id}): GitHub answered ${one.status}`);
-    live.set(name, parse(one, `the ruleset ${name}`));
-  }
-  return live;
+// One ruleset as GitHub holds it, read by its own id.
+async function readRuleset(request, name, id) {
+  const r = await request({ path: `/orgs/${ORG}/rulesets/${id}` });
+  if (r.status !== 200) throw new ReadFailure(`could not read the ruleset ${name} (${id}): GitHub answered ${r.status}`);
+  return parse(r, `the ruleset ${name} (${id})`);
 }
 
-// Each branch spelled main in other letters, one of the fifteen, in the repositories
-// main-spelling-refused names (decision 208). Its one rule is creation, which never touches a
-// branch already there, so while one exists the guard github.ref == 'refs/heads/main', which
-// ignores case, is true on a push to it. Every branch is listed across every page
-// (docs.github.com, rest/branches/branches, "List branches", each carrying its name).
-async function otherSpellings(request, repositories) {
-  const found = [];
-  for (const name of repositories) {
-    const branches = await readPages(request, `/repos/${ORG}/${name}/branches`, `${ORG}/${name}'s branches`);
-    for (const b of branches) if (OTHER_SPELLINGS.includes(`refs/heads/${b?.name}`)) found.push(`${ORG}/${name} holds the branch ${b.name}`);
-  }
-  return found;
-}
-
-// codeql-complete-required's guard (decisions 192, 208). With the strict policy off, a required
-// check is judged on the commit being merged: a pull request's head, or a merge queue's merge-group
-// commit. The default branch's own head never decides it, and a merge by github-actions[bot] leaves
-// that head with no run at all. So for each repository the file names, the guard reads the head of
-// the newest pull request merged into its default branch and, where that branch's rules hold a
-// merge queue, the newest merge-group commit, and each must carry codeql / CodeQL complete passed
-// from GitHub Actions, or the rule would refuse merges there from the moment it is written. Read
-// from docs.github.com's REST pages:
-//   - rest/repos/repos, "Get a repository": GET /repos/{owner}/{repo}, its default_branch;
-//   - rest/pulls/pulls, "List pull requests": GET /repos/{owner}/{repo}/pulls with state closed,
-//     base the default branch, sort updated and direction desc (sort updated is asc unless
-//     direction says), each carrying number, merged_at (null on one closed unmerged), updated_at,
-//     base.ref and head.sha. A merge updates a pull request, so its updated_at is never before its
-//     merged_at: once a page ends on one updated before the newest merged_at seen, no later page
-//     holds a newer merge;
-//   - rest/repos/rules, "Get rules for a branch": GET /repos/{owner}/{repo}/rules/branches/{branch},
-//     every active rule on the branch whatever level sets it, a merge queue's of type merge_queue;
-//   - rest/actions/workflow-runs, "List workflow runs for a repository": GET
-//     /repos/{owner}/{repo}/actions/runs with event merge_group, each carrying id, event, head_sha
-//     and created_at. The page names no order, so every page is read and the latest created_at,
-//     then the highest id, is the newest merge-group commit;
-//   - rest/checks/runs, "List check runs for a Git reference": GET
-//     /repos/{owner}/{repo}/commits/{ref}/check-runs with check_name, each carrying id, name,
-//     head_sha, status, conclusion and app.id.
-// A run counts only if it is on that commit's exact head_sha, from integration 15368, named exactly
-// codeql / CodeQL complete; the newest such run, by id, decides: completed, concluded success. A
-// run of that name from another app counts for nothing. Returns what it read, a line a commit, each
-// refusal with its reason, what GitHub would not answer, and whether a merge queue was read.
-async function readCodeqlGuard(request, repositories) {
-  const passed = [];
-  const refusals = [];
-  const unread = [];
-  let queue = false;
-  const judge = async (name, at, sha) => {
-    const runs = await request({ path: `/repos/${ORG}/${name}/commits/${sha}/check-runs?check_name=${encodeURIComponent(CODEQL_CONTEXT)}&filter=latest&per_page=100` });
-    if (runs.status !== 200) throw new ReadFailure(`could not list the check runs on ${at}: GitHub answered ${runs.status}`);
-    const body = parse(runs, `the check runs on ${at}`);
-    if (!isObj(body) || !Array.isArray(body.check_runs)) throw new ReadFailure(`the check runs on ${at} are no list`);
-    if (Number(body.total_count) > body.check_runs.length) throw new ReadFailure(`${at} holds ${body.total_count} check runs named ${CODEQL_CONTEXT}, more than one page`);
-    const named = body.check_runs.filter((c) => c?.name === CODEQL_CONTEXT && c?.head_sha === sha);
-    const ours = named.filter((c) => c?.app?.id === ACTIONS_INTEGRATION_ID);
-    if (!named.length) { refusals.push(`${at} carries no check run named ${CODEQL_CONTEXT}`); return; }
-    if (!ours.length) {
-      const apps = [...new Set(named.map((c) => `integration ${c?.app?.id}${c?.app?.slug ? ` (${c.app.slug})` : ''}`))].join(', ');
-      refusals.push(`${at} carries ${CODEQL_CONTEXT} only from ${apps}, not from GitHub Actions (integration ${ACTIONS_INTEGRATION_ID})`);
-      return;
-    }
-    const last = ours.reduce((a, c) => (Number(c.id) > Number(a.id) ? c : a));
-    if (last.status !== 'completed') refusals.push(`${at}: its latest ${CODEQL_CONTEXT} from integration ${ACTIONS_INTEGRATION_ID} is ${last.status}, not completed`);
-    else if (last.conclusion !== 'success') refusals.push(`${at}: its latest ${CODEQL_CONTEXT} from integration ${ACTIONS_INTEGRATION_ID} concluded ${last.conclusion}, not success`);
-    else passed.push(`${at} carries ${CODEQL_CONTEXT} passed from integration ${ACTIONS_INTEGRATION_ID}`);
-  };
-  const isSha = (s) => typeof s === 'string' && /^[0-9a-f]{40}$/.test(s);
-  for (const name of repositories) {
-    try {
-      const repo = await request({ path: `/repos/${ORG}/${name}` });
-      if (repo.status !== 200) throw new ReadFailure(`could not read ${ORG}/${name}: GitHub answered ${repo.status}`);
-      const branch = parse(repo, `${ORG}/${name}`).default_branch;
-      if (typeof branch !== 'string' || !branch) throw new ReadFailure(`${ORG}/${name} names no default branch`);
-      const merged = (all) => all.filter((p) => p?.base?.ref === branch && typeof p?.merged_at === 'string' && !Number.isNaN(Date.parse(p.merged_at)))
-        .reduce((a, p) => (!a || Date.parse(p.merged_at) > Date.parse(a.merged_at) || (Date.parse(p.merged_at) === Date.parse(a.merged_at) && p.number > a.number) ? p : a), null);
-      const pulls = await readPages(request, `/repos/${ORG}/${name}/pulls?state=closed&base=${encodeURIComponent(branch)}&sort=updated&direction=desc`, `${ORG}/${name}'s closed pull requests into ${branch}`, {
-        done: (all) => { const n = merged(all); return n !== null && Date.parse(all[all.length - 1]?.updated_at) < Date.parse(n.merged_at); },
-      });
-      const newest = merged(pulls);
-      if (!newest) refusals.push(`${ORG}/${name} has no pull request merged into ${branch}, so no commit shows how ${CODEQL_CONTEXT} reads there`);
-      else if (!isSha(newest.head?.sha)) throw new ReadFailure(`${ORG}/${name}'s pull request #${newest.number} names no head commit`);
-      else await judge(name, `${ORG}/${name}'s newest pull request merged into ${branch}, #${newest.number}, head ${newest.head.sha}`, newest.head.sha);
-      const rules = await readPages(request, `/repos/${ORG}/${name}/rules/branches/${segments(branch)}`, `the rules on ${ORG}/${name}'s ${branch}`);
-      if (!rules.some((r) => r?.type === 'merge_queue')) continue;
-      queue = true;
-      const runs = await readPages(request, `/repos/${ORG}/${name}/actions/runs?event=merge_group`, `${ORG}/${name}'s workflow runs started by merge_group`, { pick: (b) => (isObj(b) ? b.workflow_runs : null) });
-      const groups = runs.filter((r) => r?.event === 'merge_group' && isSha(r?.head_sha) && !Number.isNaN(Date.parse(r?.created_at)));
-      if (!groups.length) { refusals.push(`${ORG}/${name}'s ${branch} holds a merge queue, and no workflow run started by merge_group names a merge-group commit, so nothing shows how ${CODEQL_CONTEXT} reads on a queued merge`); continue; }
-      const g = groups.reduce((a, r) => (Date.parse(r.created_at) > Date.parse(a.created_at) || (Date.parse(r.created_at) === Date.parse(a.created_at) && Number(r.id) > Number(a.id)) ? r : a));
-      await judge(name, `${ORG}/${name}'s newest merge-group commit ${g.head_sha}`, g.head_sha);
-    } catch (e) {
-      if (!(e instanceof ReadFailure)) throw e;
-      unread.push(e.message);
-    }
-  }
-  return { passed, refusals, unread, queue };
-}
-// What would make codeql-complete-required's guard pass, said beside its refusal.
-const passesOnce = (g) => `it passes once the newest pull request merged into each repository's default branch carries ${CODEQL_CONTEXT} passed from integration ${ACTIONS_INTEGRATION_ID} on its head: the repository's caller of the shared scan runs on pull_request, and the next pull request merged there passes the check${g.queue ? `; and, where the branch's rules hold a merge queue, once its newest merge-group commit carries it too: merge_group among the caller's triggers, and the next queued merge passing the check` : ''}`;
-
-// What --apply would do, read in full before anything is written, and what the read prints: a
-// refusal, which writes nothing, or each kept ruleset with its action (create, update, or
-// unchanged, written again as it is) and, where it would be created or changed, its guard's
-// reading. A file that fails its check, dazzer-io/.github's id differing from ruleset.json's, and a
-// branch spelled main in other letters each refuse every write; a guard refuses its ruleset alone.
-async function planOf(request, wanted) {
-  const live = await liveRulesets(request);
-  const refusals = [];
-  const mr = wanted.find((w) => w.name === RULESET_NAME);
+// machine-rule-required's own check on GitHub: the repository id its file names is
+// dazzer-io/.github's, as GitHub gives it. Returns the refusal, or null.
+async function sharedIdHolds(request, body, path) {
   const repo = await request({ path: `/repos/${SHARED}` });
   if (repo.status !== 200) throw new ReadFailure(`could not read ${SHARED}: GitHub answered ${repo.status}`);
   const id = parse(repo, SHARED).id;
-  const named = mr.body.rules[0].parameters.workflows[0].repository_id;
-  if (id !== named) refusals.push(`${SHARED}'s repository id is ${id} on GitHub, not ${named}, the one ${mr.path} names`);
-  const spelling = wanted.find((w) => w.name === MAIN_SPELLING_NAME);
-  for (const line of await otherSpellings(request, spelling.body.conditions.repository_name.include)) refusals.push(`${line}, spelled main in other letters, which ${MAIN_SPELLING_NAME}'s creation rule never touches since it already exists: delete or rename it, then run this again`);
-  if (refusals.length) return { refusals };
-  const steps = [];
-  for (const w of wanted) {
-    const l = live.get(w.name);
-    const diff = l ? diffRuleset(l, w.body) : null;
-    const action = !l ? 'create' : diff.length ? 'update' : 'unchanged';
-    steps.push({ ...w, live: l, diff, action, read: w.guard && action !== 'unchanged' ? await w.guard(request, w.body) : null });
-  }
-  return { steps };
+  const named = body.rules[0].parameters.workflows[0].repository_id;
+  return id === named ? null : `${SHARED}'s repository id is ${id} on GitHub, not ${named}, the one ${path} names`;
 }
-const heldBack = (s) => Boolean(s.read && (s.read.refusals.length || s.read.unread.length));
-const heldWhy = (s) => (s.read.unread.length ? 'its guard unread' : 'its guard refusing');
+
+// The rulesets this command keeps, each with its file in this folder, its check, and, where it has
+// one, its own check on GitHub, in the order they are written. Each stands alone.
+const KEPT = [
+  { name: RULESET_NAME, file: 'ruleset.json', what: "the rule's ruleset", check: (r) => checkRuleset(r), onGitHub: sharedIdHolds },
+  { name: MAIN_SPELLING_NAME, file: 'main-spelling.json', what: `the ruleset ${MAIN_SPELLING_NAME}`, check: checkMainSpelling },
+  { name: CODEQL_COMPLETE_NAME, file: 'codeql-complete.json', what: `the ruleset ${CODEQL_COMPLETE_NAME}`, check: checkCodeqlComplete },
+];
+
+// One kept ruleset's file, read and held to its check, before GitHub is called: its body, or why
+// it is held back.
+function fileOf(k, path) {
+  let body;
+  try { body = JSON.parse(readFileSync(path, 'utf8')); } catch (e) { return { ...k, path, action: 'hold', kind: 'REFUSED', why: `${path} could not be read as JSON: ${e.message}` }; }
+  const problems = k.check(body);
+  if (problems.length) return { ...k, path, action: 'hold', kind: 'REFUSED', why: `${path} is not ${k.what}: ${problems.join('; ')}` };
+  return { ...k, path, body };
+}
+
+// One kept ruleset's plan, given its file and the organisation's rulesets as listed: its own check
+// on GitHub, its live version found by name and read by its own id, and so what --apply does with
+// it: create, update, unchanged (written again as it is), or hold it back, saying why. What GitHub
+// does not answer about it holds back this one alone.
+async function planOne(request, f, found) {
+  const hold = (kind, why) => ({ ...f, action: 'hold', kind, why });
+  try {
+    const no = f.onGitHub ? await f.onGitHub(request, f.body, f.path) : null;
+    if (no) return hold('REFUSED', no);
+    const named = found.filter((r) => r?.name === f.name);
+    if (named.length > 1) return hold('REFUSED', `${ORG} holds ${named.length} rulesets named ${f.name} (${named.map((r) => r.id).join(', ')}), so which one is its file's is unknown`);
+    const live = named.length ? await readRuleset(request, f.name, named[0].id) : null;
+    const diff = live ? diffRuleset(live, f.body) : null;
+    return { ...f, live, diff, action: !live ? 'create' : diff.length ? 'update' : 'unchanged' };
+  } catch (e) {
+    if (!(e instanceof ReadFailure)) throw e;
+    return hold('UNREAD', e.message);
+  }
+}
+
+// --apply for one planned ruleset: a PUT to its own id where it is there, a POST where it is not,
+// then read back by that id at once. Says what came of it, and returns whether it is now its file's.
+async function applyOne(request, s, out, err) {
+  if (s.action === 'hold') { err(`${s.kind}: ${s.name} was held back, not written: ${s.why}`); return false; }
+  const wrote = s.live
+    ? await request({ method: 'PUT', path: `/orgs/${ORG}/rulesets/${s.live.id}`, body: s.body })
+    : await request({ method: 'POST', path: `/orgs/${ORG}/rulesets`, body: s.body });
+  if (wrote.status !== 200 && wrote.status !== 201) { err(`REFUSED: GitHub answered ${wrote.status} to the ${s.live ? 'update' : 'creation'} of ${s.name}, so it is not its file's version: ${wrote.text.slice(0, 300)}`); return false; }
+  let back;
+  try {
+    const id = s.live ? s.live.id : parse(wrote, `GitHub's answer to the creation of ${s.name}`).id;
+    if (!Number.isInteger(id)) throw new ReadFailure(`GitHub's answer to its creation names no id`);
+    back = await readRuleset(request, s.name, id);
+  } catch (e) {
+    if (!(e instanceof ReadFailure)) throw e;
+    err(`UNREAD: ${s.name} was written, and not read back: ${e.message}`);
+    return false;
+  }
+  const d = diffRuleset(back, s.body);
+  if (d.length) { err(`REFUSED: ${s.name} as read back still differs from the file:\n  ${d.join('\n  ')}`); return false; }
+  out(`${s.name} (${back.id}) on ${ORG} now is the file's version, enforcement ${back.enforcement}`);
+  return true;
+}
+
+// The read for one planned ruleset: what it is on GitHub against its file, and what --apply would
+// do with it. Returns whether it is its file's version.
+function sayOne(s, out, err) {
+  if (s.action === 'hold') { err(`${s.kind}: ${s.name} would be held back by --apply, not written: ${s.why}`); return false; }
+  if (s.action === 'unchanged') { out(`${s.name} (${s.live.id}) on ${ORG} is the file's version, enforcement ${s.live.enforcement}`); return true; }
+  if (s.action === 'create') { out(`${s.name} is not on ${ORG}: --apply would create it from ${s.path}`); return false; }
+  out(`${s.name} (${s.live.id}) on ${ORG} differs from ${s.path}:`);
+  for (const line of s.diff) out(`  ${line}`);
+  return false;
+}
 // The read's closing line: what --apply would write, each with its action, and what it would hold back.
-const sayPlan = (steps) => {
-  const written = steps.filter((s) => !heldBack(s)).map((s) => `${s.name} (${s.action})`);
-  const held = steps.filter(heldBack);
-  return `--apply would write ${written.length ? written.join(', ') : 'nothing'}${held.length ? `, and hold back ${held.map((s) => s.name).join(', ')}, ${heldWhy(held[0])}` : ''}`;
+const sayPlan = (plans) => {
+  const written = plans.filter((s) => s.action !== 'hold').map((s) => `${s.name} (${s.action})`);
+  const held = plans.filter((s) => s.action === 'hold').map((s) => s.name);
+  return `--apply would write ${written.length ? written.join(', ') : 'nothing'}${held.length ? `, and hold back ${held.join(', ')}` : ''}`;
 };
 
 const list = (s) => String(s ?? '').split(',').map((x) => x.trim()).filter(Boolean);
@@ -499,87 +434,24 @@ export async function main(argv, { request = ghRequest, out = console.log, err =
       for (const l of r.unread) err(l);
       return r.unread.length ? 2 : r.refused ? 1 : 0;
     }
-    // Every file is read and checked before GitHub is called, so a bad one writes nothing at all.
-    const wanted = [];
-    const bad = [];
-    for (const k of KEPT) {
-      const path = files[k.name] ?? (k.name === RULESET_NAME ? file : undefined) ?? join(HERE, k.file);
-      let body;
-      try { body = JSON.parse(readFileSync(path, 'utf8')); } catch (e) { bad.push(`REFUSED: ${path} could not be read as JSON: ${e.message}`); continue; }
-      const problems = k.check(body);
-      if (problems.length) bad.push(`REFUSED: ${path} is not ${k.what}: ${problems.join('; ')}`);
-      else wanted.push({ ...k, path, body });
-    }
-    if (bad.length) { for (const l of bad) err(l); return 2; }
+    // Each file is read and checked before GitHub is called; then the organisation's rulesets are
+    // listed once, across every page, and that list alone failing is GitHub not read at all.
+    const filesRead = KEPT.map((k) => fileOf(k, files[k.name] ?? (k.name === RULESET_NAME ? file : undefined) ?? join(HERE, k.file)));
+    const found = await readPages(request, `/orgs/${ORG}/rulesets`, `${ORG}'s rulesets`);
     // The read and --apply read one plan, so the read says exactly what --apply would then do.
-    const plan = await planOf(request, wanted);
-    if (plan.refusals) {
-      for (const l of plan.refusals) err(`REFUSED: ${l}, so ${mode === 'diff' ? '--apply would write nothing' : 'nothing was written'}`);
-      return 2;
-    }
-    const { steps } = plan;
-    const unread = steps.some((s) => s.read?.unread.length);
-    // A guard's reading: each commit it passed, each refusal with what would pass it, and each
-    // answer GitHub did not give.
-    const sayRead = (s, at, lead) => {
-      for (const line of s.read.passed) out(`${at}${lead}reads: ${line}`);
-      for (const line of s.read.refusals) out(`${at}${lead}refuses: ${line}`);
-      if (s.read.refusals.length) out(`${at}${passesOnce(s.read)}`);
-      for (const line of s.read.unread) err(`UNREAD: ${line}`);
-    };
+    const plans = [];
+    for (const f of filesRead) plans.push(f.action === 'hold' ? f : await planOne(request, f, found));
+    let all = true;
     if (mode === 'diff') {
-      let differs = false;
-      for (const s of steps) {
-        const held = heldBack(s);
-        if (s.action === 'unchanged') { out(`${s.name} (${s.live.id}) on ${ORG} is the file's version, enforcement ${s.live.enforcement}`); continue; }
-        differs = true;
-        if (s.action === 'create') out(`${s.name} is not on ${ORG}: --apply would ${held ? `not create it, ${heldWhy(s)}` : `create it from ${s.path}`}`);
-        else {
-          out(`${s.name} (${s.live.id}) on ${ORG} differs from ${s.path}:`);
-          for (const line of s.diff) out(`  ${line}`);
-          if (held) out(`  --apply would not change it, ${heldWhy(s)}`);
-        }
-        if (s.read) sayRead(s, '  ', 'its guard ');
-      }
-      out(sayPlan(steps));
-      return unread ? 2 : differs ? 1 : 0;
+      for (const s of plans) if (!sayOne(s, out, err)) all = false;
+      out(sayPlan(plans));
+      return all ? 0 : 1;
     }
-    for (const s of steps) if (s.read) for (const line of s.read.passed) out(`${s.name}'s guard reads: ${line}`);
-    const held = steps.filter(heldBack);
-    // A ruleset its guard holds back is said with why, and what would pass it, whatever the writes.
-    const sayHeld = () => {
-      for (const s of held) {
-        for (const line of s.read.unread) err(`UNREAD: ${line}`);
-        err(`REFUSED: ${s.name} was not written, ${heldWhy(s)}${s.read.refusals.length ? `:\n  ${s.read.refusals.join('\n  ')}\n  ${passesOnce(s.read)}` : ''}`);
-      }
-    };
-    const toWrite = steps.filter((s) => !heldBack(s));
-    const written = [];
-    for (const s of toWrite) {
-      const wrote = s.live
-        ? await request({ method: 'PUT', path: `/orgs/${ORG}/rulesets/${s.live.id}`, body: s.body })
-        : await request({ method: 'POST', path: `/orgs/${ORG}/rulesets`, body: s.body });
-      if (wrote.status !== 200 && wrote.status !== 201) {
-        err(`REFUSED: GitHub answered ${wrote.status} to the ${s.live ? 'update' : 'creation'} of ${s.name}: ${wrote.text.slice(0, 300)}${written.length ? `\n  written before it: ${written.join(', ')}` : ''}`);
-        sayHeld();
-        return 2;
-      }
-      written.push(s.name);
-    }
-    const after = await liveRulesets(request);
-    const left = [];
-    for (const s of toWrite) {
-      const a = after.get(s.name);
-      const d = a ? diffRuleset(a, s.body) : ['the ruleset is not there after the write'];
-      if (d.length) left.push(`REFUSED: ${s.name} as read back still differs from the file:\n  ${d.join('\n  ')}`);
-    }
-    if (left.length) { for (const l of left) err(l); sayHeld(); return 2; }
-    for (const s of toWrite) out(`${s.name} (${after.get(s.name).id}) on ${ORG} now is the file's version, enforcement ${after.get(s.name).enforcement}`);
-    sayHeld();
-    return unread ? 2 : held.length ? 1 : 0;
+    for (const s of plans) if (!(await applyOne(request, s, out, err))) all = false;
+    return all ? 0 : 1;
   } catch (e) {
     if (!(e instanceof ReadFailure) && !(e instanceof Unread)) throw e;
-    err(`UNREAD: ${e.message}`);
+    err(`UNREAD: ${e.message}${mode === 'readings' ? '' : ', so nothing was written'}`);
     return 2;
   }
 }

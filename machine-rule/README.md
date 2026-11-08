@@ -57,39 +57,41 @@ its origin does not say so, or GitHub could not be asked about a commit.
   `main`, and a wildcard, a complemented class or a backslash, whose names cannot be listed.
 - **The ruleset `codeql-complete-required`** (`codeql-complete.json`) requires the shared scan's
   `codeql / CodeQL complete` before a merge to the default branch of dazzer and dazzer-app
-  (decisions 188, 192). It names the same two repositories the same way, is `active`, names no
-  bypass actor, includes `~DEFAULT_BRANCH`, and holds one `required_status_checks` rule: that
-  one context from integration 15368, GitHub Actions, with `do_not_enforce_on_create: true` and
-  the strict policy off, so a branch need not be up to date to merge. Its check refuses another
-  context, another integration or none, and a bypass. With the strict policy off, the check is
-  judged on the commit being merged, so its guard reads the head of the newest pull request
-  merged into each repository's default branch and, where that branch's rules hold a merge
-  queue, the newest merge-group commit too, never the branch's own head, which a merge by
-  `github-actions[bot]` leaves with no run (decision 208). A run counts only on that exact
-  commit, from integration 15368, named exactly `codeql / CodeQL complete`, and the newest such
-  run must be completed and concluded success. The guard is read only when this ruleset would be
-  created or changed, and it gates this ruleset's write alone: a missing, failed, unfinished or
-  other-app check holds it back with its reason and what would pass it, and `--apply` still
-  writes `machine-rule-required` and `main-spelling-refused`.
-- **Why `main-spelling-refused` comes first** (decisions 195, 208). GitHub compares strings
+  (decisions 188, 192). It names the same two repositories the same way, names no bypass actor,
+  includes `~DEFAULT_BRANCH`, and holds one `required_status_checks` rule: that one context from
+  integration 15368, GitHub Actions, with `do_not_enforce_on_create: true` and the strict policy
+  off, so a branch need not be up to date to merge. Its check refuses another context, another
+  integration or none, and a bypass. It is written in `evaluate`, and its check accepts
+  `evaluate` or `active` and nothing else. In `evaluate` GitHub blocks no merge and records each
+  one the rule would have refused, so GitHub's own reading, not one this command takes, says
+  whether it is safe to enforce: `codeql-complete-required` watches, in `evaluate`, until it is
+  made active once its readings show no merge it would have refused (r-3.27, decision 210).
+- **Why `main-spelling-refused` comes first** (decisions 195, 210). GitHub compares strings
   without regard to case (its expressions page: "GitHub ignores case when comparing strings"), so
   the guard `github.ref == 'refs/heads/main'` is true on a branch named `MAIN`. A creation rule
-  never touches a branch that is already there, so the locked shape below is held to main only
-  in dazzer and dazzer-app, once `main-spelling-refused` is live and no other spelling of main
-  exists there, and runners' `switch-on --locked` gate (r-2.3) keeps every `LOCKED_` setting
-  empty until then. Holding it to main in any other repository is other work, outside these
-  rulesets.
-- **`apply-ruleset.mjs`** prints how each live ruleset differs from its file, with no flag, and,
-  where `codeql-complete-required` is absent or differs, what its guard reads today, closing on
-  what `--apply` would then do: each ruleset it would write, and the one it would hold back.
-  `node machine-rule/apply-ruleset.mjs --apply` writes each file's version, and only to the
-  ruleset of its name, each to its own id: security settings, so this is Ben's own command, run
-  after the merge (decisions 121, 177, 192). Both read the organisation's rulesets across every
-  page. Before writing anything it checks every file, checks that dazzer-io/.github's live
-  repository id is the one `ruleset.json` names, and lists every branch of dazzer and
-  dazzer-app: while a branch spelled main in other letters already exists in either, it is
-  named, and the read and `--apply` refuse. Any of these and nothing is written. After writing it
-  reads each written ruleset back. `--readings [--moving a,b]
+  never touches a branch that is already there, and the four patterns name ASCII letters alone,
+  so the locked shape below is held to main only in dazzer and dazzer-app, once
+  `main-spelling-refused` is live and the locked machines' switch-on finds no other spelling of
+  main there, non-ASCII ones included. That read is runners' `switch-on --locked` gate (r-2.3),
+  the one place a `LOCKED_` setting is written, which keeps every `LOCKED_` setting empty until
+  then; this command reads no branch. Holding it to main in any other repository is other work,
+  outside these rulesets.
+- **`apply-ruleset.mjs`** is the one command that writes these three rulesets. With no flag it
+  reads each live ruleset and says, for each, how it differs from its file and exactly what
+  `--apply` would do with it, closing on that list: each ruleset it would create, update or
+  write again as it is, and each it would hold back. `node machine-rule/apply-ruleset.mjs
+  --apply` writes each file's version, and only to the ruleset of its name, each to its own id,
+  and reads each back by that id: security settings, so this is Ben's own command, run after
+  the merge (decisions 121, 177, 192). Both read the organisation's rulesets across every page.
+  Each kept ruleset stands alone: its file, its checks, its write and its read-back (decision
+  210). A refusal of one ruleset holds back that one alone and names it, while the others are
+  still written and read back: a file that cannot be read or fails its check, dazzer-io/.github's
+  live repository id differing from the one `ruleset.json` names, two live rulesets of one name,
+  a write GitHub refuses, or an answer GitHub does not give about that ruleset. Exit 0 means every
+  ruleset is its file's version, after the writes for `--apply`; exit 1 means one or more were
+  held back or differ, each named, or, for the read, that `--apply` would change one; exit 2
+  means GitHub could not be read at all: the organisation's rulesets could not be listed, so
+  nothing was written. `--readings [--moving a,b]
   [--only a,b] [--class production]` runs the judge over every private, non-archived
   repository's workflow folder at its default branch, read with `gh`. It follows every call at
   the ref it names, up to GitHub's ten levels, and lists each refusal. A workflow a call reaches
@@ -154,8 +156,9 @@ public one.
   `CHECKS_` or `SCAN_` setting. Each of its jobs reads the locked setting in its `runs-on`,
   held to main: `${{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_<N> || '<GitHub's
   machine>' }}`, and nowhere else (decisions 9, 23, 40); in dazzer and dazzer-app, the guard
-  holds it to main alone once `main-spelling-refused` is live and no other spelling of main
-  exists there (decisions 195, 208, above). Unless kept.json keeps it on GitHub,
+  holds it to main alone once `main-spelling-refused` is live and the locked machines' switch-on
+  finds no other spelling of main there, non-ASCII ones included (decisions 195, 210, above).
+  Unless kept.json keeps it on GitHub,
   such a workflow is refused when it is started:
   - by `pull_request_target` or `workflow_run`, where `github.ref` is the default branch
     whatever started the run;

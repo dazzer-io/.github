@@ -89,9 +89,9 @@ its origin does not say so, or GitHub could not be asked about a commit.
   (decisions 210, 212). A refusal of one ruleset holds back that one alone and names it, while
   the others are still written and read back: a file that cannot be read or fails its check,
   dazzer-io/.github's live repository id differing from the one `ruleset.json` names, two live
-  rulesets of one name, a write GitHub refuses, a write gh gets no answer to, said as one that
-  may have landed, or an answer GitHub does not give about that ruleset or gives with no object
-  or no id in it. Exit 0 means every ruleset is its file's version, after the writes for
+  rulesets of one name, a write GitHub refuses with a 4xx, a write gh gets no answer to or
+  GitHub answers with a 5xx, said as one that may have landed, or an answer GitHub does not give
+  about that ruleset or gives with no object or no id in it. Exit 0 means every ruleset is its file's version, after the writes for
   `--apply`; exit 1 means one or more were held back or differ, each named, or, for the read,
   that `--apply` would change one; exit 2 means GitHub could not be read at all: the
   organisation's rulesets could not be listed, so nothing was written. `--readings [--moving a,b]

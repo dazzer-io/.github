@@ -41,14 +41,14 @@
 // its file names; its live version, found by name and read by the id the list names; its write; and
 // its read-back. Every GitHub call about it sits inside its own containment. A refusal of one, a
 // file that cannot be read or fails its check, a wrong repository id, two live rulesets of its name,
-// a write GitHub refuses, a write gh gets no answer to (said as one that may have landed), or an
-// answer GitHub does not give about it or gives with no object or no integer id in it, holds back
-// that one alone and names it, while the others are still written and read back. Each write goes to
-// the ruleset of its file's name alone: a PUT to the id the list names when it is there, a POST when
-// it is not, then read back, an update by that id and a creation by the id in GitHub's answer to
-// it. No other ruleset is read for writing or written, and nothing else is read: no branch, pull
-// request or check run. Every GitHub call goes through the request handed to main(), so tests need
-// no network.
+// a write GitHub refuses with a 4xx, a write gh gets no answer to or GitHub answers with a 5xx
+// (said as one that may have landed), or an answer GitHub does not give about it or gives with no
+// object or no integer id in it, holds back that one alone and names it, while the others are still
+// written and read back. Each write goes to the ruleset of its file's name alone: a PUT to the id
+// the list names when it is there, a POST when it is not, then read back, an update by that id and
+// a creation by the id in GitHub's answer to it. No other ruleset is read for writing or written,
+// and nothing else is read: no branch, pull request or check run. Every GitHub call goes through
+// the request handed to main(), so tests need no network.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -381,16 +381,19 @@ async function planOne(request, f, found) {
 // answer to it. Says what came of it, and returns whether it is now its file's. Every GitHub call
 // here is inside this one ruleset's containment, so gh getting no answer holds back this one alone
 // and the others are still tried (D212): before GitHub answers the write, the write may have
-// landed; after, it was written and is not read back.
+// landed; after, it was written and is not read back. A 5xx answer is GitHub failing after the
+// write may have landed, so it is said the same way; a 4xx is GitHub refusing it, so it did not.
 async function applyOne(request, s, out, err) {
   if (s.action === 'hold') { err(`${s.kind}: ${s.name} was held back, not written: ${s.why}`); return false; }
   const act = s.action === 'create' ? 'creation' : 'update';
+  const mayHaveLanded = (what, detail) => `UNREAD: ${s.name} was held back, its ${act} may have landed: ${what}, so whether it is its file's version is unknown until the run without --apply reads it: ${detail}`;
   let answered = false;
   try {
     const wrote = s.action === 'create'
       ? await request({ method: 'POST', path: `/orgs/${ORG}/rulesets`, body: s.body })
       : await request({ method: 'PUT', path: `/orgs/${ORG}/rulesets/${s.id}`, body: s.body });
     answered = true;
+    if (wrote.status >= 500 && wrote.status <= 599) { err(mayHaveLanded(`GitHub answered ${wrote.status}`, wrote.text.slice(0, 300))); return false; }
     if (wrote.status !== 200 && wrote.status !== 201) { err(`REFUSED: GitHub answered ${wrote.status} to the ${act} of ${s.name}, so it is not its file's version: ${wrote.text.slice(0, 300)}`); return false; }
     let id = s.id;
     if (s.action === 'create') {
@@ -408,7 +411,7 @@ async function applyOne(request, s, out, err) {
     if (!(e instanceof ReadFailure)) throw e;
     err(answered
       ? `UNREAD: ${s.name} was written, and not read back: ${e.message}`
-      : `UNREAD: ${s.name} was held back, its ${act} may have landed: GitHub's answer never came, so whether it is its file's version is unknown until the run without --apply reads it: ${e.message}`);
+      : mayHaveLanded("GitHub's answer never came", e.message));
     return false;
   }
 }

@@ -101,6 +101,11 @@ const AT_MAIN = new Set(['main', 'refs/heads/main']);
 export const SCAN_SHAPE = "${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}";
 const MAIN_REF = "github.ref == 'refs/heads/main'";
 const LOCKED_SHAPE = /^\$\{\{\s*github\.ref\s*==\s*'refs\/heads\/main'\s*&&\s*vars\.(LOCKED_RUNNER_(\d+))\s*\|\|\s*'([^']+)'\s*\}\}$/;
+// The one shape dazzer-app's stricter class exempts beside the literal ubuntu-latest (decision
+// 190, as r-3.8 teaches the app's own holdsMoreThanTheCode): LOCKED_SHAPE, any LOCKED_RUNNER_<N>,
+// with the literal ubuntu-latest as its fallback, on a workflow no pull-request event starts
+// (PULL_REQUEST_EVENTS, below), so a pull request's code never takes the exemption.
+const lockedHeldToMain = (machine, prStarted) => typeof machine === 'string' && !prStarted && LOCKED_SHAPE.exec(machine.trim())?.[3] === 'ubuntu-latest';
 // Triggers on which github.ref is the default branch whatever started the run.
 const DEFAULT_BRANCH_TRIGGERS = Object.freeze(['pull_request_target', 'workflow_run']);
 // Triggers beside push that start a run from a tag ref.
@@ -1319,7 +1324,7 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
       for (const id of wholeEntry.jobs) if (!ids.includes(id)) notes.push(`note: kept.json's whole-file entry for ${repository} ${file} lists the job ${id}, which ${path} does not hold as read; it keeps nothing until that job lands (runners' allowed list said a stale entry so too).`);
     }
     for (const e of fileEntries.filter((x) => !Array.isArray(x.jobs))) if (!ids.includes(e.job)) notes.push(`note: kept.json's entry for ${repository} ${file} ${e.job} matches no job of ${path} as read; it keeps nothing until that job lands.`);
-    // dazzer-app's stricter class: the workflow holding a job off a literal GitHub label.
+    // dazzer-app's stricter class: the workflow holding a job it holds (STRICT_HELD).
     let strictWorkflow = false;
     let finalChecks = 0;
     const scanReadTop = isScanFile ? [] : unique([...settingReadsIn(top).scans]);
@@ -1379,10 +1384,13 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
         else if (literal !== null && OUR_MACHINE.test(literal) && effect !== 'canary') noAt(`names one of our own machines literally, '${literal}', so it would run there with no setting naming it, and the watcher, which empties the setting to send a waiting job back to GitHub's, could never move it. Read the setting: \${{ vars.<FAMILY>_RUNNER_<N> || '<GitHub's machine>' }}.`);
         else if (literal !== null && !isGitHubMachine(literal) && effect !== 'canary') noAt(`names the machine '${literal}' literally, which is neither GitHub's machine (${GITHUB_MACHINE}) nor a setting, so where it runs could not be judged.`);
       }
-      // dazzer-app's stricter class exempts the literal ubuntu-latest alone (its holdsMoreThanTheCode,
-      // verdict.test.ts:1253) and holds every other job, whatever its class, a call among them, to
-      // no more than the code; a call asks a grant only as codeql.yml's job codeql (1248, 1258).
-      if (strictRepo && literal !== 'ubuntu-latest') {
+      // dazzer-app's stricter class exempts the literal ubuntu-latest (its holdsMoreThanTheCode,
+      // verdict.test.ts:1253) and, on a workflow no pull-request event starts, the locked setting
+      // held to main falling back to it (lockedHeldToMain, decision 190). It holds every other job,
+      // whatever its class, a call among them, to no more than the code; a call asks a grant only
+      // as codeql.yml's job codeql (1248, 1258). An exempt job still meets every class rule below,
+      // decision 9's LOCKED_ class and the signs-in class's main guard among them.
+      if (strictRepo && literal !== 'ubuntu-latest' && !lockedHeldToMain(machine, prStarted)) {
         strictWorkflow = true;
         judgeStrict({ job, text: j.text, no, call, theCall: call && file === 'codeql.yml' && id === 'codeql' && target === 'codeql.yml' });
       }
@@ -1518,10 +1526,10 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
     // and no secret or token named outside its jobs (a top-level env reaches every job).
     if (strictWorkflow) {
       const p = js.permissions;
-      if (!(isObj(p) && Object.keys(p).length === 1 && p.contents === 'read')) say(path, 1, null, `holds a job off a literal GitHub label in ${repository}, a repository strict.json names, and grants its token more than reading the code: ${'permissions' in js ? `permissions ${show(p)}` : 'no top-level permissions written'}. Write permissions: contents: read at the top.`);
+      if (!(isObj(p) && Object.keys(p).length === 1 && p.contents === 'read')) say(path, 1, null, `holds a job that ${STRICT_HELD} in ${repository}, a repository strict.json names, and grants its token more than reading the code: ${'permissions' in js ? `permissions ${show(p)}` : 'no top-level permissions written'}. Write permissions: contents: read at the top.`);
       for (const [key, text] of wf.topText) {
-        if (namesIn('secret', text)) say(path, 1, null, `holds a job off a literal GitHub label in ${repository}, a repository strict.json names, and its top-level ${key} names a secret, which reaches every job.`);
-        if (namesIn('token', text)) say(path, 1, null, `holds a job off a literal GitHub label in ${repository}, a repository strict.json names, and its top-level ${key} hands on the token, which reaches every job.`);
+        if (namesIn('secret', text)) say(path, 1, null, `holds a job that ${STRICT_HELD} in ${repository}, a repository strict.json names, and its top-level ${key} names a secret, which reaches every job.`);
+        if (namesIn('token', text)) say(path, 1, null, `holds a job that ${STRICT_HELD} in ${repository}, a repository strict.json names, and its top-level ${key} hands on the token, which reaches every job.`);
       }
     }
   }
@@ -1568,13 +1576,17 @@ function judgeChecks({ repository, js, job, runsOn, literal, write, entry, secre
   if (secretReads.computed) no('is a change check and looks a secret up by a name worked out as it runs (secrets[ followed by no quoted name), which could be any secret the repository holds, on the machines that check changes. Read each secret it needs by its quoted name, from machine-rule/secrets.json.');
 }
 
+// The jobs dazzer-app's stricter class holds, in its refusals' words: every job but those the
+// literal ubuntu-latest or lockedHeldToMain exempts.
+const STRICT_HELD = 'runs on neither the literal ubuntu-latest nor the locked setting held to main on a workflow no pull request starts,';
+
 // dazzer-app's stricter class, a job's part (holdsMoreThanTheCode): no secret, no hand-on of the
 // workflow's token, no permission of its own, and every checkout keeping no git credential. A call
 // names no machine, so holdsMoreThanTheCode held it so too, reading its every line, comments
 // included; it asks a grant only as codeql.yml's job codeql calling the shared scan (theCall,
 // verdict.test.ts:1248, 1258).
 function judgeStrict({ job, text, no, call, theCall }) {
-  const who = call ? 'is a call in a repository strict.json names' : 'runs off a literal GitHub label in a repository strict.json names';
+  const who = call ? 'is a call in a repository strict.json names' : `${STRICT_HELD} in a repository strict.json names`;
   if (namesIn('secret', text)) no(`${who}, and names a secret: such a job may run on machines of ours, which hold no more than the code.`);
   if (namesIn('token', text)) no(`${who}, and hands on the workflow's token (github.token, github[...], toJSON(github), a github.* filter or the github context whole inside \${{ }}).`);
   if (!theCall && Object.keys(job).some((k) => k.toLowerCase() === 'permissions')) no(`${who}, and asks for a permission of its own${call ? ': a call there asks a grant only as codeql.yml\'s job codeql, calling the shared scan' : ''}.`);

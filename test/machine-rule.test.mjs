@@ -480,7 +480,7 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
   ];
   const others = [
     ['dazzer', 'release.yml', 'publish', 'stay', 40], ['dazzer', 'pr-automation.yml', 'label', 'stay', 36],
-    ...['canary-drill.yml:drill', 'contract-watch.yml:watch', 'lane-times.yml:refresh', 'lane-times.yml:open', 'promote-production.yml:start', 'promote-production.yml:promote', 'release-check.yml:find', 'release-check.yml:check', 'release-check.yml:act', 'release-check.yml:handover', 'scorecard.yml:scorecard', 'sweep.yml:sweep'].map((s) => ['dazzer-app', ...s.split(':'), 'stay', 54]),
+    ...['contract-watch.yml:watch', 'promote-production.yml:start', 'promote-production.yml:promote', 'sweep.yml:sweep'].map((s) => ['dazzer-app', ...s.split(':'), 'stay', 190]),
     ['brain-builder', 'release.yml', 'tag', 'checks', 47], ['scheduler', 'tick.yml', 'runner-readings', 'stay', 22],
     ['runners', 'apply.yml', 'apply', 'stay', 9], ['runners', 'image.yml', 'build', 'stay', 9], ['runners', 'image.yml', 'push', 'stay', 9],
     ['runners', 'canary.yml', 'canary', 'canary', 50], ['runners', 'canary.yml', 'scan', 'canary', 50],
@@ -497,6 +497,17 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
   }
   const tag = keeps('brain-builder', 'release.yml', 'tag');
   if (!tag || JSON.stringify(tag.writes) !== JSON.stringify(['contents']) || tag.name !== 'Tag the released version') misses.push(`Could not find brain-builder's tag job kept checks naming contents and the name GitHub shows: ${JSON.stringify(tag ?? null)}`);
+  // dazzer-app's four production workflows that sign in and that no pull request or deployment
+  // starts go to the locked machines; the three that stay say why (decision 190).
+  const app = (file) => kept.entries.filter((e) => e.repository === 'dazzer-io/dazzer-app' && e.workflow === file);
+  for (const file of ['release-check.yml', 'canary-drill.yml', 'scorecard.yml', 'lane-times.yml']) {
+    if (app(file).length) misses.push(`Could not find dazzer-app's ${file} let go from kept.json to the locked machines (decision 190): ${JSON.stringify(app(file))}`);
+  }
+  const stays = [['sweep.yml', [/signs in to nothing/, /decision 9\b/]], ['contract-watch.yml', [/signs in to nothing/, /decision 9\b/]], ['promote-production.yml', [/deployment_status/, /the deployed commit's own file decides its runs-on/]]];
+  for (const [file, says] of stays) {
+    const reasons = app(file).map((e) => e.reason);
+    if (reasons.length !== 1 || !says.every((s) => s.test(reasons[0])) || /until the locked machines take it/.test(reasons[0])) misses.push(`Could not find dazzer-app's ${file} kept once, its reason saying why it stays (${says.join(', ')}) rather than waiting on the locked machines (decision 190): ${JSON.stringify(reasons)}`);
+  }
   assert.ok(!misses.length, misses.join('\n'));
 });
 
@@ -795,7 +806,7 @@ test('a call and a job a checks entry keeps are held to every class rule any job
 });
 
 // ================================================================ dazzer-app's stricter class (strict.json; verdict.test.ts holdsMoreThanTheCode)
-test('in a repository strict.json names, a job off a literal GitHub label holds no more than the code (dazzer-app verdict test)', async () => {
+test('in a repository on strict.json, a job off a literal GitHub label holds no more than the code (dazzer-app verdict test)', async () => {
   need();
   const OFF = "@{{ needs.plan.outputs.machine || 'ubuntu-latest' }}";
   const CHECKOUT = '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        with:\n          persist-credentials: false\n';
@@ -823,6 +834,55 @@ test('in a repository strict.json names, a job off a literal GitHub label holds 
     for (const [name, text, says] of refused) await c(() => mustRefuse(name, { 'ci.yml': text }, keptPlan, { file: 'ci.yml', says }));
     await c(() => mustPass('github.event_name, a plain property of the context', { 'ci.yml': ci('    if: github.event_name == \'pull_request\'\n') }, keptPlan));
     await c(() => mustPass('the same checkout without persist-credentials in dazzer, which strict.json does not name', { 'ci.yml': check('', '    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n') }, DAZZER));
+  });
+});
+
+// The locked shape dazzer-app's production jobs read (decision 190, the shape r-3.8 teaches the
+// app's own holdsMoreThanTheCode): the locked setting held to main, falling back to the literal
+// ubuntu-latest, on a workflow no pull-request event starts. It is exempt from the stricter class
+// as the literal ubuntu-latest is, and every class rule still judges the job.
+test('in a repository on strict.json, the locked setting held to main falling back to ubuntu-latest, on a workflow no pull request starts, is exempt from the stricter class, and every class rule still judges it (decision 190)', async () => {
+  need();
+  const locked = (n, fallback = 'ubuntu-latest') => `@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_${n} || '${fallback}' }}`;
+  const SCHEDULED = "\n  schedule:\n    - cron: '23 */2 * * *'\n  workflow_dispatch:";
+  const PUSHED = `${PUSH}\n  workflow_dispatch:\n  schedule:\n    - cron: '23 */2 * * *'`;
+  const TOP = 'permissions:\n  contents: read\n  actions: read\n';
+  // A job as release-check's act is: in the release environment, granted a write of its own,
+  // reading a secret, handing on the token, and checking out with its credential kept. The
+  // stricter class refuses each of these off the literal ubuntu-latest.
+  const ACT = '    environment: release\n    permissions:\n      contents: read\n      issues: write\n    env:\n      K: @{{ secrets.MADE_UP_TOKEN }}\n      T: @{{ github.token }}\n';
+  // A job as sweep's is: no environment and no id-token: write, so its workflow signs in to nothing.
+  const SWEEP = '    permissions:\n      contents: read\n      issues: write\n    env:\n      T: @{{ github.token }}\n';
+  const STEPS_KEPT = '    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - run: echo made-up\n';
+  const release = (runsOn, on = SCHEDULED, extra = ACT, top = TOP) => ({ 'made-up-release.yml': workflow(on, top, job('act', runsOn, extra, STEPS_KEPT)) });
+  const STRICT = /a repository strict\.json names/;
+  const exempt = (name, r) => {
+    const held = r.lines.filter((l) => STRICT.test(l));
+    assert.ok(!held.length, `Could not find ${name} exempt from the stricter class: the rule said\n${held.join('\n')}`);
+  };
+  const held = /in a repository strict\.json names, and names a secret/;
+  await everyCase(async (c) => {
+    // Admitted: nothing refused, its environment, write, secret, token and checkout all as they are.
+    await c(() => mustPass('the locked shape on a workflow a schedule and a person start', release(locked(2)), APP));
+    await c(() => mustPass('the locked shape on a workflow a push of main, a person and a schedule start, as release-check is', release(locked(2), PUSHED), APP));
+    // Any LOCKED_RUNNER_<N> is exempt from the stricter class; the signs-in class still judges its width and its name.
+    await c(async () => exempt('the locked shape reading LOCKED_RUNNER_8', await mustRefuse('LOCKED_RUNNER_8 falling back to ubuntu-latest', release(locked(8)), APP, { file: 'made-up-release.yml', job: 'act', says: /reads LOCKED_RUNNER_8, a 8-core machine, but its fallback 'ubuntu-latest' has 2 cores/ })));
+    await c(async () => exempt('the locked shape reading LOCKED_RUNNER_4', await mustRefuse('LOCKED_RUNNER_4, which the organisation does not declare, falling back to ubuntu-latest', release(locked(4)), APP, { file: 'made-up-release.yml', job: 'act', says: /reads LOCKED_RUNNER_4, which the organisation does not declare/ })));
+    // Every class rule still judges it: decision 9's LOCKED_ class, and the tag rule a deployment meets.
+    await c(async () => exempt('the locked shape on a workflow that signs in to nothing', await mustRefuse('the locked shape on a scheduled workflow that signs in to nothing, as sweep is', release(locked(2), SCHEDULED, SWEEP), APP, { file: 'made-up-release.yml', job: 'act', says: /is a job of a workflow that does not sign in, and it reads LOCKED_RUNNER_2/ })));
+    await c(async () => exempt('the locked shape on a workflow deployment_status starts', await mustRefuse('the locked shape on a workflow deployment_status starts, as promote-production is', release(locked(2), '\n  deployment_status:\n  workflow_dispatch:'), APP, { file: 'made-up-release.yml', job: 'act', says: /signs in and that a tag starts \(deployment_status\)/ })));
+    // Still held to no more than the code.
+    await c(() => mustRefuse('the locked shape on a workflow pull_request starts', release(locked(2), '\n  pull_request:\n  workflow_dispatch:'), APP, { file: 'made-up-release.yml', job: 'act', says: held }));
+    await c(() => mustRefuse('the locked shape on a workflow pull_request_target starts', release(locked(2), '\n  pull_request_target:\n  workflow_dispatch:'), APP, { file: 'made-up-release.yml', job: 'act', says: held }));
+    await c(() => mustRefuse('the locked shape on a workflow a merge queue starts, a pull-request event too', release(locked(2), '\n  merge_group:\n  workflow_dispatch:'), APP, { file: 'made-up-release.yml', job: 'act', says: held }));
+    await c(() => mustRefuse('the locked setting read without the main guard', release("@{{ vars.LOCKED_RUNNER_2 || 'ubuntu-latest' }}"), APP, { file: 'made-up-release.yml', job: 'act', says: held }));
+    await c(() => mustRefuse('a CHECKS_ setting read', release(CHECKS2), APP, { file: 'made-up-release.yml', job: 'act', says: held }));
+    await c(() => mustRefuse('a CHECKS_ setting read behind the main guard', release("@{{ github.ref == 'refs/heads/main' && vars.CHECKS_RUNNER_2 || 'ubuntu-latest' }}"), APP, { file: 'made-up-release.yml', job: 'act', says: held }));
+    await c(() => mustRefuse('the locked shape falling back to ubuntu-24.04', release(locked(2, 'ubuntu-24.04')), APP, { file: 'made-up-release.yml', job: 'act', says: held }));
+    await c(() => mustRefuse('the locked shape falling back to ubuntu-8-core', release(locked(8, 'ubuntu-8-core')), APP, { file: 'made-up-release.yml', job: 'act', says: held }));
+    await c(() => mustRefuse('the workflow holding the locked shape on a pull request, its top granting more than the code', release(locked(2), '\n  pull_request:\n  workflow_dispatch:'), APP, { file: 'made-up-release.yml', says: /a repository strict\.json names, and grants its token more than reading the code/ }));
+    // dazzer, which strict.json does not name, reads the same job as it did.
+    await c(() => mustPass('the locked shape in dazzer, which strict.json does not name', release(locked(2)), DAZZER));
   });
 });
 

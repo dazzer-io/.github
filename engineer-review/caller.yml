@@ -8,7 +8,8 @@
 # admits in a call (machine-rule/README.md, "Calls"): its own permissions are what it hands the
 # called workflow, and the top grants reading the code alone. It needs no if: of its own: the
 # called workflow's job skips a comment on an issue that is not a pull request, reading this
-# run's event.
+# run's event. A repository machine-rule/strict.json names (dazzer-app) takes no call asking a
+# grant but codeql.yml's job codeql, so the rule refuses this caller there (decision 184).
 name: Engineer review
 
 on:

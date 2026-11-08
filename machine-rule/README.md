@@ -41,8 +41,10 @@ its origin does not say so, or GitHub could not be asked about a commit.
   the file names, and after writing it reads the ruleset back. `--readings [--moving a,b]
   [--only a,b] [--class production]` runs the judge over every private, non-archived
   repository's workflow folder at its default branch, read with `gh`. It follows every call at
-  the ref it names, up to GitHub's ten levels, and lists each refusal. `--class production`
-  keeps only refusals in workflows that sign in.
+  the ref it names, up to GitHub's ten levels, and lists each refusal. A workflow a call reaches
+  is refused there when it holds a spelling this rule refuses, reads a `SCAN_` setting, or calls
+  a shared scan not spelled exactly at `main`, at whatever level (runners' switch-on S6).
+  `--class production` keeps only refusals in workflows that sign in.
 
 ## Reading a workflow (decision 42)
 
@@ -63,7 +65,9 @@ another parser, GitHub's among them, could read another way is refused with its 
 - **Layout:** `jobs:` at column zero, each job id plain and two spaces in, with the job spans the
   line reader gives matching the parser's, and `on:` triggers two spaces in.
 
-A file whose jobs could not be read is refused, never passed.
+A file whose jobs could not be read is refused, never passed, and so is a workflow naming no
+trigger this rule can read, in every repository (decision 181): nothing then says when its jobs
+run or which class they are in.
 
 Every `${{ }}` is read by GitHub's expression grammar. A job's `runs-on` is read route by route
 (each side of `||`, the last side of `&&`, `needs.<job>.outputs`, `matrix.<key>`, `inputs.<key>`),
@@ -86,6 +90,15 @@ it does not declare is empty for ever, so reading one is refused.
 
 ## The classes
 
+Every job meets every class below, whatever its shape: a job naming its machine, a job that calls
+a shared workflow, and a job kept.json keeps, by any effect (decision 184). A class's rule on the
+machine reads a job that names one; its rule on what a job reads, holds and signs in for reads
+every job, its workflow's top included. A kept.json effect admits a job only where its decision
+did: `stay` keeps a job of a workflow that signs in on GitHub's machine (decisions 9, 40),
+`canary` keeps runners' canary on our sets named literally (decision 50), and `checks` moves a
+job onto the change-check machines (decision 47). No effect lifts the write-token class or the
+public one.
+
 - **A workflow that signs in** (`id-token: write`, `write-all` or an `environment`) reads no
   `CHECKS_` or `SCAN_` setting. Each of its jobs reads the locked setting in its `runs-on`,
   held to main: `${{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_<N> || '<GitHub's
@@ -97,12 +110,18 @@ it does not declare is empty for ever, so reading one is refused.
     `create`, `deployment`, `deployment_status`, `registry_package`).
 
   A tag can name any commit, so it cannot be held to main-line code. A job of such a workflow
-  that calls a reusable workflow is refused, since its machine cannot be read.
+  that calls a reusable workflow is refused, since its machine cannot be read. A job kept on
+  GitHub here hands no `CHECKS_` setting on, not even in a step's `env`.
 - **A workflow that does not sign in** reads no `LOCKED_` setting (decision 9).
 - **A job holding a write token on a pull request** names a literal GitHub standard label
   (`ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`) and reads no setting (decision 36). The same
   holds in dazzer-io/.github whatever starts the job. With no `permissions:` key, the job holds
-  the repository's default token, which counts as a write.
+  the repository's default token, which counts as a write. A job kept on GitHub in a workflow
+  any of whose jobs holds a write, or on `pull_request_target`, hands no `CHECKS_` setting on,
+  not even in a step's `env`. A checks entry does not lift it: it admits a write only for a job
+  no pull request starts, in a private repository, as brain-builder's push-started release tag
+  job holds one (decision 47). A call on `pull_request_target` is refused, since every job there
+  holds a write token and a call names no machine.
 - **A change check**, a job of a pull-request workflow in a private repository whose workflows
   read a `CHECKS_` or `LOCKED_` setting, reaches `CHECKS_RUNNER_<N>` on every route (decision
   15). It is never on `pull_request_target`, and holds no write unless its kept.json entry has
@@ -113,10 +132,12 @@ it does not declare is empty for ever, so reading one is refused.
 - **Unclassified.** In such a repository, a job of a workflow that neither signs in nor runs on
   `pull_request` is refused unless kept.json names it. So is a job on a literal GitHub label:
   either it reads its setting or it is kept on GitHub by a decision of its own (decisions 15, 16).
-  A private repository that reads no setting needs no entry for its literal-label jobs; `--moving`
-  reads it as though it did (decision 16).
-- **A public repository**: every job but the shared scans' names a literal GitHub standard label
-  and reads no setting (decision 104).
+  A job calling a shared workflow is classed the same way, and no kept.json entry keeps a call
+  (decision 181). A private repository that reads no setting needs no entry for its
+  literal-label jobs; `--moving` reads it as though it did (decision 16).
+- **A public repository**: every job but the shared scans', whatever keeps it, names a literal
+  GitHub standard label and reads no setting, a `LOCKED_` one included (decision 104). A call
+  reads none either.
 - **The shared scans** (`codeql.yml`, `security-scan.yml` of dazzer-io/.github) are the only
   workflows that read `SCAN_RUNNER_<N>` (decisions 98, 119, 160). Elsewhere that read is refused,
   however it is spelled and wherever it hides (a job's outputs, a matrix row, an input's
@@ -127,24 +148,42 @@ it does not declare is empty for ever, so reading one is refused.
   - checks out with `persist-credentials: false`.
 
   Its write-token jobs and `codeql.yml`'s one final check run on GitHub's standard machine,
-  read no setting and are named in kept.json (decisions 36, 135, r-1.58).
-- **dazzer-app's stricter class** (`strict.json`, decision 54): a job off a literal GitHub label
-  holds no more than the code. That means no secret, no hand-on of the workflow's token, no
-  permission of its own and no checkout keeping a git credential. Its workflow's top grants
-  exactly `contents: read` and names no secret or token.
+  read no setting and are named in kept.json (decisions 36, 135, r-1.58). In dazzer-io/.github
+  no other job, a call included, reads a `vars` name spelled as a setting is (`CHECKS_`,
+  `SCAN_` or `LOCKED_` and anything after), declared or not, as its runs-on test held.
+- **dazzer-app's stricter class** (`strict.json`, decision 54): every job not on the literal
+  `ubuntu-latest`, whatever its class, holds no more than the code; `ubuntu-24.04` and
+  `ubuntu-22.04` are held too, as `holdsMoreThanTheCode` held them (decision 181). That means no
+  secret, no hand-on of the workflow's token, no permission of its own and no checkout keeping a
+  git credential. A call is held the same way: it names no secret or token on any of its lines,
+  and it asks a grant only as `codeql.yml`'s job `codeql` calling the shared scan, file and job
+  both (`holdsMoreThanTheCode`, verdict.test.ts:1248, 1258; decision 184). Its workflow's top
+  grants exactly `contents: read` and names no secret or token.
 
 ## Calls (decision 171)
 
-A job may call only dazzer-io/.github's shared workflows (`codeql.yml`, `security-scan.yml`,
-`engineer-review.yml`), spelled exactly, at `main`. `engineer-review.yml` alone may also be
+A job may call only those of dazzer-io/.github's shared workflows (`codeql.yml`,
+`security-scan.yml`, `engineer-review.yml`) that declare `workflow_call`, spelled exactly, at
+`main`. Today `codeql.yml` and `engineer-review.yml` declare it; a call of `security-scan.yml`,
+which does not, is refused, as GitHub refuses to run it. `engineer-review.yml` alone may also be
 called at a commit that GitHub's compare of `main...<commit>` reads as behind or identical, as
 `engineer-review/decide.mjs`'s `confirmOnMain` holds.
 
 - **Keys:** the calling job holds `uses`, `permissions` and `with` alone.
 - **Permissions:** it writes its own `permissions:`, at most what the called workflow's jobs
   use.
-- **Inputs:** it hands only inputs the workflow declares.
-- **Settings:** it reads no `CHECKS_`, `SCAN_` or `LOCKED_` setting.
+- **Inputs:** it hands only inputs the workflow declares, and under `with:` it hands on no
+  secret (by name, the whole context or a computed name) and not the workflow's token in any
+  spelling (decisions 93, 171, 181).
+- **Settings:** it reads no `CHECKS_`, `SCAN_` or `LOCKED_` setting, in the call or in its
+  workflow's top.
+- **Class:** it meets every class rule any other job does, its workflow's top included
+  (decisions 181, 184): what it reads, holds and signs in for, as the classes above say. It names
+  no machine and holds no steps (decision 129), so no rule on a machine or a step reads it; the
+  jobs it calls are judged in dazzer-io/.github, where they run. A call on `pull_request_target`
+  is refused in every repository; in a repository whose workflows read a setting, a call from a
+  workflow that neither signs in nor runs on `pull_request` is unclassified and refused, and no
+  kept.json entry keeps a call.
 - **CodeQL:** a call of `codeql.yml` is the job `codeql`, so its required check is
   `codeql / CodeQL complete`.
 
@@ -161,13 +200,19 @@ fails its check leaves the rule unread.
 - **`kept.json`**: the jobs kept on GitHub's computers. Each entry carries its repository,
   workflow, reason, decision and source, and one of three effects:
   - `stay`: on a literal GitHub standard label, reading no setting as its machine. A plan job
-    may hand `CHECKS_RUNNER_<N>` on in a step's `env` (decision 34).
-  - `checks`: judged as a change check, naming the writes it may hold (decision 47).
+    may hand `CHECKS_RUNNER_<N>` on in a step's `env` (decision 34), only in a workflow that
+    neither signs in nor holds a write token, as dazzer-app's `ci.yml` and `split-trial.yml`
+    are (decisions 9, 23, 36, 181).
+  - `checks`: judged as a change check after every class rule, naming the writes it may hold,
+    which it holds only off a pull request in a private repository (decision 47).
   - `canary`: runners' `canary.yml` alone. It is started by hand, under `contents: read`, with
     no secret, on our own sets named literally (decision 50).
 
   An entry is whole-file (`jobs`, every job id of its file, effect `stay` or `canary`) or one
-  job (`job` and `name`). A job entry carries the name GitHub shows, as the readings match it.
+  job (`job` and `name`). A stay entry carries the name GitHub shows, as the readings match it, a
+  fixed string holding no expression. A checks entry carries its job's `name:` as written, a
+  matrix expression included, since the readings leave checks entries out (decisions 142, 154,
+  182).
   An entry naming a job or file not there yet is a note, not a refusal; a job beside those a
   whole-file entry lists is judged like any other.
 - **`secrets.json`**: the secrets a change check may read, per repository (decision 121).
@@ -175,10 +220,71 @@ fails its check leaves the rule unread.
 
 ## Left out
 
-- **dazzer-app's pin of the shared scan's languages.** It belongs to that repository's caller,
-  not to the machine rule.
-- **dazzer-app's hand reader's refusals of spellings the `yaml` package reads alike.** Decision
-  42 reads every workflow with the package.
-- **runners' list of built-in labels** (decision 24).
-- **dazzer's tree-level "nothing read" refusal.** A folder with no workflows is said as nothing
-  to judge (decision 142).
+Each refusal one of the four older copies made and this rule does not is named here, under its
+decision. So is each shape in which `test/machine-rule.test.mjs` does not rerun a class refusal,
+where a decided admission applies (decision 184). Each line under a bullet is one spelling or
+refusal, and a case of that test cites it by its words. Every other refusal of the older copies
+has a case of its own there, citing the old file and line (decision 181).
+
+- **The hand readers' refusals of spellings the `yaml` package reads alike** (decision 42):
+  dazzer-app's `readSubset`, the runs-on test's plain subset (decision 99) and runners'
+  `parseYaml` each refused what they could not read by hand. The package reads each of these as
+  GitHub does, and drops comments as GitHub drops them:
+  - a tab between a key and its value
+  - a flow mapping, `on:` and `permissions:` included
+  - a flow list over lines, `on:` included
+  - a flow collection inside another
+  - a plain value continued on a line indented under it
+  - a quoted key
+  - a space before a key's colon
+  - a key that is not a plain name
+  - a quoted top-level key
+  - a double-quoted value holding a backslash
+  - a doubled quote
+  - a block header with an indentation digit
+  - an empty `-` item
+  - a leading `---`
+  - a byte order mark opening the file
+  - a closing `...`
+  - a quoted `ubuntu-latest`
+  - `permissions:` written as a list, which they counted as a write
+- **The older copies' narrower call admissions** (decision 171, and decision 178 for
+  `engineer-review/caller.yml`). The shared admission takes these calls, which an older copy
+  refused:
+  - a call at `refs/heads/main`, which dazzer's gate and dazzer-app's verdict test refused
+  - a call of `engineer-review.yml` outside a repository strict.json names, which dazzer's gate
+    read as a change check calling a workflow
+  - a call of `engineer-review.yml` from another workflow of dazzer-io/.github, which the runs-on
+    test refused
+  - a call from a repository outside runners' five, which runners' reader refused
+- **dazzer-app's line-for-line pin of its call of the shared scan** (decision 153). Its
+  languages and its exact grant belong to that repository's caller, not to the machine rule, and
+  r-3.26 keeps them in dazzer-app:
+  - languages other than the pin's
+  - a grant less than the pin's
+- **dazzer's tree-level refusals** (decision 142). A folder with no workflows is said as nothing
+  to judge, never as clean:
+  - a tree holding no change-check job
+  - a tree holding no production job
+  - a tree with no workflow folder
+- **runners' allowed list, held to its five repositories** (decisions 16 and 121). kept.json
+  names any dazzer-io repository, and a private repository that reads no setting needs no entry
+  for its literal-label jobs:
+  - a literal-label job of a private repository that reads no setting, named by no entry
+  - an entry outside its five repositories
+- **runners' list of built-in labels** (decision 24):
+  - a built-in label
+- **A call's machine and steps** (decision 129, and decision 171 for its keys). A job that only
+  calls an admitted shared workflow names no runs-on and holds no steps. The jobs it calls are
+  judged in dazzer-io/.github, where they run. So no call is refused for what only a machine or a
+  step holds:
+  - a refusal of the job's runs-on, or of its having none
+  - a refusal of a step, a checkout keeping its credential or CodeQL's own scan steps
+- **A change check's secrets list, for a call** (decision 93). A call hands on no secret at all,
+  whatever secrets.json names for its repository, and a workflow's top-level env does not reach
+  the workflow it calls. So secrets.json is not read for a call:
+  - a change check's secret that secrets.json does not name
+- **The unclassified and literal-label refusals, for a job a checks entry keeps** (decision 47).
+  The entry is the decision that its job runs as a change check, so the job is not refused for
+  having none. It is judged as a change check beside every class rule:
+  - a refusal that kept.json names no entry for the job

@@ -10,8 +10,7 @@
     },
     "repository_name": {
       "include": ["~ALL"],
-      "exclude": [],
-      "protected": true
+      "exclude": []
     }
   },
   "rules": [

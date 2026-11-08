@@ -81,6 +81,25 @@ test('checkRuleset refuses each way a ruleset could run another workflow, from e
   assert.ok(!misses.length, misses.join('\n'));
 });
 
+// GitHub's own words when a repository name condition pairs protected: true with ~ALL: its 422 to
+// Ben's --apply of 8 Nov (decision 187).
+const GITHUB_REFUSAL = 'Protected repository name conditions cannot include `~ALL`';
+// A ruleset as GitHub reads one back (gh api orgs/dazzer-io/rulesets/<id>): its own fields beside
+// the meaning, and a repository name condition's protected always there, false when the write
+// left it out.
+function readBack(r) {
+  const out = { ...clone(r), source_type: 'Organization', source: 'dazzer-io', node_id: `RRS_made_up_${r.id}`, created_at: '2026-11-08T09:00:00.000+02:00', updated_at: '2026-11-08T09:00:00.000+02:00', _links: { self: { href: `https://api.github.com/orgs/dazzer-io/rulesets/${r.id}` } } };
+  const repo = out.conditions?.repository_name;
+  if (repo && typeof repo === 'object' && repo.protected === undefined) repo.protected = false;
+  return out;
+}
+// GitHub's 422 to a write it refuses, in the words it gave Ben.
+const refuses = (body) => {
+  const repo = body?.conditions?.repository_name;
+  return repo?.protected === true && Array.isArray(repo.include) && repo.include.includes('~ALL')
+    ? { status: 422, text: JSON.stringify({ message: 'Validation Failed', errors: [GITHUB_REFUSAL], documentation_url: 'https://docs.github.com/rest/orgs/rules#create-an-organization-repository-ruleset', status: '422' }) }
+    : null;
+};
 // A fake GitHub holding the organisation's rulesets and dazzer-io/.github's id; every call kept.
 function fakeGitHub({ rulesets = [], sharedId = ID, write = null } = {}) {
   const calls = [];
@@ -92,19 +111,23 @@ function fakeGitHub({ rulesets = [], sharedId = ID, write = null } = {}) {
     if (method === 'GET' && path === '/orgs/dazzer-io/rulesets?per_page=100') return { status: 200, text: JSON.stringify(held.map((r) => ({ id: r.id, name: r.name }))) };
     if (method === 'GET' && (m = /^\/orgs\/dazzer-io\/rulesets\/(\d+)$/.exec(path))) {
       const r = held.find((x) => String(x.id) === m[1]);
-      return r ? { status: 200, text: JSON.stringify(r) } : { status: 404, text: '{}' };
+      return r ? { status: 200, text: JSON.stringify(readBack(r)) } : { status: 404, text: '{}' };
     }
     if (method === 'GET' && path === '/repos/dazzer-io/.github') return { status: 200, text: JSON.stringify({ id: sharedId, name: '.github' }) };
     if (method === 'PUT' && (m = /^\/orgs\/dazzer-io\/rulesets\/(\d+)$/.exec(path))) {
       const at = held.findIndex((x) => String(x.id) === m[1]);
       if (at === -1) return { status: 404, text: '{}' };
+      const no = refuses(body);
+      if (no) return no;
       held[at] = { ...clone(write ?? body), id: held[at].id };
-      return { status: 200, text: JSON.stringify(held[at]) };
+      return { status: 200, text: JSON.stringify(readBack(held[at])) };
     }
     if (method === 'POST' && path === '/orgs/dazzer-io/rulesets') {
+      const no = refuses(body);
+      if (no) return no;
       const r = { ...clone(write ?? body), id: next++ };
       held.push(r);
-      return { status: 201, text: JSON.stringify(r) };
+      return { status: 201, text: JSON.stringify(readBack(r)) };
     }
     return { status: 404, text: '{}' };
   };
@@ -206,5 +229,70 @@ test('--readings runs the judge over every private, non-archived repository GitH
   if (calls.some((c) => c.method !== 'GET')) misses.push(`Could not find --readings making reads alone: ${JSON.stringify(calls)}`);
   const down = await A.main(['--readings'], { request: async () => ({ status: 503, text: '' }), out: () => {}, err: (l) => err.push(l) });
   if (down !== 2 || !/UNREAD: could not list dazzer-io's repositories: GitHub answered 503/.test(err.join('\n'))) misses.push(`Could not find a GitHub that does not answer read as unread, exit 2: ${down} ${err.join('\n')}`);
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+// Decision 187: GitHub refused Ben's --apply of 8 Nov with 422, "Protected repository name
+// conditions cannot include `~ALL`", since ruleset.json named every repository as ~ALL with
+// protected: true. protected blocks renaming the repositories a list of names targets; with ~ALL a
+// renamed repository stays included, so the file leaves it out, and GitHub reads it back as false.
+test('ruleset.json names every repository in a shape GitHub accepts: ~ALL, nothing excluded, no protected: true', () => {
+  need();
+  const r = fileRuleset();
+  const repo = r.conditions?.repository_name;
+  assert.deepEqual(A.checkRuleset(r), [], `Could not find machine-rule/ruleset.json passing checkRuleset: ${JSON.stringify(A.checkRuleset(r))}`);
+  assert.deepEqual(repo?.include, ['~ALL'], `Could not find the repository condition including ~ALL: ${JSON.stringify(repo)}`);
+  assert.deepEqual(repo?.exclude, [], `Could not find the repository condition excluding nothing: ${JSON.stringify(repo)}`);
+  assert.notEqual(repo?.protected, true, `Could not find the repository condition free of protected: true, which GitHub refuses beside ~ALL with 422 (decision 187): ${JSON.stringify(repo)}`);
+});
+
+test('checkRuleset refuses protected: true beside ~ALL in GitHub\'s own words, and --apply then calls nothing', async () => {
+  need();
+  const misses = [];
+  const bad = clone(fileRuleset());
+  bad.conditions.repository_name = { include: ['~ALL'], exclude: [], protected: true };
+  const problems = A.checkRuleset(bad);
+  if (!problems.some((p) => p.includes(GITHUB_REFUSAL) && /protected: true/.test(p) && /422/.test(p))) misses.push(`Could not find checkRuleset refusing protected: true beside ~ALL, quoting GitHub's 422 "${GITHUB_REFUSAL}": ${JSON.stringify(problems)}`);
+  for (const [name, protectedIs] of [['protected: false', false], ['protected left out', undefined]]) {
+    const ok = clone(fileRuleset());
+    ok.conditions.repository_name = { include: ['~ALL'], exclude: [] };
+    if (protectedIs !== undefined) ok.conditions.repository_name.protected = protectedIs;
+    if (A.checkRuleset(ok).length) misses.push(`Could not find ~ALL with ${name} passing checkRuleset: ${JSON.stringify(A.checkRuleset(ok))}`);
+  }
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'machine-rule-ruleset-'));
+  writeFileSync(join(dir, 'ruleset.json'), JSON.stringify(bad));
+  const gh = fakeGitHub({ rulesets: [] });
+  const err = [];
+  const code = await A.main(['--apply'], { request: gh.request, out: () => {}, err: (l) => err.push(l), file: join(dir, 'ruleset.json') });
+  if (code !== 2 || gh.calls.length || !err.join('\n').includes(GITHUB_REFUSAL)) misses.push(`Could not find a ruleset file with protected: true beside ~ALL refused before any call to GitHub, in GitHub's words: ${code} ${err.join('\n')} ${JSON.stringify(gh.calls)}`);
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+test('the read-back counts a repository condition GitHub reads as protected: false the same as one the file leaves out or sets false', async () => {
+  need();
+  const misses = [];
+  const file = clone(fileRuleset());
+  delete file.conditions.repository_name.protected;
+  const live = readBack({ ...clone(file), id: 7, enforcement: 'evaluate' });
+  if (live.conditions.repository_name.protected !== false) misses.push('Could not find the fake GitHub reading protected back as false');
+  const left = A.diffRuleset(live, file);
+  if (left.length) misses.push(`Could not find a live protected: false matching a file that leaves protected out: ${JSON.stringify(left)}`);
+  const setFalse = clone(file);
+  setFalse.conditions.repository_name.protected = false;
+  const f = A.diffRuleset(live, setFalse);
+  if (f.length) misses.push(`Could not find a live protected: false matching a file that sets it false: ${JSON.stringify(f)}`);
+  const lockedLive = clone(live);
+  lockedLive.conditions.repository_name.protected = true;
+  const t = A.diffRuleset(lockedLive, file);
+  if (!t.some((l) => l.startsWith('conditions.repository_name.protected: live true'))) misses.push(`Could not find a live protected: true still read as differing from a file that leaves it out: ${JSON.stringify(t)}`);
+  // Ben's next run: --apply of the shipped file onto an organisation without the ruleset, GitHub
+  // reading it back in its own shape, then the no-argument read.
+  const gh = fakeGitHub({ rulesets: [{ id: 8, name: 'made-up-other', target: 'branch', enforcement: 'active', rules: [{ type: 'deletion' }] }] });
+  const apply = await run(['--apply'], gh);
+  if (apply.code !== 0 || !/now is the file's version, enforcement evaluate/.test(apply.all)) misses.push(`Could not find --apply of the shipped file accepted by GitHub and read back as the file's version, exit 0: ${apply.code} ${apply.all}`);
+  const after = await run([], gh);
+  if (after.code !== 0 || !/is the file's version, enforcement evaluate/.test(after.all)) misses.push(`Could not find the read after --apply saying it matches, exit 0: ${after.code} ${after.all}`);
   assert.ok(!misses.length, misses.join('\n'));
 });

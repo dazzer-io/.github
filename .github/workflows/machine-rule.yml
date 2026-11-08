@@ -1,0 +1,103 @@
+# Machine rule (decision 121): judges a change's .github/workflows folder by the organisation's
+# one rule on which job may use which of our machines, machine-rule/judge.mjs, then lints the same
+# folder with actionlint. The organisation ruleset machine-rule-required (machine-rule/ruleset.json)
+# runs this file on the default branch of every repository; here it also runs on this repository's
+# own pull requests and merge queue entries.
+#
+# The rule is checked out of job.workflow_repository at job.workflow_sha, this file's own commit,
+# as security-scan.yml checks out its decision script, and the change is checked out of the
+# triggering repository at the pull request's head commit or the merge group's, so the rule judges
+# the change and never its own folder by mistake. Both checkouts keep no git credential.
+#
+# It runs on GitHub's ubuntu-latest, written as a literal label, a job of under a minute: reading
+# no setting keeps it off our machines in public repositories, where the fallback watcher does not
+# read the runs (decision 104); kept.json names it. Its token reads the code alone, and it holds no
+# secret. actionlint is a pinned release, checked by its SHA-256 before it runs, with shellcheck and
+# pyflakes off. Its one ignore is narrow: actionlint 1.7.12's job context lacks workflow_repository
+# and workflow_sha, which GitHub's job context gives and this repository's engineer-review.yml,
+# security-scan.yml and this file read, so without it this repository's own folder is never clean.
+name: Machine rule
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  machine-rule:
+    name: Machine rule
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Name this workflow's own repository and commit
+        id: source
+        env:
+          SOURCE_REPO: ${{ job.workflow_repository }}
+          SOURCE_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$SOURCE_REPO" ] || [ -z "$SOURCE_SHA" ]; then
+            echo "::error title=Machine rule::the contexts job.workflow_repository and job.workflow_sha must both be set, so the rule's source is known"
+            exit 1
+          fi
+          echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Name the change's head commit
+        id: change
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          if [ -z "$HEAD_SHA" ]; then
+            echo "::error title=Machine rule::neither the pull request's nor the merge group's head commit is set, so the change to judge is unknown"
+            exit 1
+          fi
+          echo "sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the rule at that commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.source.outputs.repo }}
+          ref: ${{ steps.source.outputs.sha }}
+          path: .machine-rule
+          persist-credentials: false
+
+      - name: Fetch the change at its head commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.change.outputs.sha }}
+          path: .change
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Install the rule's YAML reader
+        working-directory: .machine-rule
+        run: npm ci --ignore-scripts
+
+      - name: Judge the change's workflows
+        env:
+          REPOSITORY: ${{ github.repository }}
+          VISIBILITY: ${{ github.event.repository.visibility }}
+          GH_TOKEN: ${{ github.token }}
+        run: node .machine-rule/machine-rule/judge.mjs --repository "$REPOSITORY" --visibility "$VISIBILITY" .change
+
+      - name: Lint the change's workflows with actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          if [ -z "$(find .change/.github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null)" ]; then
+            echo "Machine rule: no workflow in .github/workflows, so actionlint has nothing to read (never read as clean)"
+            exit 0
+          fi
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          cd .change
+          "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes= -ignore 'property "workflow_(repository|sha)" is not defined in object type'

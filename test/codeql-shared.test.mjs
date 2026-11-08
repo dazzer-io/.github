@@ -59,12 +59,15 @@
 //     --additional-packs, which the action passes itself for a pull request's diff-informed
 //     analysis (src/analyze.ts:468-469, 515).
 //
-// test/runs-on.test.mjs reads the same file by its general rules (a scan job reading SCAN_RUNNER_2
-// holds no write and no secret; a write-token job names a literal GitHub label) and holds it to
-// the plain subset of YAML its header lists, so the reader below is a plain one: it reads that
-// subset into keys and lists, and refuses a key written twice in any mapping. The kept cases at
-// the end plant into the real file's text at least one fault for every refusal judgeShared makes,
-// each named for the part it plants into, and each must be refused with that refusal's words.
+// machine-rule/judge.mjs, the shared machine rule, reads the same file by its general rules (a
+// read-only scan job runs on ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }} exactly and holds no
+// secret; a write-token job names a literal GitHub label), refuses a spelling another YAML parser
+// could read another way, and test/machine-rule.test.mjs runs it over this repository's workflow
+// folder. The reader below is a plain one: it reads the plain YAML this file is written in into
+// keys and lists, refuses a line it does not read as a key or a list item, and refuses a key
+// written twice in any mapping. The kept cases at the end plant into the real file's text at least
+// one fault for every refusal judgeShared makes, each named for the part it plants into, and each
+// must be refused with that refusal's words.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

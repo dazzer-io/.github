@@ -1,0 +1,32 @@
+{
+  "name": "machine-rule-required",
+  "target": "branch",
+  "enforcement": "evaluate",
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "include": ["~DEFAULT_BRANCH"],
+      "exclude": []
+    },
+    "repository_name": {
+      "include": ["~ALL"],
+      "exclude": [],
+      "protected": true
+    }
+  },
+  "rules": [
+    {
+      "type": "workflows",
+      "parameters": {
+        "do_not_enforce_on_create": true,
+        "workflows": [
+          {
+            "path": ".github/workflows/machine-rule.yml",
+            "ref": "refs/heads/main",
+            "repository_id": 1433582766
+          }
+        ]
+      }
+    }
+  ]
+}

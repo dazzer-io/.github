@@ -939,7 +939,7 @@ test('the command: exit 0 clean, 1 refused, 2 unread, and a folder with no workf
       await c(() => assert.ok(r.code === 2 && /is read as dazzer-io\/\.github only when its origin can be read and names exactly dazzer-io\/\.github/.test(r.err), `Could not find a copy read as .github with ${why} refused, exit 2: exit ${r.code}\n${r.all}`));
     }
     const token = await run(['--repository', 'dazzer-io/.github', '--visibility', 'public', scanCopy], { gitRemote: () => 'https://x-access-token:made-up-token-123@gitlab.example.com/dazzer-io/.github.git' });
-    await c(() => assert.ok(token.code === 2 && token.err.includes('gitlab.example.com') && !token.err.includes('made-up-token-123') && !token.err.includes('x-access-token'), `Could not find the refusal naming the origin's host alone, never its token (decision 164): ${token.err}`));
+    await c(() => assert.ok(token.code === 2 && token.err.includes('; it has an origin on gitlab.example.com, so whether its shared scans may read a scan setting is unknown.') && !token.err.includes('made-up-token-123') && !token.err.includes('x-access-token'), `Could not find the refusal naming the origin's host alone, never its token (decision 164): ${token.err}`));
     const foreign = await run(['--repository', 'made-up-org/.github', '--visibility', 'public', scanCopy]);
     await c(() => assert.ok(foreign.code === 1 && /a scan setting/.test(foreign.all), `Could not find another owner's .github read as no shared repository, its scan refused: ${foreign.all}`));
     const broken = temp('machine-rule-lists-');
@@ -948,6 +948,33 @@ test('the command: exit 0 clean, 1 refused, 2 unread, and a folder with no workf
     const unreadLists = await run(['--repository', 'dazzer-io/dazzer', '--visibility', 'private', copyOf({ 'ci.yml': check() })], { listsDir: broken });
     await c(() => assert.ok(unreadLists.code === 2 && /has no effect/.test(unreadLists.err), `Could not find a list failing its check leaving the rule unread, exit 2: ${unreadLists.all}`));
   });
+});
+
+// ================================================================ no bare host checked as a substring (decision 179)
+// GitHub's code scanner reads .includes, .indexOf, .startsWith or .endsWith on a text shaped like a bare
+// host name as a weak URL check (js/incomplete-url-substring-sanitization), and main's code-scanning
+// rule refuses a merge while one stands; a test names a host by the words around it instead.
+test('no JavaScript file git tracks here checks a bare host name as a substring, which GitHub\'s code scanner reads as a weak URL check (decision 179)', () => {
+  const misses = [];
+  let tracked = [];
+  try {
+    tracked = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean);
+  } catch (e) {
+    misses.push(`Could not find the files git tracks in this copy, so whether any checks a bare host name as a substring is unread: ${e.message}`);
+  }
+  const code = tracked.filter((f) => /\.[cm]?[jt]sx?$/.test(f));
+  if (!code.includes('machine-rule/judge.mjs')) misses.push(`Could not find machine-rule/judge.mjs among the JavaScript files git tracks here, so the list read is not this repository's: ${code.length} files`);
+  // A quoted text of two or more dot-separated parts of letters, digits and hyphens that is no file's name.
+  const CALL = /\.(?:includes|indexOf|startsWith|endsWith)\(\s*(['"`])([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\1/g;
+  const FILE = /\.(?:json|ya?ml|[cm]?[jt]sx?|md|txt|toml)$/i;
+  for (const f of code) {
+    const at = join(ROOT, f);
+    if (!existsSync(at) || !statSync(at).isFile()) continue;
+    readFileSync(at, 'utf8').split('\n').forEach((l, i) => {
+      for (const m of l.matchAll(CALL)) if (!FILE.test(m[2])) misses.push(`Could not find ${f}:${i + 1} free of a bare host name checked as a substring, ${m[0]}, which GitHub's code scanner reads as a weak URL check: assert the words around the host instead.`);
+    });
+  }
+  assert.ok(!misses.length, misses.join('\n'));
 });
 
 // ================================================================ the readings (runners' scan test gate S6 and readCalls, decision 160)

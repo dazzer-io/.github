@@ -4,13 +4,13 @@
 # languages; this file decides everything else, so a new repository needs no copy and no review of
 # one, and a change in a calling repository cannot edit the scan it is scanned by.
 #
-# WHAT INIT ALSO READS. CodeQL's init also reads some of the calling repository's custom
-# properties named github-codeql-* (github/codeql-action v4.39.3), so such a property can change
-# what a caller's scan runs whatever this file says. For example, github-codeql-extra-queries can
-# replace the query suite (src/config-utils.ts:409-414, src/config/db-config.ts:472-475), and
-# github-codeql-tools can pick the CodeQL bundle (the action's CHANGELOG). The organisation defines
-# none of them (its one property is kind, read 8 Nov 2026). Defining one is an organisation
-# owner's setting, and a change in a calling repository cannot set them.
+# WHAT THE ACTION ALSO READS (decision 170). github/codeql-action names five custom repository
+# properties that have meaning to it: github-codeql-config-file, -disable-overlay, -extra-queries,
+# -file-coverage-on-prs and -tools (github/codeql-action v4.39.3
+# src/feature-flags/properties.ts:10-20), and it parses github-codeql-extra-queries as queries
+# (src/config/db-config.ts:472-475). So one such property, not this file, could change the queries
+# a scan runs (src/config/db-config.ts:543-560). The organisation defines none of them: its one
+# custom property is kind (read 8 Nov 2026).
 #
 # WHAT IT SCANS. What GitHub's automatic setup scanned on dazzer and dazzer-app, read from its own
 # runs on 5 Nov 2026: each language the caller names, of actions, javascript-typescript and python
@@ -44,11 +44,10 @@
 #     scope and not the organisation's name, since the pack is no GitHub project and no line here
 #     names a project by hand (decision 167). The analyze step names it to the queries
 #     through CODEQL_ACTION_EXTRA_OPTIONS, an option GitHub documents on that step, as
-#     --model-packs of database run-queries, which the action appends after its own flags; for
-#     every other language the option holds only --no-database-extension-packs (NO MODEL PACKS
-#     FROM THE SCANNED CODE, below). It passes no --additional-packs, since the action passes its
-#     own for a pull request's diff-informed analysis and CodeQL's manual says a later one
-#     overrides it.
+#     --model-packs of database run-queries; every language also gets --no-database-extension-packs
+#     (below). It passes no --additional-packs, since the action passes its own
+#     for a pull request's diff-informed analysis (src/analyze.ts:468-469) and CodeQL's manual says
+#     a later one overrides it (CodeQL CLI manual, database run-queries, --additional-packs).
 #   - Written as two files of fixed text, not by CodeQL's own pack commands: the step then runs
 #     before the checkout, so it reads nothing the change wrote, and it runs no tool but the shell,
 #     holds no token and takes no input. CodeQL 2.27.4, the version this pin of the action runs,
@@ -58,23 +57,24 @@
 #     package registry, but a public package cannot be made private again, and a private one needs
 #     a grant for each repository's workflows, which a new repository would wait on.
 #
-# NO MODEL PACKS FROM THE SCANNED CODE (decision 169). A repository can keep CodeQL model packs of
-# its own in a .github/codeql/extensions folder, and GitHub's page on editing default setup says
-# such packs are still recognized and used in advanced setup, which this scan is. So a change could
-# quiet the scan of its own pull request by adding a pack there: a trusted publisher added, or a
-# source or sink modelled away. Live run 42421160617 showed it: a branch carrying a pack that
-# trusts docker lost the unpinned-tag result on docker/login-action@v3.
+# NO MODEL PACKS FROM THE SCANNED CODE (decision 169). GitHub's docs say model packs in a
+# repository's .github/codeql/extensions folder are still recognized and used in advanced setup
+# (GitHub docs, Edit default setup). So a change could quiet its own scan by adding a pack there,
+# as run 42421160617 showed: the scan as main held it, run on a branch carrying a pack that trusts
+# docker, lost the unpinned-tag result on docker/login-action@v3.
 #   - What closes it. For every language it takes, the analyze step hands database run-queries
-#     --no-database-extension-packs, through the same CODEQL_ACTION_EXTRA_OPTIONS. CodeQL's manual
-#     says the option omits the extension packs stored in the database when it was created, from a
-#     configuration file or from the extensions folder of the code being analysed.
-#   - What still applies. CodeQL's own models, shipped in the bundle with its library packs
-#     (codeql/<language>-all), which every query reads as before; the packs this scan names (for
-#     actions, the trusted-publisher pack, named with --model-packs); and the action's own pack for
-#     a pull request's diff-informed analysis, which it hands run-queries with --extension-packs and
-#     never stores in the database. Left out are the packs stored in the database when it is
-#     created: those the scanned code carries in its extensions folder and those a configuration
-#     file names. This scan names no configuration file.
+#     --no-database-extension-packs through the same CODEQL_ACTION_EXTRA_OPTIONS, which the action
+#     puts after its own flags (github/codeql-action v4.39.3 src/codeql.ts:779-790). CodeQL's
+#     manual says the option omits extension packs stored in the database during its creation,
+#     from a configuration file (this scan names none) or from the extensions folder of the code
+#     being analysed (CodeQL CLI manual, database run-queries, --no-database-extension-packs).
+#   - What the runs showed. Run 42422452004, on this change with the same pack, flagged
+#     docker/login-action@v3 again, did not flag the dazzer-io call, and gave the other results the
+#     same. Run 42422468105, a draft pull request on this change, was diff-informed and flagged
+#     only docker; for such an analysis the action passes run-queries
+#     --extension-packs=codeql-action/pr-diff-range (src/analyze.ts:468-469, 515). The
+#     javascript-typescript and python analyses passed with the option in runs 42423831334 and
+#     42423848478.
 #   - What it drops. None of dazzer-io's 19 repositories had a .github/codeql folder on its default
 #     branch, read 8 Nov 2026 (each answered 404), so no model a repository relies on is dropped. A
 #     repository that wants models of its own asks for them here, in the shared scan, where a
@@ -215,9 +215,9 @@ jobs:
 
       # upload: never keeps the token read-only; the post-processed results are what an upload
       # would send. The database is not uploaded either, since that also needs security-events: write.
-      # For every language the queries omit the model packs the scanned code carries itself
-      # (--no-database-extension-packs, decision 169, NO MODEL PACKS FROM THE SCANNED CODE above);
-      # for actions they also read the trusted-publisher pack the second step wrote.
+      # For actions, the queries read the trusted-publisher pack the second step wrote; for any
+      # other language the option holds only --no-database-extension-packs, which actions also
+      # takes (decision 169).
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         env:

@@ -36,6 +36,8 @@ export const RULESET_NAME = 'machine-rule-required';
 export const RULE_PATH = '.github/workflows/machine-rule.yml';
 export const RULE_REF = 'refs/heads/main';
 export const SHARED_REPOSITORY_ID = 1433582766;
+// GitHub's own words when a repository name condition pairs protected: true with ~ALL (decision 187).
+export const GITHUB_ALL_REFUSAL = 'Protected repository name conditions cannot include `~ALL`';
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -51,6 +53,9 @@ export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID } = {}) {
   if (!isObj(ref) || !same(ref.include, ['~DEFAULT_BRANCH']) || !same(ref.exclude ?? [], [])) problems.push(`its ref condition is ${JSON.stringify(ref)}, not the default branch alone (include ~DEFAULT_BRANCH, exclude nothing)`);
   const repo = r.conditions?.repository_name;
   if (!isObj(repo) || !same(repo.include, ['~ALL']) || !same(repo.exclude ?? [], [])) problems.push(`its repository condition is ${JSON.stringify(repo)}, narrower than every repository (include ~ALL, exclude nothing)`);
+  // protected blocks renaming the repositories a list of names targets; GitHub refuses it beside
+  // ~ALL, as it refused Ben's --apply of 8 Nov, and a renamed repository stays in ~ALL anyway.
+  if (isObj(repo) && repo.protected === true && Array.isArray(repo.include) && repo.include.includes('~ALL')) problems.push(`its repository condition sets protected: true beside include ~ALL, which GitHub refuses with 422: "${GITHUB_ALL_REFUSAL}" (decision 187)`);
   for (const k of Object.keys(r.conditions ?? {})) if (!['ref_name', 'repository_name'].includes(k)) problems.push(`it holds the condition ${k}, which narrows the repositories it runs in`);
   if (!Array.isArray(r.rules) || r.rules.length !== 1) problems.push(`it holds ${Array.isArray(r.rules) ? r.rules.length : 'no'} rules, not one workflows rule`);
   for (const rule of Array.isArray(r.rules) ? r.rules : []) {
@@ -68,13 +73,20 @@ export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID } = {}) {
   return problems;
 }
 
+// GitHub reads a repository name condition back with protected always there, false where the
+// write left it out (decision 187), so a protected left out and one set false mean the same.
+const conditionsOf = (c) => {
+  if (!isObj(c) || !isObj(c.repository_name)) return c;
+  const repo = c.repository_name;
+  return { ...c, repository_name: { ...repo, protected: repo.protected === undefined ? false : repo.protected } };
+};
 // The parts of a ruleset that are its meaning, as GitHub returns them and as the file writes them.
 const meaningOf = (r) => ({
   name: r?.name,
   target: r?.target,
   enforcement: r?.enforcement,
   bypass_actors: r?.bypass_actors ?? [],
-  conditions: r?.conditions,
+  conditions: conditionsOf(r?.conditions),
   rules: r?.rules,
 });
 function flatten(x, at = '', out = {}) {

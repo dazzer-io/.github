@@ -33,7 +33,11 @@ its origin does not say so, or GitHub could not be asked about a commit.
 - **The ruleset `machine-rule-required`** (`ruleset.json`) is a workflows rule. It runs that
   file, read from dazzer-io/.github by its repository id at `refs/heads/main`, on the default
   branch of every repository, and not when a branch is created. It is written in `evaluate`
-  first, so it watches before it refuses.
+  first, so it watches before it refuses. Every repository is `~ALL` with nothing excluded and
+  no `protected: true`: GitHub refuses that pairing with 422 ("Protected repository name
+  conditions cannot include `~ALL`"), and a renamed repository stays in `~ALL` anyway, so the
+  check refuses the pairing in GitHub's words, and the read-back counts a `protected` read back
+  as false the same as the file leaving it out (decision 187).
 - **`apply-ruleset.mjs`** prints how the live ruleset differs from the file, with no flag.
   `--apply` writes the file's version, and only to the ruleset of that name: a security
   setting, so this is Ben's own command, run after the merge (decisions 121, 177). Before

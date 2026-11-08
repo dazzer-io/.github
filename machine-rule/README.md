@@ -61,23 +61,35 @@ its origin does not say so, or GitHub could not be asked about a commit.
   bypass actor, includes `~DEFAULT_BRANCH`, and holds one `required_status_checks` rule: that
   one context from integration 15368, GitHub Actions, with `do_not_enforce_on_create: true` and
   the strict policy off, so a branch need not be up to date to merge. Its check refuses another
-  context, another integration or none, and a bypass. `--apply` writes it only once each
-  repository's default-branch head carries that check passed: the latest run of that name from
-  integration 15368, completed, concluded success. A missing, failed, unfinished or other-app
-  check refuses with its reason, and nothing is written.
-- **Why `main-spelling-refused` comes first** (decision 195). GitHub compares strings without
-  regard to case (its expressions page: "GitHub ignores case when comparing strings"), so the
-  guard `github.ref == 'refs/heads/main'` is true on a branch named `MAIN`. The locked shape
-  below is held to main only once `main-spelling-refused` is live, and runners'
-  `switch-on --locked` gate (r-2.3) keeps every `LOCKED_` setting empty until then.
+  context, another integration or none, and a bypass. With the strict policy off, the check is
+  judged on the commit being merged, so its guard reads the head of the newest pull request
+  merged into each repository's default branch and, where that branch's rules hold a merge
+  queue, the newest merge-group commit too, never the branch's own head, which a merge by
+  `github-actions[bot]` leaves with no run (decision 208). A run counts only on that exact
+  commit, from integration 15368, named exactly `codeql / CodeQL complete`, and the newest such
+  run must be completed and concluded success. The guard is read only when this ruleset would be
+  created or changed, and it gates this ruleset's write alone: a missing, failed, unfinished or
+  other-app check holds it back with its reason and what would pass it, and `--apply` still
+  writes `machine-rule-required` and `main-spelling-refused`.
+- **Why `main-spelling-refused` comes first** (decisions 195, 208). GitHub compares strings
+  without regard to case (its expressions page: "GitHub ignores case when comparing strings"), so
+  the guard `github.ref == 'refs/heads/main'` is true on a branch named `MAIN`. A creation rule
+  never touches a branch that is already there, so the locked shape below is held to main only
+  in dazzer and dazzer-app, once `main-spelling-refused` is live and no other spelling of main
+  exists there, and runners' `switch-on --locked` gate (r-2.3) keeps every `LOCKED_` setting
+  empty until then. Holding it to main in any other repository is other work, outside these
+  rulesets.
 - **`apply-ruleset.mjs`** prints how each live ruleset differs from its file, with no flag, and,
-  where `codeql-complete-required` is absent or differs, what its guard reads today.
+  where `codeql-complete-required` is absent or differs, what its guard reads today, closing on
+  what `--apply` would then do: each ruleset it would write, and the one it would hold back.
   `node machine-rule/apply-ruleset.mjs --apply` writes each file's version, and only to the
   ruleset of its name, each to its own id: security settings, so this is Ben's own command, run
-  after the merge (decisions 121, 177, 192). Before writing anything it checks every file, checks
-  that dazzer-io/.github's live repository id is the one `ruleset.json` names, and reads
-  `codeql-complete-required`'s guard: one refusal and nothing is written. After writing it reads
-  each ruleset back. `--readings [--moving a,b]
+  after the merge (decisions 121, 177, 192). Both read the organisation's rulesets across every
+  page. Before writing anything it checks every file, checks that dazzer-io/.github's live
+  repository id is the one `ruleset.json` names, and lists every branch of dazzer and
+  dazzer-app: while a branch spelled main in other letters already exists in either, it is
+  named, and the read and `--apply` refuse. Any of these and nothing is written. After writing it
+  reads each written ruleset back. `--readings [--moving a,b]
   [--only a,b] [--class production]` runs the judge over every private, non-archived
   repository's workflow folder at its default branch, read with `gh`. It follows every call at
   the ref it names, up to GitHub's ten levels, and lists each refusal. A workflow a call reaches
@@ -141,8 +153,9 @@ public one.
 - **A workflow that signs in** (`id-token: write`, `write-all` or an `environment`) reads no
   `CHECKS_` or `SCAN_` setting. Each of its jobs reads the locked setting in its `runs-on`,
   held to main: `${{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_<N> || '<GitHub's
-  machine>' }}`, and nowhere else (decisions 9, 23, 40); the guard holds it to main alone once
-  `main-spelling-refused` is live (decision 195, above). Unless kept.json keeps it on GitHub,
+  machine>' }}`, and nowhere else (decisions 9, 23, 40); in dazzer and dazzer-app, the guard
+  holds it to main alone once `main-spelling-refused` is live and no other spelling of main
+  exists there (decisions 195, 208, above). Unless kept.json keeps it on GitHub,
   such a workflow is refused when it is started:
   - by `pull_request_target` or `workflow_run`, where `github.ref` is the default branch
     whatever started the run;

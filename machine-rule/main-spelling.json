@@ -1,0 +1,27 @@
+{
+  "name": "main-spelling-refused",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/heads/M[Aa][Ii][Nn]",
+        "refs/heads/mA[Ii][Nn]",
+        "refs/heads/maI[Nn]",
+        "refs/heads/maiN"
+      ],
+      "exclude": []
+    },
+    "repository_name": {
+      "include": ["dazzer", "dazzer-app"],
+      "exclude": [],
+      "protected": true
+    }
+  },
+  "rules": [
+    {
+      "type": "creation"
+    }
+  ]
+}

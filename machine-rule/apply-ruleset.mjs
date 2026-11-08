@@ -26,26 +26,29 @@
 //
 // Exit codes. The read and --apply: 0 when every kept ruleset is its file's version (for --apply,
 // as read back after the writes); 1 when one or more were held back or differ (for the read, one
-// --apply would create, update or hold back), each named; 2 when GitHub could not be read at all:
-// the organisation's rulesets could not be listed, so nothing was written. --readings: 0 when
-// nothing is refused, 1 when something is, 2 when a repository could not be read. A wrong argument
-// is 2.
+// --apply would create, update or hold back), each named, a write gh got no answer to among them;
+// 2 when GitHub could not be read at all: the organisation's rulesets, listed before any write,
+// could not be listed, so nothing was written. --readings: 0 when nothing is refused, 1 when
+// something is, 2 when a repository could not be read. A wrong argument is 2.
 //
 // --moving treats the named repositories as moving (their literal-label jobs need kept.json
 // entries) even where they read no setting; --only reads just those repositories; --class
 // production lists only the refusals of jobs in workflows that sign in, so each milestone's
 // finish check reads exactly what that milestone delivers.
 //
-// Each kept ruleset stands alone (decision 210): its file, read and checked; its own check on
+// Each kept ruleset stands alone (decisions 210, 212): its file, read and checked; its own check on
 // GitHub, which for machine-rule-required is that dazzer-io/.github's live repository id is the one
-// its file names; its live version, found by name and read by its own id; its write; and its
-// read-back. A refusal of one, a file that cannot be read or fails its check, a wrong repository
-// id, two live rulesets of its name, a write GitHub refuses, or an answer GitHub does not give about
-// it, holds back that one alone and names it, while the others are still written and read back.
-// Each write goes to the ruleset of its file's name alone: a PUT to its own id when it is there, a
-// POST when it is not, then read back by that id. No other ruleset is read for writing or written,
-// and nothing else is read: no branch, pull request or check run. Every GitHub call goes through the
-// request handed to main(), so tests need no network.
+// its file names; its live version, found by name and read by the id the list names; its write; and
+// its read-back. Every GitHub call about it sits inside its own containment. A refusal of one, a
+// file that cannot be read or fails its check, a wrong repository id, two live rulesets of its name,
+// a write GitHub refuses, a write gh gets no answer to (said as one that may have landed), or an
+// answer GitHub does not give about it or gives with no object or no integer id in it, holds back
+// that one alone and names it, while the others are still written and read back. Each write goes to
+// the ruleset of its file's name alone: a PUT to the id the list names when it is there, a POST when
+// it is not, then read back, an update by that id and a creation by the id in GitHub's answer to
+// it. No other ruleset is read for writing or written, and nothing else is read: no branch, pull
+// request or check run. Every GitHub call goes through the request handed to main(), so tests need
+// no network.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -86,6 +89,7 @@ export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID } = {}) {
     const ws = Array.isArray(p.workflows) ? p.workflows : [];
     if (ws.length !== 1) { problems.push(`its workflows rule names ${ws.length} workflows, not machine-rule.yml alone`); continue; }
     const w = ws[0];
+    if (!isObj(w)) { problems.push(`its workflows rule names ${JSON.stringify(w)}, not a workflow`); continue; }
     if (w.path !== RULE_PATH) problems.push(`its workflows rule runs ${JSON.stringify(w.path)}, not ${RULE_PATH}`);
     if (w.ref !== RULE_REF) problems.push(`its workflows rule reads the workflow at ${JSON.stringify(w.ref)}, not ${RULE_REF}`);
     if (w.repository_id === undefined || w.repository_id === null) problems.push(`its workflows rule names no repository id, so the workflow's repository is not ${SHARED}`);
@@ -303,19 +307,30 @@ async function readPages(request, path, what) {
   }
   throw new ReadFailure(`${what} run past ${MOST_PAGES} pages of ${PER_PAGE}, more than this command reads`);
 }
-// One ruleset as GitHub holds it, read by its own id.
-async function readRuleset(request, name, id) {
-  const r = await request({ path: `/orgs/${ORG}/rulesets/${id}` });
-  if (r.status !== 200) throw new ReadFailure(`could not read the ruleset ${name} (${id}): GitHub answered ${r.status}`);
-  return parse(r, `the ruleset ${name} (${id})`);
+// Why an answer GitHub gave, said as whose, holds no object with an integer id, or null when it
+// does. Such an answer is unread, never absent: a ruleset GitHub answers for with nothing in it is
+// not known to be missing (D212).
+const idLeftOut = (x, whose) => {
+  if (!isObj(x)) return `${whose} is ${String(JSON.stringify(x)).slice(0, 80)}, no object`;
+  if (!Number.isInteger(x.id)) return `${whose} names ${x.id === undefined ? 'no id' : `the id ${JSON.stringify(x.id)}, no integer`}`;
+  return null;
+};
+// One object GitHub answered 200 for, with its integer id; anything else is unread.
+async function readOne(request, path, what) {
+  const r = await request({ path });
+  if (r.status !== 200) throw new ReadFailure(`could not read ${what}: GitHub answered ${r.status}`);
+  const x = parse(r, what);
+  const no = idLeftOut(x, "GitHub's answer");
+  if (no) throw new ReadFailure(`could not read ${what}: ${no}`);
+  return x;
 }
+// One ruleset as GitHub holds it, read by its own id.
+const readRuleset = (request, name, id) => readOne(request, `/orgs/${ORG}/rulesets/${id}`, `the ruleset ${name} (${id})`);
 
 // machine-rule-required's own check on GitHub: the repository id its file names is
 // dazzer-io/.github's, as GitHub gives it. Returns the refusal, or null.
 async function sharedIdHolds(request, body, path) {
-  const repo = await request({ path: `/repos/${SHARED}` });
-  if (repo.status !== 200) throw new ReadFailure(`could not read ${SHARED}: GitHub answered ${repo.status}`);
-  const id = parse(repo, SHARED).id;
+  const { id } = await readOne(request, `/repos/${SHARED}`, SHARED);
   const named = body.rules[0].parameters.workflows[0].repository_id;
   return id === named ? null : `${SHARED}'s repository id is ${id} on GitHub, not ${named}, the one ${path} names`;
 }
@@ -339,9 +354,10 @@ function fileOf(k, path) {
 }
 
 // One kept ruleset's plan, given its file and the organisation's rulesets as listed: its own check
-// on GitHub, its live version found by name and read by its own id, and so what --apply does with
-// it: create, update, unchanged (written again as it is), or hold it back, saying why. What GitHub
-// does not answer about it holds back this one alone.
+// on GitHub, its live version found by name and read by the id the list names, and so what --apply
+// does with it: create, update, unchanged (written again as it is), or hold it back, saying why.
+// Every GitHub call here is inside this one ruleset's containment: what GitHub does not answer
+// about it, or answers with no ruleset or no id in it, holds back this one alone.
 async function planOne(request, f, found) {
   const hold = (kind, why) => ({ ...f, action: 'hold', kind, why });
   try {
@@ -349,46 +365,61 @@ async function planOne(request, f, found) {
     if (no) return hold('REFUSED', no);
     const named = found.filter((r) => r?.name === f.name);
     if (named.length > 1) return hold('REFUSED', `${ORG} holds ${named.length} rulesets named ${f.name} (${named.map((r) => r.id).join(', ')}), so which one is its file's is unknown`);
-    const live = named.length ? await readRuleset(request, f.name, named[0].id) : null;
-    const diff = live ? diffRuleset(live, f.body) : null;
-    return { ...f, live, diff, action: !live ? 'create' : diff.length ? 'update' : 'unchanged' };
+    if (!named.length) return { ...f, action: 'create' };
+    const { id } = named[0];
+    const live = await readRuleset(request, f.name, id);
+    const diff = diffRuleset(live, f.body);
+    return { ...f, id, live, diff, action: diff.length ? 'update' : 'unchanged' };
   } catch (e) {
     if (!(e instanceof ReadFailure)) throw e;
     return hold('UNREAD', e.message);
   }
 }
 
-// --apply for one planned ruleset: a PUT to its own id where it is there, a POST where it is not,
-// then read back by that id at once. Says what came of it, and returns whether it is now its file's.
+// --apply for one planned ruleset: a PUT to the id the list named where it is there, a POST where
+// it is not, then read back at once, an update by that id and a creation by the id in GitHub's
+// answer to it. Says what came of it, and returns whether it is now its file's. Every GitHub call
+// here is inside this one ruleset's containment, so gh getting no answer holds back this one alone
+// and the others are still tried (D212): before GitHub answers the write, the write may have
+// landed; after, it was written and is not read back.
 async function applyOne(request, s, out, err) {
   if (s.action === 'hold') { err(`${s.kind}: ${s.name} was held back, not written: ${s.why}`); return false; }
-  const wrote = s.live
-    ? await request({ method: 'PUT', path: `/orgs/${ORG}/rulesets/${s.live.id}`, body: s.body })
-    : await request({ method: 'POST', path: `/orgs/${ORG}/rulesets`, body: s.body });
-  if (wrote.status !== 200 && wrote.status !== 201) { err(`REFUSED: GitHub answered ${wrote.status} to the ${s.live ? 'update' : 'creation'} of ${s.name}, so it is not its file's version: ${wrote.text.slice(0, 300)}`); return false; }
-  let back;
+  const act = s.action === 'create' ? 'creation' : 'update';
+  let answered = false;
   try {
-    const id = s.live ? s.live.id : parse(wrote, `GitHub's answer to the creation of ${s.name}`).id;
-    if (!Number.isInteger(id)) throw new ReadFailure(`GitHub's answer to its creation names no id`);
-    back = await readRuleset(request, s.name, id);
+    const wrote = s.action === 'create'
+      ? await request({ method: 'POST', path: `/orgs/${ORG}/rulesets`, body: s.body })
+      : await request({ method: 'PUT', path: `/orgs/${ORG}/rulesets/${s.id}`, body: s.body });
+    answered = true;
+    if (wrote.status !== 200 && wrote.status !== 201) { err(`REFUSED: GitHub answered ${wrote.status} to the ${act} of ${s.name}, so it is not its file's version: ${wrote.text.slice(0, 300)}`); return false; }
+    let id = s.id;
+    if (s.action === 'create') {
+      const made = parse(wrote, `GitHub's answer to the creation of ${s.name}`);
+      const no = idLeftOut(made, "GitHub's answer to its creation");
+      if (no) throw new ReadFailure(no);
+      id = made.id;
+    }
+    const back = await readRuleset(request, s.name, id);
+    const d = diffRuleset(back, s.body);
+    if (d.length) { err(`REFUSED: ${s.name} as read back still differs from the file:\n  ${d.join('\n  ')}`); return false; }
+    out(`${s.name} (${id}) on ${ORG} now is the file's version, enforcement ${back.enforcement}`);
+    return true;
   } catch (e) {
     if (!(e instanceof ReadFailure)) throw e;
-    err(`UNREAD: ${s.name} was written, and not read back: ${e.message}`);
+    err(answered
+      ? `UNREAD: ${s.name} was written, and not read back: ${e.message}`
+      : `UNREAD: ${s.name} was held back, its ${act} may have landed: GitHub's answer never came, so whether it is its file's version is unknown until the run without --apply reads it: ${e.message}`);
     return false;
   }
-  const d = diffRuleset(back, s.body);
-  if (d.length) { err(`REFUSED: ${s.name} as read back still differs from the file:\n  ${d.join('\n  ')}`); return false; }
-  out(`${s.name} (${back.id}) on ${ORG} now is the file's version, enforcement ${back.enforcement}`);
-  return true;
 }
 
 // The read for one planned ruleset: what it is on GitHub against its file, and what --apply would
 // do with it. Returns whether it is its file's version.
 function sayOne(s, out, err) {
   if (s.action === 'hold') { err(`${s.kind}: ${s.name} would be held back by --apply, not written: ${s.why}`); return false; }
-  if (s.action === 'unchanged') { out(`${s.name} (${s.live.id}) on ${ORG} is the file's version, enforcement ${s.live.enforcement}`); return true; }
+  if (s.action === 'unchanged') { out(`${s.name} (${s.id}) on ${ORG} is the file's version, enforcement ${s.live.enforcement}`); return true; }
   if (s.action === 'create') { out(`${s.name} is not on ${ORG}: --apply would create it from ${s.path}`); return false; }
-  out(`${s.name} (${s.live.id}) on ${ORG} differs from ${s.path}:`);
+  out(`${s.name} (${s.id}) on ${ORG} differs from ${s.path}:`);
   for (const line of s.diff) out(`  ${line}`);
   return false;
 }
@@ -419,8 +450,8 @@ export async function main(argv, { request = ghRequest, out = console.log, err =
     else { err(`${USAGE}\nunknown argument ${a}`); return 2; }
   }
   if (mode === 'both') { err(`${USAGE}\n--apply and --readings are two runs`); return 2; }
-  try {
-    if (mode === 'readings') {
+  if (mode === 'readings') {
+    try {
       const lists = readLists(listsDir);
       const call = (path, accept) => request({ path, accept });
       const compare = async ({ owner, repo, base, head }) => {
@@ -433,27 +464,35 @@ export async function main(argv, { request = ghRequest, out = console.log, err =
       for (const l of r.lines) out(l);
       for (const l of r.unread) err(l);
       return r.unread.length ? 2 : r.refused ? 1 : 0;
+    } catch (e) {
+      if (!(e instanceof ReadFailure) && !(e instanceof Unread)) throw e;
+      err(`UNREAD: ${e.message}`);
+      return 2;
     }
-    // Each file is read and checked before GitHub is called; then the organisation's rulesets are
-    // listed once, across every page, and that list alone failing is GitHub not read at all.
-    const filesRead = KEPT.map((k) => fileOf(k, files[k.name] ?? (k.name === RULESET_NAME ? file : undefined) ?? join(HERE, k.file)));
-    const found = await readPages(request, `/orgs/${ORG}/rulesets`, `${ORG}'s rulesets`);
-    // The read and --apply read one plan, so the read says exactly what --apply would then do.
-    const plans = [];
-    for (const f of filesRead) plans.push(f.action === 'hold' ? f : await planOne(request, f, found));
-    let all = true;
-    if (mode === 'diff') {
-      for (const s of plans) if (!sayOne(s, out, err)) all = false;
-      out(sayPlan(plans));
-      return all ? 0 : 1;
-    }
-    for (const s of plans) if (!(await applyOne(request, s, out, err))) all = false;
-    return all ? 0 : 1;
+  }
+  // Each file is read and checked before GitHub is called; then the organisation's rulesets are
+  // listed once, across every page, before any write, and that list alone failing is GitHub not
+  // read at all, exit 2. Everything after it is one ruleset's alone (D212).
+  const filesRead = KEPT.map((k) => fileOf(k, files[k.name] ?? (k.name === RULESET_NAME ? file : undefined) ?? join(HERE, k.file)));
+  let found;
+  try {
+    found = await readPages(request, `/orgs/${ORG}/rulesets`, `${ORG}'s rulesets`);
   } catch (e) {
-    if (!(e instanceof ReadFailure) && !(e instanceof Unread)) throw e;
-    err(`UNREAD: ${e.message}${mode === 'readings' ? '' : ', so nothing was written'}`);
+    if (!(e instanceof ReadFailure)) throw e;
+    err(`UNREAD: ${e.message}, so nothing was written`);
     return 2;
   }
+  // The read and --apply read one plan, so the read says exactly what --apply would then do.
+  const plans = [];
+  for (const f of filesRead) plans.push(f.action === 'hold' ? f : await planOne(request, f, found));
+  let all = true;
+  if (mode === 'diff') {
+    for (const s of plans) if (!sayOne(s, out, err)) all = false;
+    out(sayPlan(plans));
+    return all ? 0 : 1;
+  }
+  for (const s of plans) if (!(await applyOne(request, s, out, err))) all = false;
+  return all ? 0 : 1;
 }
 
 const invoked = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

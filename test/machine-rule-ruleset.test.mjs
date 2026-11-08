@@ -18,9 +18,12 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 let A = null;
+// What ghRequest throws when gh gets no HTTP status back, so the fake GitHub can fail the same way.
+let ReadFailure = null;
 let missing = null;
 try {
   A = await import('../machine-rule/apply-ruleset.mjs');
+  ({ ReadFailure } = await import('../machine-rule/judge.mjs'));
 } catch (e) {
   missing = e;
 }
@@ -62,13 +65,15 @@ const scratch = (name, text) => {
   return path;
 };
 // Each [name, change, says] case run against apply-ruleset.mjs's check of that name: a clone of base,
-// changed, then checked, and a miss for each case whose problems hold none that says matches.
+// changed, then checked, and a miss for each case whose problems hold none that says matches, or
+// whose check throws rather than returning a problem.
 const refusalsMissed = (check, base, cases) => {
   const misses = [];
   for (const [name, change, says] of cases) {
     const r = clone(base);
     change(r);
-    const problems = A[check](r);
+    let problems;
+    try { problems = A[check](r); } catch (e) { misses.push(`Could not find ${check} returning a problem for ${name}: it threw ${e?.constructor?.name} ${e?.message}`); continue; }
     if (!problems.some((p) => says.test(p))) misses.push(`Could not find ${check} refusing ${name}: ${JSON.stringify(problems)}`);
   }
   return misses;
@@ -111,6 +116,11 @@ test('checkRuleset refuses each way a ruleset could run another workflow, from e
     ['enforcement disabled', (r) => { r.enforcement = 'disabled'; }, /neither evaluate nor active/],
     ['another name', (r) => { r.name = 'made-up'; }, /not machine-rule-required/],
     ['a tag target', (r) => { r.target = 'tag'; }, /its target is "tag", not branch/],
+    // A null where an object stands is a problem, never a throw (D212).
+    ['a null workflow', (r) => { r.rules[0].parameters.workflows = [null]; }, /its workflows rule names null, not a workflow/],
+    ['a null rule', (r) => { r.rules = [null]; }, /a rule of type undefined, not workflows/],
+    ['null parameters', (r) => { r.rules[0].parameters = null; }, /enforced on create/],
+    ['null conditions', (r) => { r.conditions = null; }, /narrower than every repository/],
   ];
   const misses = refusalsMissed('checkRuleset', base, cases);
   const active = clone(base);
@@ -145,11 +155,16 @@ const refuses = (body) => {
 // else; rejects names a ruleset whose write GitHub answers 422; listStatus gives the status each
 // page of the list is answered with; sharedStatus is dazzer-io/.github's; unreadable holds the ids of
 // rulesets GitHub will not answer for, read alone; unreadBack holds the names of rulesets GitHub
-// will not answer for once written.
-function fakeGitHub({ rulesets = [], sharedId = ID, write = null, rejects = null, listStatus = () => 200, sharedStatus = 200, unreadable = [], unreadBack = [] } = {}) {
+// will not answer for once written. byId, created and shared turn the answer to a read by id, to a
+// creation and to dazzer-io/.github's read into another, for a GitHub that answers 200 with less;
+// listedAs is the id the list names a ruleset this fake created by, read by id as nothing, so only
+// the id in the creation's answer reads it. unanswered names the calls gh gets no HTTP status back
+// for: each has its effect, so a write lands, and then throws as ghRequest throws.
+function fakeGitHub({ rulesets = [], sharedId = ID, write = null, rejects = null, listStatus = () => 200, sharedStatus = 200, unreadable = [], unreadBack = [], byId = (x) => x, created = (x) => x, shared = (x) => x, listedAs = (id) => id, unanswered = () => false } = {}) {
   const calls = [];
   const held = rulesets.map((r) => clone(r));
   const written = new Set();
+  const made = new Set();
   let next = 900;
   const kept = (body) => clone(write ? write(clone(body)) : body);
   const ok = (x) => ({ status: 200, text: JSON.stringify(x) });
@@ -159,21 +174,20 @@ function fakeGitHub({ rulesets = [], sharedId = ID, write = null, rejects = null
     return items.slice((at - 1) * per, at * per);
   };
   const no422 = (body) => (rejects && body?.name === rejects ? { status: 422, text: JSON.stringify({ message: 'Validation Failed', errors: ['made-up refusal'], status: '422' }) } : refuses(body));
-  const request = async ({ method = 'GET', path, body }) => {
-    calls.push({ method, path, body });
+  const answer = ({ method = 'GET', path, body }) => {
     const u = new URL(`https://api.github.com${path}`);
     const p = u.pathname;
     let m;
     if (method === 'GET' && p === '/orgs/dazzer-io/rulesets') {
       const status = listStatus(Number(u.searchParams.get('page') ?? 1));
-      return status === 200 ? ok(page(u, held.map((r) => ({ id: r.id, name: r.name })))) : { status, text: '{}' };
+      return status === 200 ? ok(page(u, held.map((r) => ({ id: made.has(r.id) ? listedAs(r.id) : r.id, name: r.name })))) : { status, text: '{}' };
     }
     if (method === 'GET' && (m = /^\/orgs\/dazzer-io\/rulesets\/(\d+)$/.exec(p))) {
       const r = held.find((x) => String(x.id) === m[1]);
       if (r && (unreadable.includes(r.id) || (written.has(r.id) && unreadBack.includes(r.name)))) return { status: 503, text: '{}' };
-      return r ? ok(readBack(r)) : { status: 404, text: '{}' };
+      return r ? ok(byId(readBack(r), r.id)) : { status: 404, text: '{}' };
     }
-    if (method === 'GET' && p === '/repos/dazzer-io/.github') return sharedStatus === 200 ? ok({ id: sharedId, name: '.github', default_branch: 'main' }) : { status: sharedStatus, text: '{}' };
+    if (method === 'GET' && p === '/repos/dazzer-io/.github') return sharedStatus === 200 ? ok(shared({ id: sharedId, name: '.github', default_branch: 'main' })) : { status: sharedStatus, text: '{}' };
     if (method === 'PUT' && (m = /^\/orgs\/dazzer-io\/rulesets\/(\d+)$/.exec(p))) {
       const at = held.findIndex((x) => String(x.id) === m[1]);
       if (at === -1) return { status: 404, text: '{}' };
@@ -189,18 +203,32 @@ function fakeGitHub({ rulesets = [], sharedId = ID, write = null, rejects = null
       const r = { ...kept(body), id: next++ };
       held.push(r);
       written.add(r.id);
-      return { status: 201, text: JSON.stringify(readBack(r)) };
+      made.add(r.id);
+      return { status: 201, text: JSON.stringify(created(readBack(r), body)) };
     }
     return { status: 404, text: '{}' };
+  };
+  const request = async ({ method = 'GET', path, body }) => {
+    calls.push({ method, path, body });
+    const a = answer({ method, path, body });
+    if (unanswered({ method, path, body })) throw new ReadFailure(`gh could not reach GitHub for ${method} ${path}: error connecting to api.github.com`);
+    return a;
   };
   return { request, calls, held };
 }
 // The three rulesets the files keep, as GitHub would hold them, at ids of their own.
 const allThree = () => [{ ...fileRuleset(), id: 7 }, { ...spellingFile(), id: 10 }, { ...codeqlFile(), id: 11 }];
+// machine-rule-required its file's version at 7, main-spelling-refused absent, and
+// codeql-complete-required live as active at 11, which its file is not: --apply's plan is unchanged,
+// create and update, so a PUT, a POST and a PUT, in that order.
+const oneOfEach = () => [{ ...fileRuleset(), id: 7 }, { ...codeqlFile(), id: 11, enforcement: 'active' }];
+// One run of main(): its exit code, or "threw" with what it threw among its error lines, so a run
+// that throws fails a case by its message rather than ending the test.
 async function run(argv, gh, options = {}) {
   const out = [];
   const err = [];
-  const code = await A.main(argv, { request: gh.request, out: (l) => out.push(l), err: (l) => err.push(l), ...options });
+  let code;
+  try { code = await A.main(argv, { request: gh.request, out: (l) => out.push(l), err: (l) => err.push(l), ...options }); } catch (e) { code = 'threw'; err.push(`main threw ${e?.constructor?.name}: ${e?.message}`); }
   return { code, all: [...out, ...err].join('\n'), out: out.join('\n'), err: err.join('\n') };
 }
 const writes = (gh) => gh.calls.filter((c) => c.method !== 'GET');
@@ -233,7 +261,9 @@ test('--apply writes each file\'s version to the ruleset of its name alone, a PU
   const codeql = codeqlFile();
   const other = { id: 8, name: 'made-up-other', target: 'branch', enforcement: 'active', rules: [{ type: 'deletion' }] };
   const misses = [];
-  const there = fakeGitHub({ rulesets: [other, { ...file, id: 7, enforcement: 'active', rules: [] }, { ...spelling, id: 10, enforcement: 'evaluate' }] });
+  // Once created, codeql-complete-required is listed as 1900, an id that reads nothing, so only the
+  // id in GitHub's answer to its creation, 900, reads it back.
+  const there = fakeGitHub({ rulesets: [other, { ...file, id: 7, enforcement: 'active', rules: [] }, { ...spelling, id: 10, enforcement: 'evaluate' }], listedAs: (id) => id + 1000 });
   const put = await run(['--apply'], there);
   const w = writes(there);
   const byName = (ws, name) => ws.filter((c) => c.body?.name === name);
@@ -248,9 +278,13 @@ test('--apply writes each file\'s version to the ruleset of its name alone, a PU
   if (JSON.stringify(there.held.find((r) => r.id === 8)) !== JSON.stringify(other)) misses.push('Could not find the other ruleset left as it was');
   for (const name of [MR, SPELLING, CODEQL]) if (!nowFile(name).test(put.all)) misses.push(`Could not find --apply saying ${name} as read back is its file's version: ${put.all}`);
   // Each written one is read back by its own id: 7 and 10 as they were, the created one by the id
-  // GitHub's answer gave it.
+  // GitHub's answer gave it, never by the id a later list names it by, and with no list read after
+  // the first write.
   const backs = there.calls.filter((c) => c.method === 'GET' && /^\/orgs\/dazzer-io\/rulesets\/\d+$/.test(c.path)).map((c) => c.path);
   for (const id of [7, 10, 900]) if (backs.filter((p) => p === `/orgs/dazzer-io/rulesets/${id}`).length < (id === 900 ? 1 : 2)) misses.push(`Could not find ruleset ${id} read by its own id ${id === 900 ? 'after its creation' : 'before and after its write'}: ${JSON.stringify(backs)}`);
+  if (backs.includes('/orgs/dazzer-io/rulesets/1900')) misses.push(`Could not find the created ruleset read back by the id in GitHub's 201 answer alone, not by the id the list names: ${JSON.stringify(backs)}`);
+  const firstWrite = there.calls.findIndex((c) => c.method !== 'GET');
+  if (there.calls.slice(firstWrite).some((c) => c.method === 'GET' && /^\/orgs\/dazzer-io\/rulesets\?/.test(c.path))) misses.push(`Could not find --apply reading the rulesets list only before its writes: ${JSON.stringify(there.calls.map((c) => `${c.method} ${c.path}`))}`);
   const none = fakeGitHub({ rulesets: [other] });
   const post = await run(['--apply'], none);
   const p = writes(none);
@@ -494,6 +528,10 @@ test('checkMainSpelling refuses a bypass, another repository, an exclude, a rule
     ['disabled', (r) => { r.enforcement = 'disabled'; }, /not active/],
     ['another name', (r) => { r.name = 'made-up'; }, /not main-spelling-refused/],
     ['a tag target', (r) => { r.target = 'tag'; }, /its target is "tag", not branch/],
+    ['a null pattern', (r) => { inc(r).push(null); }, /the pattern null is no pattern/],
+    ['a null rule', (r) => { r.rules = [null]; }, /a rule of type undefined, not creation/],
+    ['a null repository condition', (r) => { r.conditions.repository_name = null; }, /not dazzer and dazzer-app by name/],
+    ['null conditions', (r) => { r.conditions = null; }, /no ref condition/],
   ];
   const misses = refusalsMissed('checkMainSpelling', base, cases);
   const reordered = clone(base);
@@ -543,6 +581,10 @@ test('checkCodeqlComplete accepts evaluate or active and nothing else, and refus
     ['no enforcement', (r) => { delete r.enforcement; }, /its enforcement is undefined, neither evaluate nor active/],
     ['another name', (r) => { r.name = 'made-up'; }, /not codeql-complete-required/],
     ['a tag target', (r) => { r.target = 'tag'; }, /not branch/],
+    ['a null check', (r) => { p(r).required_status_checks = [null]; }, /names the check undefined, not codeql \/ CodeQL complete/],
+    ['null parameters', (r) => { r.rules[0].parameters = null; }, /enforced on create/],
+    ['a null rule', (r) => { r.rules = [null]; }, /a rule of type undefined, not required_status_checks/],
+    ['null conditions', (r) => { r.conditions = null; }, /not the default branch alone/],
   ];
   const misses = refusalsMissed('checkCodeqlComplete', base, cases);
   // Evaluate, as written, and active, as r-3.27 makes it once its readings show no merge it would have refused.
@@ -570,15 +612,20 @@ const heldNamed = (all, verb) => [...all.matchAll(new RegExp(`^(?:REFUSED|UNREAD
 test('each kept ruleset stands alone: a refusal of one holds back that one alone and names it, the others are written and read back, and the read says exactly what --apply does', async () => {
   needKept();
   const misses = [];
-  // machine-rule-required its file's version, main-spelling-refused absent, codeql-complete-required
-  // live as active, which its file is not: unchanged, create and update.
-  const live = () => [{ ...fileRuleset(), id: 7 }, { ...codeqlFile(), id: 11, enforcement: 'active' }];
+  const live = oneOfEach;
   const plan = [[MR, 'unchanged'], [SPELLING, 'create'], [CODEQL, 'update']];
   const badSpelling = clone(spellingFile());
   badSpelling.conditions.ref_name.exclude = ['refs/heads/MAIN'];
   const badRule = clone(fileRuleset());
   badRule.conditions.repository_name.include = ['dazzer'];
+  const nullWorkflow = clone(fileRuleset());
+  nullWorkflow.rules[0].parameters.workflows = [null];
   const scenarios = [
+    ['ruleset.json holds a null workflow', MR, () => ({ file: scratch('ruleset.json', JSON.stringify(nullWorkflow)) }), {}, /^REFUSED: machine-rule-required (?:would be|was) held back[^\n]*: \S+ruleset\.json is not the rule's ruleset: [^\n]*names null, not a workflow/m],
+    ['dazzer-io/.github is answered 200 with null', MR, () => ({}), { shared: () => null }, /^UNREAD: machine-rule-required (?:would be|was) held back[^\n]*: could not read dazzer-io\/\.github: GitHub's answer is null, no object/m],
+    ['codeql-complete-required is answered 200 with null by its id', CODEQL, () => ({}), { byId: (x, id) => (id === 11 ? null : x) }, /^UNREAD: codeql-complete-required (?:would be|was) held back[^\n]*: could not read the ruleset codeql-complete-required \(11\): GitHub's answer is null, no object/m],
+    ['codeql-complete-required is answered by its id with no id', CODEQL, () => ({}), { byId: (x, id) => (id === 11 ? { ...x, id: undefined } : x) }, /^UNREAD: codeql-complete-required (?:would be|was) held back[^\n]*: could not read the ruleset codeql-complete-required \(11\): GitHub's answer names no id/m],
+    ['codeql-complete-required is answered by its id with the id as text', CODEQL, () => ({}), { byId: (x, id) => (id === 11 ? { ...x, id: '11' } : x) }, /^UNREAD: codeql-complete-required (?:would be|was) held back[^\n]*: could not read the ruleset codeql-complete-required \(11\): GitHub's answer names the id "11", no integer/m],
     ['main-spelling.json fails its check', SPELLING, () => ({ files: { [SPELLING]: scratch('main-spelling.json', JSON.stringify(badSpelling)) } }), {}, /^REFUSED: main-spelling-refused (?:would be|was) held back[^\n]*: \S+main-spelling\.json is not the ruleset main-spelling-refused: [^\n]*excludes/m],
     ['codeql-complete.json is not there to read', CODEQL, () => ({ files: { [CODEQL]: scratch('codeql-complete.json') } }), {}, /^REFUSED: codeql-complete-required (?:would be|was) held back[^\n]*: \S+codeql-complete\.json could not be read as JSON/m],
     ['codeql-complete.json is not JSON', CODEQL, () => ({ files: { [CODEQL]: scratch('codeql-complete.json', '{ "name": ') } }), {}, /^REFUSED: codeql-complete-required (?:would be|was) held back[^\n]*: \S+codeql-complete\.json could not be read as JSON/m],
@@ -607,6 +654,11 @@ test('each kept ruleset stands alone: a refusal of one holds back that one alone
     if (a.code !== 1 || !says.test(a.all) || JSON.stringify(heldNamed(a.all, 'was')) !== JSON.stringify([name])) misses.push(`Could not find --apply naming ${name} alone as held back and why, exit 1, when ${label}: ${a.code} ${a.all}`);
     for (const [n] of others) if (!nowFile(n).test(a.out)) misses.push(`Could not find --apply reading ${n} back as its file's version though ${name} was held back when ${label}: ${a.all}`);
   }
+  // The update goes to the id the list named, whatever id GitHub's answer by that id carries.
+  const elsewhere = fakeGitHub({ rulesets: live(), byId: (x, id) => (id === 11 ? { ...x, id: 99 } : x) });
+  const e = await run(['--apply'], elsewhere);
+  const toCodeql = writes(elsewhere).filter((c) => c.body?.name === CODEQL).map((c) => `${c.method} ${c.path}`);
+  if (e.code !== 0 || JSON.stringify(toCodeql) !== JSON.stringify(['PUT /orgs/dazzer-io/rulesets/11'])) misses.push(`Could not find the update of codeql-complete-required sent to 11, the id the list names, though GitHub's answer by that id names 99, exit 0: ${e.code} ${JSON.stringify(toCodeql)}\n${e.all}`);
   // Nothing held back: the read says all three, and --apply writes and reads back all three, exit 0.
   const d = await run([], fakeGitHub({ rulesets: live() }));
   if (d.code !== 1 || JSON.stringify(saidPlan(d.out)) !== JSON.stringify({ write: plan, held: [] })) misses.push(`Could not find the read saying --apply would write all three, holding none back: ${d.code} ${JSON.stringify(saidPlan(d.out))}\n${d.all}`);
@@ -634,10 +686,64 @@ test('a write GitHub refuses, or a ruleset GitHub will not read back, is that ru
   if (r.code !== 1 || !/^REFUSED: GitHub answered 422 to the creation of main-spelling-refused/m.test(r.err)) misses.push(`Could not find --apply naming GitHub's 422 to main-spelling-refused, exit 1: ${r.code} ${r.all}`);
   if (JSON.stringify(tried) !== JSON.stringify([MR, SPELLING, CODEQL]) || JSON.stringify(gh.held.map((x) => x.name)) !== JSON.stringify([MR, CODEQL])) misses.push(`Could not find --apply still writing codeql-complete-required after GitHub refused main-spelling-refused: ${JSON.stringify(tried)} ${JSON.stringify(gh.held.map((x) => x.name))}`);
   for (const n of [MR, CODEQL]) if (!nowFile(n).test(r.out)) misses.push(`Could not find ${n} read back as its file's version though GitHub refused main-spelling-refused: ${r.all}`);
-  const u = fakeGitHub({ rulesets: [], unreadBack: [MR] });
+  // The list names each created ruleset by another id, so the read-back names 900, the id in
+  // GitHub's 201 answer, only if it reads by that id.
+  const u = fakeGitHub({ rulesets: [], unreadBack: [MR], listedAs: (id) => id + 1000 });
   const ur = await run(['--apply'], u);
-  if (ur.code !== 1 || !/^UNREAD: machine-rule-required was written, and not read back: could not read the ruleset machine-rule-required \(900\): GitHub answered 503/m.test(ur.err)) misses.push(`Could not find --apply naming machine-rule-required written and not read back, exit 1: ${ur.code} ${ur.all}`);
+  if (ur.code !== 1 || !/^UNREAD: machine-rule-required was written, and not read back: could not read the ruleset machine-rule-required \(900\): GitHub answered 503/m.test(ur.err)) misses.push(`Could not find --apply naming machine-rule-required written and not read back by 900, the id in GitHub's 201 answer, exit 1: ${ur.code} ${ur.all}`);
   for (const n of [SPELLING, CODEQL]) if (!nowFile(n).test(ur.out)) misses.push(`Could not find ${n} read back as its file's version though machine-rule-required was not: ${ur.all}`);
+  // A 201 answer naming no id, or holding no object, is held back: written, and read back by no
+  // other id, while the others are read back.
+  for (const [label, answer, says] of [['naming no id', (x) => ({ ...x, id: undefined }), /names no id/], ['naming the id as text', (x) => ({ ...x, id: String(x.id) }), /names the id "\d+", no integer/], ['of null', () => null, /is null, no object/]]) {
+    const gh = fakeGitHub({ rulesets: [], created: (x, body) => (body?.name === SPELLING ? answer(x) : x) });
+    const r = await run(['--apply'], gh);
+    const line = new RegExp(`^UNREAD: main-spelling-refused was written, and not read back: GitHub's answer to its creation ${says.source}`, 'm');
+    if (r.code !== 1 || !line.test(r.err)) misses.push(`Could not find --apply holding back main-spelling-refused when GitHub's 201 answer is ${label}, exit 1: ${r.code} ${r.all}`);
+    if (gh.calls.some((c) => c.method === 'GET' && c.path === '/orgs/dazzer-io/rulesets/901')) misses.push(`Could not find main-spelling-refused left unread when GitHub's 201 answer is ${label}, never found by another way: ${JSON.stringify(gh.calls.map((c) => `${c.method} ${c.path}`))}`);
+    for (const n of [MR, CODEQL]) if (!nowFile(n).test(r.out)) misses.push(`Could not find ${n} read back as its file's version though GitHub's 201 answer for main-spelling-refused is ${label}: ${r.all}`);
+  }
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+// gh gets no HTTP status back (a network drop, DNS, gh itself failing), and ghRequest throws. Each
+// GitHub call about one kept ruleset is that ruleset's alone: a write that may have landed holds it
+// back, saying so, a read before it holds it back unwritten, and the others are still tried, exit 1.
+// Only the organisation's list unread is exit 2, before any write (D212).
+test('gh failing to reach GitHub on one call about one ruleset holds back that ruleset alone, saying a write may have landed, while the others are still tried, exit 1', async () => {
+  needKept();
+  const misses = [];
+  const live = oneOfEach;
+  const is = (method, path) => (c) => c.method === method && c.path === path;
+  const landed = (name, act) => new RegExp(`^UNREAD: ${name} was held back, its ${act} may have landed: GitHub's answer never came[^\\n]*: gh could not reach GitHub for `, 'm');
+  const unwritten = (name) => new RegExp(`^UNREAD: ${name} was held back, not written: gh could not reach GitHub for `, 'm');
+  const scenarios = [
+    ['the POST of main-spelling-refused', SPELLING, is('POST', '/orgs/dazzer-io/rulesets'), landed(SPELLING, 'creation'), [MR, SPELLING, CODEQL], false],
+    ['the PUT of machine-rule-required', MR, is('PUT', '/orgs/dazzer-io/rulesets/7'), landed(MR, 'update'), [MR, SPELLING, CODEQL], false],
+    ['the PUT of codeql-complete-required', CODEQL, is('PUT', '/orgs/dazzer-io/rulesets/11'), landed(CODEQL, 'update'), [MR, SPELLING, CODEQL], false],
+    ['the read of dazzer-io/.github', MR, is('GET', '/repos/dazzer-io/.github'), unwritten(MR), [SPELLING, CODEQL], true],
+    ['the read of codeql-complete-required by its id', CODEQL, is('GET', '/orgs/dazzer-io/rulesets/11'), unwritten(CODEQL), [MR, SPELLING], true],
+    ['the read-back of main-spelling-refused', SPELLING, is('GET', '/orgs/dazzer-io/rulesets/900'), /^UNREAD: main-spelling-refused was written, and not read back: gh could not reach GitHub for GET \/orgs\/dazzer-io\/rulesets\/900/m, [MR, SPELLING, CODEQL], false],
+  ];
+  for (const [label, name, unanswered, says, tried, beforeWrites] of scenarios) {
+    const gh = fakeGitHub({ rulesets: live(), unanswered });
+    const a = await run(['--apply'], gh);
+    const did = writes(gh).map((c) => c.body?.name);
+    if (a.code !== 1 || !says.test(a.err)) misses.push(`Could not find --apply holding back ${name} alone and saying what is known of it, exit 1, when gh gets no answer to ${label}: ${a.code} ${a.all}`);
+    if (/nothing was written/.test(a.all)) misses.push(`Could not find --apply rid of "nothing was written" when gh gets no answer to ${label}: ${a.all}`);
+    if (JSON.stringify(did) !== JSON.stringify(tried)) misses.push(`Could not find --apply still trying the others when gh gets no answer to ${label}: wrote ${JSON.stringify(did)}, for ${JSON.stringify(tried)}`);
+    for (const n of [MR, SPELLING, CODEQL].filter((x) => x !== name)) if (!nowFile(n).test(a.out)) misses.push(`Could not find ${n} read back as its file's version though gh got no answer to ${label}: ${a.all}`);
+    // The read alone: a read before any write that gets no answer holds back that one.
+    if (beforeWrites) {
+      const d = await run([], fakeGitHub({ rulesets: live(), unanswered }));
+      if (d.code !== 1 || JSON.stringify(heldNamed(d.all, 'would be')) !== JSON.stringify([name])) misses.push(`Could not find the read holding back ${name} alone, exit 1, when gh gets no answer to ${label}: ${d.code} ${d.all}`);
+    }
+  }
+  // The organisation's list unanswered: exit 2, nothing written, in the read and --apply alike.
+  for (const argv of [[], ['--apply']]) {
+    const gh = fakeGitHub({ rulesets: live(), unanswered: (c) => c.method === 'GET' && c.path.startsWith('/orgs/dazzer-io/rulesets?') });
+    const r = await run(argv, gh);
+    if (r.code !== 2 || writes(gh).length || !/^UNREAD: gh could not reach GitHub for GET \/orgs\/dazzer-io\/rulesets\?[^\n]*, so nothing was written$/m.test(r.err)) misses.push(`Could not find ${argv.length ? '--apply' : 'the read'} exiting 2, writing nothing, when gh gets no answer to the organisation's list: ${r.code} ${r.all}`);
+  }
   assert.ok(!misses.length, misses.join('\n'));
 });
 
@@ -717,6 +823,8 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
     'watches, in `evaluate`, until it is made active once its readings show no merge it would have refused',
     'Each kept ruleset stands alone', 'holds back that one alone and names it', 'the others are still written and read back',
     "Exit 0 means every ruleset is its file's version", 'exit 1 means one or more were held back or differ', 'exit 2 means GitHub could not be read at all',
+    // D212: a write gh gets no answer to is that ruleset's alone, and the ids a write and its read-back go to.
+    'a write gh gets no answer to, said as one that may have landed', "a created one by the id in GitHub's answer to its creation", 'an update goes to the id the list names',
     'Its two ignores are narrow',
   ]) if (!plain.includes(words)) misses.push(`Could not find machine-rule/README.md saying ${JSON.stringify(words)}`);
   // Every sentence saying main-spelling-refused is live bounds the claim to the two repositories and

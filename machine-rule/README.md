@@ -80,18 +80,21 @@ its origin does not say so, or GitHub could not be asked about a commit.
   reads each live ruleset and says, for each, how it differs from its file and exactly what
   `--apply` would do with it, closing on that list: each ruleset it would create, update or
   write again as it is, and each it would hold back. `node machine-rule/apply-ruleset.mjs
-  --apply` writes each file's version, and only to the ruleset of its name, each to its own id,
-  and reads each back by that id: security settings, so this is Ben's own command, run after
-  the merge (decisions 121, 177, 192). Both read the organisation's rulesets across every page.
-  Each kept ruleset stands alone: its file, its checks, its write and its read-back (decision
-  210). A refusal of one ruleset holds back that one alone and names it, while the others are
-  still written and read back: a file that cannot be read or fails its check, dazzer-io/.github's
-  live repository id differing from the one `ruleset.json` names, two live rulesets of one name,
-  a write GitHub refuses, or an answer GitHub does not give about that ruleset. Exit 0 means every
-  ruleset is its file's version, after the writes for `--apply`; exit 1 means one or more were
-  held back or differ, each named, or, for the read, that `--apply` would change one; exit 2
-  means GitHub could not be read at all: the organisation's rulesets could not be listed, so
-  nothing was written. `--readings [--moving a,b]
+  --apply` writes each file's version, and only to the ruleset of its name, and reads each back
+  at once: an update goes to the id the list names and is read back by it, a created one by the
+  id in GitHub's answer to its creation. These are security settings, so this is Ben's own
+  command, run after the merge (decisions 121, 177, 192). Both read the organisation's rulesets
+  across every page, once, before any write. Each kept ruleset stands alone: its file, its
+  checks, its write and its read-back, every GitHub call about it inside its own containment
+  (decisions 210, 212). A refusal of one ruleset holds back that one alone and names it, while
+  the others are still written and read back: a file that cannot be read or fails its check,
+  dazzer-io/.github's live repository id differing from the one `ruleset.json` names, two live
+  rulesets of one name, a write GitHub refuses, a write gh gets no answer to, said as one that
+  may have landed, or an answer GitHub does not give about that ruleset or gives with no object
+  or no id in it. Exit 0 means every ruleset is its file's version, after the writes for
+  `--apply`; exit 1 means one or more were held back or differ, each named, or, for the read,
+  that `--apply` would change one; exit 2 means GitHub could not be read at all: the
+  organisation's rulesets could not be listed, so nothing was written. `--readings [--moving a,b]
   [--only a,b] [--class production]` runs the judge over every private, non-archived
   repository's workflow folder at its default branch, read with `gh`. It follows every call at
   the ref it names, up to GitHub's ten levels, and lists each refusal. A workflow a call reaches

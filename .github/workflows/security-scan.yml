@@ -41,16 +41,16 @@
 # group's workflow list keeps that job off the scan machines; nothing in this file can. No job
 # here holds a write token today (each, person-tokens too, takes the workflow's contents: read and
 # sets no permissions of its own), so none has to stay on GitHub's computers by the repository's
-# rule for write tokens. test/runs-on.test.mjs holds each read-only job here that names its machine
-# to that setting; each write-token job (one granted a write, or left with the repository's default
-# token) to reading no CHECKS_, SCAN_ or LOCKED_ setting and, where it names its machine, to
-# GitHub's own labels, written as a literal label; and each job that calls a workflow (uses: at
-# the job's level, naming no machine) to a workflow in this repository's own folder (./), judged
-# in its own file.
-# It reads this file only in the plain subset of YAML its header lists line shape by line shape:
-# plain keys, plain, quoted or block values, - items and one-line flow lists, with no anchor,
-# alias or tag outside a quoted value or a block's body and no backslash in a double-quoted value;
-# it refuses any other line.
+# rule for write tokens. machine-rule/judge.mjs, the shared machine rule, holds each read-only job
+# here to running on ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }} exactly, holding no secret and
+# checking out with persist-credentials: false; each write-token job (one granted a write, or left
+# with the repository's default token) to reading no CHECKS_, SCAN_ or LOCKED_ setting, to one of
+# GitHub's standard labels written as a literal label and to an entry of machine-rule/kept.json;
+# and each job that calls a workflow (uses: at the job's level, naming no machine) to the calls
+# machine-rule/README.md lists, a ./ call refused. test/machine-rule.test.mjs runs it over this
+# folder. It reads this file with the yaml package and refuses, naming its line, every spelling
+# another parser could read another way (an anchor, alias, tag or merge key, a key written twice,
+# a step written as a flow, a backslash inside ${{ }} and the rest its header lists).
 #
 # That setting is the organisation's unless a repository sets a variable of the same name: this
 # workflow runs in each gated repository's own context, where GitHub reads a repository variable

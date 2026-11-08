@@ -4,6 +4,11 @@
 #   node engineer-review/decide.mjs caller --owner <organisation> --repo <shared workflow repository> --commit <40-character commit id>
 # which fills the one "uses:" line below, refuses a branch or tag in place of a commit,
 # and refuses a commit that is not on the shared workflow repository's main branch.
+# The calling job holds uses and permissions alone, the shape the organisation's machine rule
+# admits in a call (machine-rule/README.md, "Calls"): its own permissions are what it hands the
+# called workflow, and the top grants reading the code alone. It needs no if: of its own: the
+# called workflow's job skips a comment on an issue that is not a pull request, reading this
+# run's event.
 name: Engineer review
 
 on:
@@ -15,10 +20,11 @@ on:
     types: [submitted]
 
 permissions:
-  statuses: write
-  pull-requests: read
+  contents: read
 
 jobs:
   engineer-review:
-    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     uses: <owner>/<repo>/.github/workflows/engineer-review.yml@<commit>
+    permissions:
+      statuses: write
+      pull-requests: read

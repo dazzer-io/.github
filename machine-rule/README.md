@@ -3,8 +3,9 @@
 `judge.mjs` is the organisation's one rule on which job of a dazzer-io repository may run on
 which of our machines, and which must stay on GitHub's (decision 121). It was held four times
 before, each copy a little different: dazzer's gate (`scripts/checks/check-runner-setting.mjs`),
-dazzer-app's verdict test (`holdsMoreThanTheCode`), this repository's `test/runs-on.test.mjs`
-and runners' repository reader (`bin/check-repos-read-setting.mjs`). Those copies give way to
+dazzer-app's verdict test (`holdsMoreThanTheCode`), this repository's runs-on test, which
+`test/machine-rule.test.mjs` replaces, and runners' repository reader
+(`bin/check-repos-read-setting.mjs`). Those copies give way to
 this one in their own tasks (r-3.25, r-3.26, r-1.59); this file says each rule and the decision
 behind it.
 

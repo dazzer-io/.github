@@ -76,7 +76,7 @@
 #     its default branch, read 8 Nov 2026 (each answered 404). A repository that wants models of
 #     its own asks for them here, in the shared scan, where a change to them is reviewed.
 #
-# WHY IT IS SPLIT IN TWO.
+# WHY IT IS SPLIT IN THREE: analyze, upload and complete.
 #   - analyze runs on the scan machines, by ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}, so an
 #     empty setting keeps it on GitHub's computers (decision 93). A called workflow reads its
 #     caller's variables (docs.github.com, Variables reference: "For reusable workflows, the
@@ -105,7 +105,7 @@
 #     and the run ends cancelled, not red. An upload that fails after every analysis passed may
 #     leave other languages' results already sent; that run is red.
 #   - complete, named "CodeQL complete", is the one check a caller requires (decision 135). It
-#     runs always, after both jobs, on GitHub's own ubuntu-latest with no token at all
+#     runs always, after analyze and upload, on GitHub's own ubuntu-latest with no token at all
 #     (permissions: {}), and fails unless the analysis and the upload both succeeded; its name is
 #     the same whatever languages a caller names. The Analyze and upload checks cannot be required
 #     in its place: a skipped upload reads as success to a required-check rule, and a pull request
@@ -122,12 +122,14 @@
 # workflows at refs/heads/main (decision 119, the runners task r-1.54), which this file cannot
 # see. A change to this repository's own copy is a pull request here, reviewed here; a pull
 # request elsewhere runs this file as main holds it. No workflow of this repository but the two
-# scans may call it (test/runs-on.test.mjs).
+# scans may call it (machine-rule/judge.mjs, the shared machine rule, refuses such a call).
 #
 # test/codeql-shared.test.mjs pins what is scanned and what each job holds, line for line where it
-# matters; test/runs-on.test.mjs holds its jobs to the machine rules every workflow here keeps (a
-# job reading SCAN_RUNNER_2 holds no write and no secret; a write-token job names a literal GitHub
-# label) and reads it only in the plain subset of YAML its header lists.
+# matters; machine-rule/judge.mjs holds its jobs to the machine rules every workflow here keeps (a
+# read-only job runs on ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }} exactly and holds no secret;
+# the write-token job and the final check run on GitHub's standard label written literally, read no
+# setting and are named in machine-rule/kept.json), refuses a spelling another YAML parser could
+# read another way, and test/machine-rule.test.mjs runs it over this folder.
 name: CodeQL
 
 on:
@@ -269,8 +271,8 @@ jobs:
           category: /language:${{ matrix.language }}
 
   # The one check a caller requires (decision 135): it fails unless every analysis and every upload
-  # succeeded, whatever languages were named. It reads nothing but the two jobs' results, passed to
-  # its script through env, and holds no token.
+  # succeeded, whatever languages were named. It reads nothing but the results of analyze and
+  # upload, passed to its script through env, and holds no token.
   complete:
     name: CodeQL complete
     needs: [analyze, upload]

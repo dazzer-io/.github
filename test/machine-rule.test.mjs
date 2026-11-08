@@ -1,9 +1,9 @@
 // Proves machine-rule/judge.mjs, the organisation's one machine rule (decision 121), and its three
-// lists, kept.json, secrets.json and strict.json. It replaces test/runs-on.test.mjs and ports the
-// kept cases of the four copies the rule replaces, each section naming the copy it ports:
+// lists, kept.json, secrets.json and strict.json. It replaces this repository's runs-on test and
+// ports the kept cases of the four copies the rule replaces, each section naming the copy it ports:
 //   - dazzer's gate, scripts/checks/check-runner-setting.mjs and its test, at 58797b699;
 //   - dazzer-app's verdict test, test/verdict.test.ts (holdsMoreThanTheCode), at 4b236f2e;
-//   - this repository's test/runs-on.test.mjs, at dca1d18;
+//   - this repository's runs-on test, at dca1d18, the test file this one replaces;
 //   - runners' bin/check-repos-read-setting.mjs, its test and test/scan.test.mjs's gate S6, at 789b335.
 // Every case is fed to the judge as text, under a made-up workflow name, and a fake GitHub is
 // reached only through the call handed to the readings: nothing here reaches the network. Every
@@ -11,7 +11,8 @@
 // in those words; a table of cases fails once with every case that missed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -82,6 +83,9 @@ const APP = { repository: 'dazzer-io/dazzer-app', visibility: 'private' };
 const QUIET = { repository: 'dazzer-io/made-up-tools', visibility: 'private' };
 const PUBLIC = { repository: 'dazzer-io/made-up-plugin', visibility: 'public' };
 const SHARED = { repository: 'dazzer-io/.github', visibility: 'public', shared: true };
+// The path of the test file this one replaces, built from its parts so that no line here holds it:
+// a case below refuses every file of this repository that still names it (decision 178).
+const OLD_TEST = ['test/runs-on', 'test', 'mjs'].join('.');
 
 test('the rule loads, and reads the shared workflows it admits calls into from this repository', () => {
   need();
@@ -664,6 +668,10 @@ test('a call is admitted only into dazzer-io/.github\'s shared workflows at main
     ['a CHECKS_ setting read in its with:', swap(`      languages: '["actions", "javascript-typescript"]'`, "      languages: '@{{ vars.CHECKS_RUNNER_2 }}'"), /reads CHECKS_RUNNER_2, a CHECKS_ setting/],
     ['a SCAN_ setting read in its with:', swap(`      languages: '["actions", "javascript-typescript"]'`, "      languages: '@{{ vars.SCAN_RUNNER_2 }}'"), /reads SCAN_RUNNER_2, a SCAN_ setting/],
     ['a LOCKED_ setting read in its with:', swap(`      languages: '["actions", "javascript-typescript"]'`, "      languages: '@{{ vars.LOCKED_RUNNER_2 }}'"), /reads LOCKED_RUNNER_2, a LOCKED_ setting/],
+    ...['CHECKS', 'LOCKED', 'SCAN'].map((kind) => [`an if: reading a ${kind}_ setting`, [...CALL, `    if: vars.${kind}_RUNNER_2 != ''`], new RegExp(`reads ${kind}_RUNNER_2, a ${kind}_ setting`)]),
+    ['the vars context read whole in its with:', swap(`      languages: '["actions", "javascript-typescript"]'`, "      languages: '@{{ toJSON(vars) }}'"), /reads \(vars read whole or by a computed name\)/],
+    ['vars read by a computed name in its with:', swap(`      languages: '["actions", "javascript-typescript"]'`, "      languages: \"@{{ vars[format('CHECKS_RUNNER_{0}', 2)] }}\""), /reads \(vars read whole or by a computed name\)/],
+    ['the vars context read whole in an if:', [...CALL, "    if: toJSON(vars) != ''"], /reads \(vars read whole or by a computed name\)/],
     ['the owner in another letter case', swap(CALL[1], '    uses: Dazzer-IO/.github/.github/workflows/codeql.yml@main'), /spelled in another letter case/],
     ['the path in another letter case', swap(CALL[1], '    uses: dazzer-io/.github/.github/workflows/CodeQL.yml@main'), /spelled in another letter case/],
     ['the shared scan at a tag', swap(CALL[1], '    uses: dazzer-io/.github/.github/workflows/codeql.yml@v1'), /calls the shared scan \.github\/workflows\/codeql\.yml at v1, not at main/],
@@ -699,7 +707,34 @@ test('engineer-review.yml alone may be called at a commit, and only one GitHub\'
       try { await judgeOf(files(`dazzer-io/.github/.github/workflows/engineer-review.yml@${SHA}`), { ...DAZZER, compare: async () => { throw new Error('GitHub answered 502'); } }); } catch (e) { thrown = e; }
       assert.ok(thrown instanceof J.Unread, `Could not find a compare GitHub did not answer read as unread, never as a pass or a refusal: ${thrown?.message ?? 'it passed'}`);
     });
-    await c(() => mustRefuse('the caller shape engineer-review/caller.yml holds today (if:, no permissions)', { 'engineer-review.yml': `name: Engineer review\non: [pull_request]\npermissions:\n  statuses: write\n  pull-requests: read\njobs:\n  engineer-review:\n    if: github.event_name != 'issue_comment' || github.event.issue.pull_request\n    uses: dazzer-io/.github/.github/workflows/engineer-review.yml@${SHA}\n`, 'ci.yml': check() }, { ...DAZZER, compare: compareAs('behind') }, { file: 'engineer-review.yml', says: /writes if: in a call/ }));
+    await c(() => mustRefuse('a call of engineer-review.yml under an if: with no permissions of its own, the shape the caller template held before decision 178', { 'engineer-review.yml': `name: Engineer review\non: [pull_request]\npermissions:\n  statuses: write\n  pull-requests: read\njobs:\n  engineer-review:\n    if: github.event_name != 'issue_comment' || github.event.issue.pull_request\n    uses: dazzer-io/.github/.github/workflows/engineer-review.yml@${SHA}\n`, 'ci.yml': check() }, { ...DAZZER, compare: compareAs('behind') }, { file: 'engineer-review.yml', says: /writes if: in a call/ }));
+  });
+});
+
+// engineer-review/caller.yml is the shape a repository copies to call engineer review
+// (engineer-review/README.md, "Adopting it"), so it passes the rule in every class of repository
+// that may copy it (decision 178). It is filled as `node engineer-review/decide.mjs caller` fills
+// it, by renderCaller, at a commit GitHub's compare reads as on main, as callerFor confirms.
+test('engineer-review/caller.yml, filled as decide.mjs caller fills it, passes the rule in every class of repository that copies it (decision 178)', async () => {
+  need();
+  const { renderCaller, CALLER_USES } = await import('../engineer-review/decide.mjs');
+  const template = readFileSync(join(ROOT, 'engineer-review/caller.yml'), 'utf8');
+  const SHA = 'c'.repeat(40);
+  const caller = renderCaller(template, { owner: 'dazzer-io', repo: '.github', commit: SHA });
+  assert.ok(template.includes(CALLER_USES) && caller.includes(`    uses: dazzer-io/.github/.github/workflows/engineer-review.yml@${SHA}\n`), `Could not find caller.yml's one uses: line filled with dazzer-io/.github at ${SHA}:\n${caller}`);
+  const classes = [
+    ['dazzer, a private repository whose workflows read a CHECKS_ setting', DAZZER, { 'ci.yml': check() }],
+    ['dazzer-app, the repository strict.json names', APP, { 'ci.yml': check() }],
+    ['a private repository that reads no setting', QUIET, {}],
+    ['a public repository', PUBLIC, {}],
+  ];
+  await everyCase(async (c) => {
+    for (const [name, ctx, beside] of classes) {
+      const asked = [];
+      const compare = async (q) => { asked.push(q); return 'behind'; };
+      const r = await c(() => mustPass(`caller.yml copied into ${name}`, { 'engineer-review.yml': caller, ...beside }, { ...ctx, compare }));
+      if (r) await c(() => assert.ok(asked.some((q) => q.base === 'main' && q.head === SHA), `Could not find the caller's pin asked of GitHub's compare as main...${SHA} in ${name}: ${JSON.stringify(asked)}`));
+    }
   });
 });
 
@@ -813,7 +848,49 @@ test('the YAML reader is the yaml package, pinned at exactly 2.9.1 and installed
   const decide = readFileSync(join(ROOT, '.github/workflows/decide-tests.yml'), 'utf8');
   const install = decide.indexOf('run: npm ci --ignore-scripts');
   if (install === -1 || install > decide.indexOf('run: node --test test/*.test.mjs')) misses.push('Could not find decide-tests.yml installing the package with npm ci --ignore-scripts before the tests');
-  if (existsSync(join(ROOT, 'test/runs-on.test.mjs'))) misses.push('Could not find test/runs-on.test.mjs gone: this file replaces it');
+  if (existsSync(join(ROOT, OLD_TEST))) misses.push(`Could not find ${OLD_TEST} gone: this file replaces it`);
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+// ================================================================ the files this change made stale (decision 178)
+test('the files this change made stale say what is true after it: no file names the deleted test, codeql.yml\'s header counts its three jobs, node_modules/ is ignored (decision 178)', () => {
+  need();
+  const misses = [];
+  // The deleted file's name as a grep for it reads it, the same text in any folder.
+  const name = OLD_TEST.slice('test/'.length, -'.mjs'.length);
+  let tracked = [];
+  try {
+    tracked = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean);
+  } catch (e) {
+    misses.push(`Could not find the files git tracks in this copy, so whether any names ${OLD_TEST} is unread: ${e.message}`);
+  }
+  if (!tracked.includes('machine-rule/judge.mjs')) misses.push(`Could not find machine-rule/judge.mjs among the files git tracks here, so the list read is not this repository's: ${tracked.length} files`);
+  for (const f of tracked) {
+    const at = join(ROOT, f);
+    if (!existsSync(at) || !statSync(at).isFile()) continue;
+    readFileSync(at, 'utf8').split('\n').forEach((l, i) => {
+      if (l.includes(name)) misses.push(`Could not find ${f}:${i + 1} free of ${OLD_TEST}, which this change deletes: '${l.trim()}'. Name what holds those jobs today, machine-rule/judge.mjs and its test test/machine-rule.test.mjs.`);
+    });
+  }
+  // codeql.yml's header gives its jobs' count in words and names them, as the file holds them.
+  const codeql = readFileSync(join(ROOT, '.github/workflows/codeql.yml'), 'utf8');
+  const ids = J.readWorkflow(codeql).jobs.map((j) => j.id);
+  const header = [];
+  for (const l of codeql.split('\n')) {
+    if (l.trim() !== '' && !l.startsWith('#')) break;
+    header.push(l.replace(/^# ?/, ''));
+  }
+  const words = header.join(' ').replace(/\s+/g, ' ');
+  const NUMBERS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+  const counts = [...words.matchAll(/\b(?:split in (\w+)|(both|one|two|three|four|five|six|seven|eight|nine|ten) jobs)\b/gi)].map((m) => [m[0], (m[1] ?? m[2]).toLowerCase()]);
+  const wrong = counts.filter(([, w]) => (w === 'both' ? 2 : NUMBERS.indexOf(w)) !== ids.length);
+  const listed = `${ids.slice(0, -1).join(', ')} and ${ids.at(-1)}`;
+  if (JSON.stringify(ids) !== JSON.stringify(['analyze', 'upload', 'complete'])) misses.push(`Could not find codeql.yml's three jobs, analyze, upload and complete, as read: ${ids.join(', ')}`);
+  if (!counts.length || wrong.length) misses.push(`Could not find codeql.yml's header counting its jobs as the file holds them, ${NUMBERS[ids.length]}: ${counts.length ? `it says ${counts.map(([p]) => `'${p}'`).join(', ')}` : 'it gives no count'}`);
+  if (!words.includes(listed)) misses.push(`Could not find codeql.yml's header naming its jobs as '${listed}'`);
+  // npm ci's install is no file of this repository.
+  const ignore = existsSync(join(ROOT, '.gitignore')) ? readFileSync(join(ROOT, '.gitignore'), 'utf8').split(/\r?\n/).map((l) => l.trim()) : null;
+  if (!ignore?.includes('node_modules/')) misses.push(`Could not find a .gitignore at this repository's root holding node_modules/, so the package npm ci installs stays out of every copy: ${ignore === null ? 'there is no .gitignore' : JSON.stringify(ignore)}`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 

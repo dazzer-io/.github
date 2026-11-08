@@ -218,8 +218,17 @@ test('the caller file pins its reusable workflow to a commit and names nothing o
   assert.match(caller, /types: \[opened, synchronize, reopened\]/);
   assert.match(caller, /issue_comment:\n\s+types: \[created\]/);
   assert.match(caller, /pull_request_review:\n\s+types: \[submitted\]/);
-  assert.match(caller, /permissions:\n\s+statuses: write\n\s+pull-requests: read\n\n/);
-  assert.match(caller, /if: github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request/);
+  // The calling job holds uses and permissions alone, the shape the machine rule admits
+  // (machine-rule/README.md, "Calls"): its own grant, statuses: write and pull-requests: read, is
+  // what it hands the called workflow, under a top that reads the code alone (decision 178).
+  assert.match(caller, /\npermissions:\n  contents: read\n\njobs:\n/, 'Could not find the caller\'s top granting contents: read alone');
+  assert.match(caller, /\n {2}engineer-review:\n {4}uses: <owner>\/<repo>\/\.github\/workflows\/engineer-review\.yml@<commit>\n {4}permissions:\n {6}statuses: write\n {6}pull-requests: read\n$/, 'Could not find the calling job holding uses and its own grant, statuses: write and pull-requests: read, alone');
+  // A comment on an issue that is no pull request is skipped by the called workflow's own job,
+  // which reads the caller's event: "When a reusable workflow is triggered by a caller workflow,
+  // the github context is always associated with the caller workflow." (GitHub's docs, Reusing
+  // workflow configurations).
+  assert.doesNotMatch(caller, /^\s*if:/m, 'Could not find the caller free of if:, a key the machine rule refuses in a call');
+  assert.match(fs.readFileSync(workflowPath, 'utf8'), /\n {4}if: github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request\n/, 'Could not find the called workflow\'s job skipping a comment that is not on a pull request');
 
   const commit = '5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d';
   const copy = renderCaller(caller, { owner: 'harbor-lane', repo: '.github', commit });

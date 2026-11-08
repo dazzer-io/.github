@@ -1,0 +1,26 @@
+# Throwaway live proof for r-3.30 (decisions 169, 170). Lives only on a proof/ branch of
+# dazzer-io/.github and a draft pull request from it, closed unmerged, never on main; deleted once
+# read. It runs the branch's shared CodeQL scan over javascript-typescript and python, the two
+# languages whose analysis had not yet met --no-database-extension-packs live, on a push and on a
+# pull request (the action's diff-informed analysis). The branch carries one small python file so
+# python has code to read.
+name: Proof languages with the option
+
+on:
+  push:
+    branches: ['proof/**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    uses: ./.github/workflows/codeql.yml
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    with:
+      languages: '["javascript-typescript", "python"]'

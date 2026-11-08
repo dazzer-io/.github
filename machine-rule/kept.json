@@ -268,12 +268,14 @@
         "node-version-v7",
         "nvmrc-v5-in-a-container",
         "nvmrc-v7-in-a-container",
-        "node-version-v7-in-a-container"
+        "node-version-v7-in-a-container",
+        "nvmrc-exact-v7",
+        "nvmrc-exact-v7-in-a-container"
       ],
       "effect": "canary",
       "reason": "the canary, run by hand, proves each of our sets before any setting names it, so it names the sets literally; its jobs are named per run from the matrix",
       "decision": 50,
-      "source": "runners .github/workflows/canary.yml:97-113, 133-174 at main, read 2026-11-08"
+      "source": "runners .github/workflows/canary.yml:97-113, 133-174 at main, read 2026-11-08; nvmrc-exact-v7 and nvmrc-exact-v7-in-a-container at runners .github/workflows/canary.yml:315, 549 at f56d757 (r-1.62)"
     },
     {
       "repository": "dazzer-io/.github",

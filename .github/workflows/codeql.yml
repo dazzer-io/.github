@@ -4,8 +4,8 @@
 # languages; this file decides everything else, so a new repository needs no copy and no review of
 # one, and a change in a calling repository cannot edit the scan it is scanned by.
 #
-# WHAT THE ACTION ALSO READS (decision 170). github/codeql-action names five custom repository
-# properties that have meaning to it: github-codeql-config-file, -disable-overlay, -extra-queries,
+# WHAT THE ACTION ALSO READS (decision 170). github/codeql-action names five repository properties
+# that have some meaning to it: github-codeql-config-file, -disable-overlay, -extra-queries,
 # -file-coverage-on-prs and -tools (github/codeql-action v4.39.3
 # src/feature-flags/properties.ts:10-20), and it parses github-codeql-extra-queries as queries
 # (src/config/db-config.ts:472-475). So one such property, not this file, could change the queries
@@ -60,19 +60,21 @@
 #
 # NO MODEL PACKS FROM THE SCANNED CODE (decision 169). GitHub's docs say: "If you later change
 # your configuration to use advanced setup, any model packs in the .github/codeql/extensions
-# directory will still be recognized and used" (GitHub docs, Edit default setup). So a change
-# could quiet its own scan by adding a pack there.
-#   - What closes it. For every language it takes, the analyze step hands database run-queries
+# directory will still be recognized and used" (GitHub docs, Edit default setup). A data extension
+# model pack can add an owner to the allow list for the actions/unpinned-tag query, and that "will
+# prevent security alerts when using unpinned tags for Actions published by that owner" (CodeQL
+# docs, Customizing library models for GitHub Actions). So a change could stop its own scan's
+# unpinned-tag alerts for an owner's Actions by adding such a pack there.
+#   - What it passes. For every language it takes, the analyze step hands database run-queries
 #     --no-database-extension-packs through the same CODEQL_ACTION_EXTRA_OPTIONS, which the action
 #     puts after its own flags (github/codeql-action v4.39.3 src/codeql.ts:779-790). CodeQL's
 #     manual says the option omits "extension packs stored in the database during database
 #     creation, either from a Code Scanning configuration file or from extension files stored in
 #     the 'extensions' directory of the analyzed codebase" (CodeQL CLI manual, database
 #     run-queries, --no-database-extension-packs); this scan names no configuration file.
-#   - What it drops. None of dazzer-io's 19 repositories had a .github/codeql folder on its default
-#     branch, read 8 Nov 2026 (each answered 404), so no model a repository relies on is dropped. A
-#     repository that wants models of its own asks for them here, in the shared scan, where a
-#     change to them is reviewed.
+#   - The repositories today. None of dazzer-io's 19 repositories had a .github/codeql folder on
+#     its default branch, read 8 Nov 2026 (each answered 404). A repository that wants models of
+#     its own asks for them here, in the shared scan, where a change to them is reviewed.
 #
 # WHY IT IS SPLIT IN TWO.
 #   - analyze runs on the scan machines, by ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}, so an

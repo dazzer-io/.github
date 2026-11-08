@@ -1,0 +1,367 @@
+{
+  "about": "The jobs kept on GitHub's computers, and the few that take another effect, each by repository, workflow file and job (a whole-file entry lists every job id its file holds), with its reason, the decision it rests on and its source. Effects: stay (on a literal GitHub standard label, no setting as its own machine, a CHECKS_RUNNER_<N> handed on only in a step's env; it may hold the write or sign-in it holds there), checks (reads CHECKS_RUNNER_<N> as a change check does, holding only the write it names) and canary (runners' canary.yml alone). machine-rule/judge.mjs reads this file from dazzer-io/.github, never from the repository it judges, and the morning readings read it to leave stay jobs out (r-1.58). machine-rule/README.md says each rule.",
+  "entries": [
+    {
+      "repository": "dazzer-io/dazzer",
+      "workflow": "setup-judge.yml",
+      "jobs": [
+        "fork",
+        "changes",
+        "code",
+        "plan",
+        "setup-judge"
+      ],
+      "effect": "stay",
+      "reason": "a setup workflow: it judges changes to the cloud setup, signed in, so it stays on GitHub's computers; its Plan jobs are named per run from a matrix",
+      "decision": 9,
+      "source": "dazzer .github/workflows/setup-judge.yml:120-453 at main, read 2026-11-08; dazzer scripts/checks/check-runner-setting.mjs SETUP_WORKFLOWS (263-268) at 58797b699; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer",
+      "workflow": "setup-apply.yml",
+      "jobs": [
+        "changes",
+        "apply"
+      ],
+      "effect": "stay",
+      "reason": "a setup workflow: it changes the cloud setup, signed in, so it stays on GitHub's computers",
+      "decision": 9,
+      "source": "dazzer .github/workflows/setup-apply.yml:110-269 at main, read 2026-11-08; dazzer check-runner-setting.mjs SETUP_WORKFLOWS (263-268) at 58797b699; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer",
+      "workflow": "switch-over-rehearsal.yml",
+      "jobs": [
+        "rehearse"
+      ],
+      "effect": "stay",
+      "reason": "a setup workflow: it rehearses the cloud switch-over, signed in, so it stays on GitHub's computers",
+      "decision": 9,
+      "source": "dazzer .github/workflows/switch-over-rehearsal.yml:75-78 at main, read 2026-11-08; dazzer check-runner-setting.mjs SETUP_WORKFLOWS (263-268) at 58797b699; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer",
+      "workflow": "deploy-held-rerun.yml",
+      "jobs": [
+        "rerun-held-deploy"
+      ],
+      "effect": "stay",
+      "reason": "the paused-release re-runner, signed in on workflow_run: it must re-run a held release even when our machines are down",
+      "decision": 9,
+      "source": "dazzer .github/workflows/deploy-held-rerun.yml:38-48 at main, read 2026-11-08; dazzer check-runner-setting.mjs SETUP_WORKFLOWS (263-268) at 58797b699; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer",
+      "workflow": "dependabot-auto-merge.yml",
+      "jobs": [
+        "auto-merge"
+      ],
+      "effect": "stay",
+      "reason": "it holds contents and pull-requests write on pull_request_target, so it never runs on our change-check machines",
+      "decision": 34,
+      "source": "dazzer .github/workflows/dependabot-auto-merge.yml:8-22 at main, read 2026-11-08; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer",
+      "workflow": "release.yml",
+      "jobs": [
+        "publish"
+      ],
+      "effect": "stay",
+      "reason": "it publishes on version tags, signed in (id-token: write), and a tag can name any commit, whose own release.yml would decide its runs-on",
+      "decision": 40,
+      "source": "dazzer .github/workflows/release.yml:9-24 at main, read 2026-11-08; dazzer check-runner-setting.mjs GITHUB_KEPT_WORKFLOWS (276) at 58797b699"
+    },
+    {
+      "repository": "dazzer-io/dazzer",
+      "workflow": "pr-automation.yml",
+      "job": "label",
+      "name": "Path labeler",
+      "effect": "stay",
+      "reason": "it labels pull requests with a pull-requests write token, so it stays on GitHub's machine, where that token is within no reach of what ran before it",
+      "decision": 36,
+      "source": "dazzer .github/workflows/pr-automation.yml:22-27 at main, read 2026-11-08; dazzer check-runner-setting.mjs write-token kind (kindOf) at 58797b699"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "dependabot-auto-merge.yml",
+      "jobs": [
+        "auto-merge"
+      ],
+      "effect": "stay",
+      "reason": "it holds contents and pull-requests write on pull_request_target, so it never runs on our change-check machines",
+      "decision": 34,
+      "source": "dazzer-app .github/workflows/dependabot-auto-merge.yml:8-22 at main, read 2026-11-08; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "ci.yml",
+      "job": "plan",
+      "name": "Splits the screen tests",
+      "effect": "stay",
+      "reason": "the plan job reads CHECKS_RUNNER_2 in a step's env and chooses every other job's machine, so it runs on GitHub's computers before any of ours is needed",
+      "decision": 34,
+      "source": "dazzer-app .github/workflows/ci.yml:89-113 at main, read 2026-11-08; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "ci.yml",
+      "job": "gate",
+      "name": "CI Gate",
+      "effect": "stay",
+      "reason": "a short job that only reports the other jobs' verdict, kept on GitHub's computers with the plan",
+      "decision": 34,
+      "source": "dazzer-app .github/workflows/ci.yml:280-284 at main, read 2026-11-08; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "ci.yml",
+      "job": "record",
+      "name": "Pipeline record",
+      "effect": "stay",
+      "reason": "a short job that records the run's times, kept on GitHub's computers with the plan",
+      "decision": 34,
+      "source": "dazzer-app .github/workflows/ci.yml:329-335 at main, read 2026-11-08; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "split-trial.yml",
+      "job": "plan",
+      "name": "plan",
+      "effect": "stay",
+      "reason": "the trial's plan job reads CHECKS_RUNNER_2 in a step's env and chooses the trial's machines, so it runs on GitHub's computers before any of ours is needed",
+      "decision": 34,
+      "source": "dazzer-app .github/workflows/split-trial.yml:70-93 at main, read 2026-11-08; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "split-trial.yml",
+      "job": "record",
+      "name": "Pipeline record",
+      "effect": "stay",
+      "reason": "a short job that records the trial's times, kept on GitHub's computers with the plan",
+      "decision": 34,
+      "source": "dazzer-app .github/workflows/split-trial.yml:231-237 at main, read 2026-11-08; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "split-trial.yml",
+      "job": "quick",
+      "name": "quick",
+      "effect": "checks",
+      "reason": "the trial's code checks, started by hand alone (workflow_dispatch), take their machine from the plan's CHECKS_RUNNER_2 as ci.yml's quick does",
+      "decision": 34,
+      "source": "dazzer-app .github/workflows/split-trial.yml:102-104 at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "split-trial.yml",
+      "job": "browser",
+      "name": "browser ${{ matrix.machine }}",
+      "effect": "checks",
+      "reason": "the trial's screen tests, started by hand alone, take their machine from the plan's rows as ci.yml's browser does; a checks entry carries its name as written, since GitHub names each leg from a matrix and the readings leave out stay entries alone (decisions 142, 154)",
+      "decision": 34,
+      "source": "dazzer-app .github/workflows/split-trial.yml:149-152 at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "canary-drill.yml",
+      "jobs": [
+        "drill"
+      ],
+      "effect": "stay",
+      "reason": "a production or scheduled job: it drills the release canary in the release environment, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
+      "decision": 54,
+      "source": "dazzer-app .github/workflows/canary-drill.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "contract-watch.yml",
+      "jobs": [
+        "watch"
+      ],
+      "effect": "stay",
+      "reason": "a production or scheduled job: a scheduled watch that writes issues with main's token, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
+      "decision": 54,
+      "source": "dazzer-app .github/workflows/contract-watch.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "lane-times.yml",
+      "jobs": [
+        "refresh",
+        "open"
+      ],
+      "effect": "stay",
+      "reason": "a production or scheduled job: it rewrites the lanes' timings and opens them as a pull request, in the lane-refresh environment, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
+      "decision": 54,
+      "source": "dazzer-app .github/workflows/lane-times.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "promote-production.yml",
+      "jobs": [
+        "start",
+        "promote"
+      ],
+      "effect": "stay",
+      "reason": "a production or scheduled job: it promotes main's production build in the release environment, started by deployment_status, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
+      "decision": 54,
+      "source": "dazzer-app .github/workflows/promote-production.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "release-check.yml",
+      "jobs": [
+        "find",
+        "check",
+        "act",
+        "handover"
+      ],
+      "effect": "stay",
+      "reason": "a production or scheduled job: it checks the release in the release and live-check environments, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
+      "decision": 54,
+      "source": "dazzer-app .github/workflows/release-check.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "scorecard.yml",
+      "jobs": [
+        "scorecard"
+      ],
+      "effect": "stay",
+      "reason": "a production or scheduled job: it reads the week's scorecard in the release environment, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
+      "decision": 54,
+      "source": "dazzer-app .github/workflows/scorecard.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+    },
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "sweep.yml",
+      "jobs": [
+        "sweep"
+      ],
+      "effect": "stay",
+      "reason": "a production or scheduled job: a daily sweep that writes issues with main's token, so it keeps GitHub's literal machine until the locked machines take it (r-3.8)",
+      "decision": 54,
+      "source": "dazzer-app .github/workflows/sweep.yml at main, read 2026-11-08; dazzer-app test/verdict.test.ts holdsMoreThanTheCode at 4b236f2e"
+    },
+    {
+      "repository": "dazzer-io/brain-builder",
+      "workflow": "release.yml",
+      "job": "tag",
+      "name": "Tag the released version",
+      "effect": "checks",
+      "writes": [
+        "contents"
+      ],
+      "reason": "started by a push to main, it tags the released version on the change-check machines, holding contents: write to push the tag",
+      "decision": 47,
+      "source": "brain-builder .github/workflows/release.yml:28-33 at main, read 2026-11-08"
+    },
+    {
+      "repository": "dazzer-io/scheduler",
+      "workflow": "tick.yml",
+      "jobs": [
+        "tick",
+        "runner-watcher",
+        "runner-readings"
+      ],
+      "effect": "stay",
+      "reason": "the tick runs the daily readings and the fallback watcher, which must run when our machines are down, so it stays on GitHub's computers with contents: write and the runner-watcher environment; runner-readings, which r-1.58 adds, is named before it lands",
+      "decision": 22,
+      "source": "scheduler .github/workflows/tick.yml:73-140 at main, read 2026-11-08; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/scheduler",
+      "workflow": "soc2-readiness.yml",
+      "jobs": [
+        "reading"
+      ],
+      "effect": "stay",
+      "reason": "once a day, signed in with the SOC 2 reading identity rather than production, and not a product workflow",
+      "decision": 26,
+      "source": "scheduler .github/workflows/soc2-readiness.yml:39-40 at main, read 2026-11-08; runners' org/allowed-literal.json at 789b335"
+    },
+    {
+      "repository": "dazzer-io/runners",
+      "workflow": "apply.yml",
+      "jobs": [
+        "apply"
+      ],
+      "effect": "stay",
+      "reason": "it applies the infra files and the organisation settings, signed in through the apply environment: it makes the machines, so it stays on GitHub's computers",
+      "decision": 9,
+      "source": "runners .github/workflows/apply.yml:159-169 at main, read 2026-11-08"
+    },
+    {
+      "repository": "dazzer-io/runners",
+      "workflow": "image.yml",
+      "jobs": [
+        "build",
+        "push"
+      ],
+      "effect": "stay",
+      "reason": "it builds, tests and pushes the runner image, signed in through the apply environment: it makes the machines, so it stays on GitHub's computers",
+      "decision": 9,
+      "source": "runners .github/workflows/image.yml:153-181 at main, read 2026-11-08"
+    },
+    {
+      "repository": "dazzer-io/runners",
+      "workflow": "canary.yml",
+      "jobs": [
+        "canary",
+        "scan",
+        "nvmrc-v5",
+        "nvmrc-v7",
+        "node-version-v7",
+        "nvmrc-v5-in-a-container",
+        "nvmrc-v7-in-a-container",
+        "node-version-v7-in-a-container"
+      ],
+      "effect": "canary",
+      "reason": "the canary, run by hand, proves each of our sets before any setting names it, so it names the sets literally; its jobs are named per run from the matrix",
+      "decision": 50,
+      "source": "runners .github/workflows/canary.yml:97-113, 133-174 at main, read 2026-11-08"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "workflow": "codeql.yml",
+      "job": "upload",
+      "name": "Upload CodeQL results",
+      "effect": "stay",
+      "reason": "it alone holds security-events: write in the shared scan, on GitHub's machine by a literal label; GitHub shows each leg as Upload CodeQL results (<language>)",
+      "decision": 36,
+      "source": "dazzer-io/.github .github/workflows/codeql.yml:238-245 at dca1d18"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "workflow": "codeql.yml",
+      "job": "complete",
+      "name": "CodeQL complete",
+      "effect": "stay",
+      "reason": "the shared scan's one final check, granted no token, on GitHub's machine (decision 135); callers require <job> / CodeQL complete",
+      "decision": 93,
+      "source": "dazzer-io/.github .github/workflows/codeql.yml:274-278 at dca1d18"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "workflow": "engineer-review.yml",
+      "job": "engineer-review",
+      "name": "Settle engineer review",
+      "effect": "stay",
+      "reason": "it sets the Engineer review status with a statuses: write token, so it stays on GitHub's machine",
+      "decision": 36,
+      "source": "dazzer-io/.github .github/workflows/engineer-review.yml:27-32 at dca1d18"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "workflow": "machine-rule.yml",
+      "job": "machine-rule",
+      "name": "Machine rule",
+      "effect": "stay",
+      "reason": "the machine rule's own job, required in every repository by the ruleset machine-rule-required, a job of under a minute that reads no setting and so stays off our machines in public repositories",
+      "decision": 104,
+      "source": "dazzer-io/.github .github/workflows/machine-rule.yml (this change)"
+    }
+  ]
+}

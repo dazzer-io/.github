@@ -9,9 +9,12 @@
 # It runs on GitHub's ubuntu-latest, written as a literal label, and reads no CHECKS_, SCAN_ or
 # LOCKED_ setting: the fallback watcher, which sends a job waiting on our machines back to
 # GitHub's, does not read this repository's runs, so a job here on the change-check machines
-# would never be sent back if they stalled (decision 104; test/runs-on.test.mjs holds the machine
-# line). Once the watcher reads this repository's runs, it may read CHECKS_RUNNER_2 like the
-# other repositories' checks. It asks setup-node for Node 24.
+# would never be sent back if they stalled (decision 104; machine-rule/judge.mjs holds the machine
+# line, and test/machine-rule.test.mjs runs it over this folder). Once the watcher reads this
+# repository's runs, it may read CHECKS_RUNNER_2 like the other repositories' checks. It asks
+# setup-node for Node 24, then installs the one package the tests read, the YAML reader the
+# machine rule reads workflows with, pinned in package-lock.json, with npm ci --ignore-scripts, so
+# no package's install script runs.
 name: Decide tests
 
 on:
@@ -36,6 +39,9 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+
+      - name: Install the pinned YAML reader
+        run: npm ci --ignore-scripts
 
       - name: Run the tests
         run: node --test test/*.test.mjs

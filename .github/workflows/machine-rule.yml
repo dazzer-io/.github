@@ -1,6 +1,6 @@
 # Machine rule (decision 121): judges a change's .github/workflows folder by the organisation's
 # one rule on which job may use which of our machines, machine-rule/judge.mjs, then lints the same
-# folder with actionlint. The organisation ruleset machine-rule-required (machine-rule/ruleset.json)
+# folder with linters. The organisation ruleset machine-rule-required (machine-rule/ruleset.json)
 # runs this file on the default branch of every repository; here it also runs on this repository's
 # own pull requests and merge queue entries.
 #
@@ -20,6 +20,9 @@
 # judge alone rules where our names may stand: it admits them literally in runners' canary alone
 # (decision 50). So the second drops actionlint's unknown-label error for exactly a name judge.mjs's
 # OUR_MACHINE matches, and any other label actionlint does not know is still reported (decision 198).
+# zizmor is pinned and checked the same way, reads .github offline, honouring no ignore comment, by
+# machine-rule/zizmor.yml: it refuses only an action not pinned by commit (the organisation's own
+# workflows may be called on a branch), and counts every other finding without refusing it.
 name: Machine rule
 
 on:
@@ -90,13 +93,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node .machine-rule/machine-rule/judge.mjs --repository "$REPOSITORY" --visibility "$VISIBILITY" .change
 
-      - name: Lint the change's workflows with actionlint
+      - name: Lint the change's workflows with actionlint and zizmor
         env:
           ACTIONLINT_VERSION: 1.7.12
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ZIZMOR_VERSION: 1.31.1
+          ZIZMOR_SHA256: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
         run: |
           if [ -z "$(find .change/.github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null)" ]; then
-            echo "Machine rule: no workflow in .github/workflows, so actionlint has nothing to read (never read as clean)"
+            echo "Machine rule: no workflow in .github/workflows, so actionlint and zizmor have nothing to read (never read as clean)"
             exit 0
           fi
           archive="$RUNNER_TEMP/actionlint.tar.gz"
@@ -105,3 +110,11 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
           cd .change
           "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes= -ignore 'property "workflow_(repository|sha)" is not defined in object type' -ignore '^label "dazzer-(checks|checks-regular|locked|scan)-[1-9][0-9]*-core" is unknown\. available labels are'
+          archive="$RUNNER_TEMP/zizmor.tar.gz"
+          curl -fsSL --retry 5 --retry-all-errors -o "$archive" "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ZIZMOR_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" zizmor
+          "$RUNNER_TEMP/zizmor" --offline --no-progress --no-exit-codes --no-ignores --collect=all --strict-collection --config ../.machine-rule/machine-rule/zizmor.yml --format json .github > "$RUNNER_TEMP/zizmor.json"
+          jq -r '.[] | select(.ident == "unpinned-uses") | .locations[0] | "::error file=\(.symbolic.key.Local.verbatim_path | ltrimstr("./")),line=\(.concrete.location.start_point.row + 1),title=Machine rule::an action used by tag or branch: pin it by its commit, its version in a comment"' "$RUNNER_TEMP/zizmor.json" | tee "$RUNNER_TEMP/unpinned"
+          echo "Machine rule: zizmor read $(jq length "$RUNNER_TEMP/zizmor.json") finding(s) and refuses only an action not pinned by commit"
+          [ ! -s "$RUNNER_TEMP/unpinned" ]

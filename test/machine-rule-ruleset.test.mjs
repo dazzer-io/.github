@@ -3,8 +3,9 @@
 // machine-rule-required runs .github/workflows/machine-rule.yml, read from dazzer-io/.github by its
 // repository id at refs/heads/main, on the default branch of every repository; main-spelling-refused
 // restricts the creation of the fifteen other spellings of main in dazzer and dazzer-app; and
-// codeql-complete-required requires codeql / CodeQL complete from GitHub Actions there, written in
-// evaluate, so it blocks nothing until it is made active. Each file is checked by its own check, each
+// codeql-complete-required requires codeql / CodeQL complete from GitHub Actions there. The two rules
+// are written active, so each blocks: decision 177's watch-first period is over, and a file written
+// as evaluate is refused (r-3.27). Each file is checked by its own check, each
 // way it could be wrong red alone; the command's read, write and readings modes are run against a
 // fake GitHub that answers the organisation's rulesets a page at a time and dazzer-io/.github's id,
 // and nothing else, so each kept ruleset is seen standing alone, nothing here reaches the network,
@@ -79,11 +80,11 @@ const refusalsMissed = (check, base, cases) => {
   return misses;
 };
 
-test('ruleset.json is the rule\'s ruleset: machine-rule.yml of dazzer-io/.github at refs/heads/main, every repository\'s default branch, evaluate first', () => {
+test('ruleset.json is the rule\'s ruleset: machine-rule.yml of dazzer-io/.github at refs/heads/main, every repository\'s default branch, active', () => {
   need();
   const r = fileRuleset();
   assert.deepEqual(A.checkRuleset(r), [], 'Could not find machine-rule/ruleset.json passing checkRuleset');
-  assert.equal(r.enforcement, 'evaluate', 'Could not find the ruleset written as evaluate, so it watches before it refuses (decision 177)');
+  assert.equal(r.enforcement, 'active', `Could not find machine-rule-required written as active, so it blocks a merge the machine rule refuses; decision 177's watch-first period is over (r-3.27): ${JSON.stringify(r.enforcement)}`);
   assert.equal(A.SHARED_REPOSITORY_ID, ID, 'Could not find dazzer-io/.github\'s repository id as GitHub gives it');
   const w = r.rules?.[0]?.parameters?.workflows?.[0];
   assert.deepEqual(w, { path: '.github/workflows/machine-rule.yml', ref: 'refs/heads/main', repository_id: ID }, `Could not find the workflows rule naming machine-rule.yml of dazzer-io/.github at refs/heads/main: ${JSON.stringify(w)}`);
@@ -224,9 +225,9 @@ function fakeGitHub({ rulesets = [], sharedId = ID, write = null, rejects = null
 // The three rulesets the files keep, as GitHub would hold them, at ids of their own.
 const allThree = () => [{ ...fileRuleset(), id: 7 }, { ...spellingFile(), id: 10 }, { ...codeqlFile(), id: 11 }];
 // machine-rule-required its file's version at 7, main-spelling-refused absent, and
-// codeql-complete-required live as active at 11, which its file is not: --apply's plan is unchanged,
+// codeql-complete-required live as evaluate at 11, which its file is not: --apply's plan is unchanged,
 // create and update, so a PUT, a POST and a PUT, in that order.
-const oneOfEach = () => [{ ...fileRuleset(), id: 7 }, { ...codeqlFile(), id: 11, enforcement: 'active' }];
+const oneOfEach = () => [{ ...fileRuleset(), id: 7 }, { ...codeqlFile(), id: 11, enforcement: 'evaluate' }];
 // One run of main(): its exit code, or "threw" with what it threw among its error lines, so a run
 // that throws fails a case by its message rather than ending the test.
 async function run(argv, gh, options = {}) {
@@ -245,7 +246,7 @@ test('the read: exit 0 when every live ruleset is its file\'s, 1 naming each fie
   const misses = [];
   const same = fakeGitHub({ rulesets: [...allThree(), { id: 8, name: 'made-up-other', rules: [] }] });
   const s = await run([], same);
-  if (s.code !== 0 || !/machine-rule-required \(7\) on dazzer-io is the file's version, enforcement evaluate/.test(s.all)) misses.push(`Could not find the matching ruleset read as the file's version, exit 0: ${s.code} ${s.all}`);
+  if (s.code !== 0 || !/machine-rule-required \(7\) on dazzer-io is the file's version, enforcement active/.test(s.all)) misses.push(`Could not find the matching ruleset read as the file's version, exit 0: ${s.code} ${s.all}`);
   for (const [name, id, r] of [[SPELLING, 10, spellingFile()], [CODEQL, 11, codeqlFile()]]) if (!s.all.includes(`${name} (${id}) on dazzer-io is the file's version, enforcement ${r.enforcement}`)) misses.push(`Could not find ${name} read as its file's version: ${s.all}`);
   const drifted = clone(file);
   drifted.rules[0].parameters.workflows[0].ref = 'refs/heads/made-up-branch';
@@ -385,7 +386,7 @@ test('the read-back counts a repository condition GitHub reads as protected: fal
   const misses = [];
   const file = clone(fileRuleset());
   delete file.conditions.repository_name.protected;
-  const live = readBack({ ...clone(file), id: 7, enforcement: 'evaluate' });
+  const live = readBack({ ...clone(file), id: 7 });
   if (live.conditions.repository_name.protected !== false) misses.push('Could not find the fake GitHub reading protected back as false');
   const left = A.diffRuleset(live, file);
   if (left.length) misses.push(`Could not find a live protected: false matching a file that leaves protected out: ${JSON.stringify(left)}`);
@@ -401,15 +402,15 @@ test('the read-back counts a repository condition GitHub reads as protected: fal
   // reading it back in its own shape, then the no-argument read.
   const gh = fakeGitHub({ rulesets: [{ id: 8, name: 'made-up-other', target: 'branch', enforcement: 'active', rules: [{ type: 'deletion' }] }] });
   const apply = await run(['--apply'], gh);
-  if (apply.code !== 0 || !/now is the file's version, enforcement evaluate/.test(apply.all)) misses.push(`Could not find --apply of the shipped file accepted by GitHub and read back as the file's version, exit 0: ${apply.code} ${apply.all}`);
+  if (apply.code !== 0 || !/now is the file's version, enforcement active/.test(apply.all)) misses.push(`Could not find --apply of the shipped file accepted by GitHub and read back as the file's version, exit 0: ${apply.code} ${apply.all}`);
   const after = await run([], gh);
-  if (after.code !== 0 || !/is the file's version, enforcement evaluate/.test(after.all)) misses.push(`Could not find the read after --apply saying it matches, exit 0: ${after.code} ${after.all}`);
+  if (after.code !== 0 || !/is the file's version, enforcement active/.test(after.all)) misses.push(`Could not find the read after --apply saying it matches, exit 0: ${after.code} ${after.all}`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 
 // ================================================================ the two rules on main (decisions 188, 192, 195, 210)
 // main-spelling-refused restricts creating a branch spelled main in other letters in dazzer and
-// dazzer-app, and codeql-complete-required, written in evaluate, reads the shared scan's codeql /
+// dazzer-app, and codeql-complete-required, written active, reads the shared scan's codeql /
 // CodeQL complete from GitHub Actions there before a merge. Both are kept as files beside
 // ruleset.json and written by the same --apply. GitHub's rulesets pages name fnmatch with
 // File::FNM_PATHNAME and say nothing of case, so the patterns hold either way among the sixteen
@@ -545,15 +546,15 @@ test('checkMainSpelling refuses a bypass, another repository, an exclude, a rule
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('codeql-complete.json is codeql-complete-required: branches, evaluate, no bypass, the two repositories\' default branch, codeql / CodeQL complete from integration 15368, not on create, strict off', () => {
+test('codeql-complete.json is codeql-complete-required: branches, active, no bypass, the two repositories\' default branch, codeql / CodeQL complete from integration 15368, not on create, strict off', () => {
   needKept();
   const r = codeqlFile();
   assert.deepEqual(A.checkCodeqlComplete(r), [], `Could not find machine-rule/codeql-complete.json passing checkCodeqlComplete: ${JSON.stringify(A.checkCodeqlComplete(r))}`);
-  assert.equal(r.enforcement, 'evaluate', `Could not find codeql-complete-required written in evaluate, so it blocks nothing and records each merge it would have refused until it is made active (decision 210): ${JSON.stringify(r.enforcement)}`);
+  assert.equal(r.enforcement, 'active', `Could not find codeql-complete-required written as active, so it blocks a merge without codeql / CodeQL complete; decision 210's watching in evaluate is over (r-3.27): ${JSON.stringify(r.enforcement)}`);
   assert.deepEqual(r, {
     name: CODEQL,
     target: 'branch',
-    enforcement: 'evaluate',
+    enforcement: 'active',
     bypass_actors: [],
     conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] }, repository_name: { include: REPOSITORIES, exclude: [], protected: true } },
     rules: [{ type: 'required_status_checks', parameters: { do_not_enforce_on_create: true, required_status_checks: [{ context: CONTEXT, integration_id: ACTIONS }], strict_required_status_checks_policy: false } }],
@@ -798,7 +799,7 @@ test('the command reads only the organisation\'s rulesets and dazzer-io/.github\
   needKept();
   const misses = [];
   const ours = (path) => /^\/orgs\/dazzer-io\/rulesets(\/\d+)?(\?|$)/.test(path) || path === '/repos/dazzer-io/.github';
-  for (const [label, rulesets] of [['every ruleset absent', () => []], ['every ruleset its file\'s', allThree], ['codeql-complete-required live as active', () => [{ ...fileRuleset(), id: 7 }, { ...spellingFile(), id: 10 }, { ...codeqlFile(), id: 11, enforcement: 'active' }]]]) {
+  for (const [label, rulesets] of [['every ruleset absent', () => []], ['every ruleset its file\'s', allThree], ['codeql-complete-required live as evaluate', () => [{ ...fileRuleset(), id: 7 }, { ...spellingFile(), id: 10 }, { ...codeqlFile(), id: 11, enforcement: 'evaluate' }]]]) {
     for (const argv of [[], ['--apply']]) {
       const gh = fakeGitHub({ rulesets: rulesets() });
       const r = await run(argv, gh);
@@ -843,7 +844,7 @@ test('without --apply, each of the three is said as its file\'s version, differi
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'s command, that each ruleset stands alone and what each exit code means, where the locked shape is held to main, that codeql-complete-required watches in evaluate, and the lint step\'s two ignores', () => {
+test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'s command, that each ruleset stands alone and what each exit code means, where the locked shape is held to main, that machine-rule-required and codeql-complete-required are required (blocking), and the lint step\'s two ignores', () => {
   const md = readFileSync(join(ROOT, 'machine-rule/README.md'), 'utf8');
   const plain = md.replace(/\s+/g, ' ');
   const misses = [];
@@ -853,7 +854,8 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
     'without regard to case', "github.ref == 'refs/heads/main'", 'a branch named `MAIN`',
     "held to main only in dazzer and dazzer-app, once `main-spelling-refused` is live and the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included",
     'keeps every `LOCKED_` setting empty until then', 'Holding it to main in any other repository is other work', 'this command reads no branch',
-    'watches, in `evaluate`, until it is made active once its readings show no merge it would have refused',
+    '`machine-rule-required` is required (blocking): it is written `active`',
+    '`codeql-complete-required` is required (blocking): it is written `active`',
     'Each kept ruleset stands alone', 'holds back that one alone and names it', 'the others are still written and read back',
     "Exit 0 means every ruleset is its file's version", 'exit 1 means one or more were held back or differ', 'exit 2 means GitHub could not be read at all',
     // D212: a write gh gets no answer to is that ruleset's alone, and the ids a write and its read-back go to.
@@ -863,6 +865,8 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
   // Every sentence saying main-spelling-refused is live bounds the claim to the two repositories and
   // to the locked switch-on finding no other spelling there, non-ASCII ones included (decision 210).
   for (const s of plain.split(/(?<=\.) /)) if (s.includes('`main-spelling-refused` is live') && !(s.includes('dazzer and dazzer-app') && s.includes("the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included"))) misses.push(`Could not find this sentence of machine-rule/README.md bounded to dazzer and dazzer-app, with the locked switch-on finding no other spelling of main there, non-ASCII ones included: ${s}`);
+  // Neither rule watches any more: decision 177's watch-first period is over (r-3.27).
+  for (const words of ['written in `evaluate`', 'watches, in `evaluate`', 'so it watches before it refuses']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: both rules are required (blocking), written active`);
   if (/Its one ignore/.test(plain)) misses.push('Could not find machine-rule/README.md rid of "Its one ignore": the lint step holds two (decision 201)');
   // The guard and the branch read are gone, and their account with them (decision 210).
   for (const words of ['default-branch head carries', 'one refusal and nothing is written', 'Any of these and nothing is written', 'the head of the newest pull request merged into', 'the newest merge-group commit', 'a branch spelled main in other letters already exists', 'its guard reads']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}, the guard or the branch read decision 210 removed`);

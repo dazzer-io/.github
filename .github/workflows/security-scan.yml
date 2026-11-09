@@ -68,6 +68,14 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels the scan of its older head, which no one reads once the
+# head has moved on. Only a pull_request run is ever cancelled: each pull request is one group,
+# and any other run (a merge queue's, today the only other trigger) is a group of its own, keyed
+# on its run id, with cancel-in-progress off, so no newer run cancels it, running or waiting.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pull-request-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
   HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}

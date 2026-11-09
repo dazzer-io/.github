@@ -224,10 +224,12 @@ public one.
   - holds no secret, declared or read;
   - checks out with `persist-credentials: false`.
 
-  Its write-token jobs and `codeql.yml`'s one final check run on GitHub's standard machine,
-  read no setting and are named in kept.json (decisions 36, 135, r-1.58). In dazzer-io/.github
-  no other job, a call included, reads a `vars` name spelled as a setting is (`CHECKS_`,
-  `SCAN_` or `LOCKED_` and anything after), declared or not, as its runs-on test held.
+  Its write-token jobs (today `codeql.yml`'s one upload job, `Upload CodeQL results`, which
+  sends every language in turn) and `codeql.yml`'s one final check run on GitHub's standard
+  machine, read no setting and are named in kept.json (decisions 36, 135, r-1.58). In
+  dazzer-io/.github no other job, a call included, reads a `vars` name spelled as a setting is
+  (`CHECKS_`, `SCAN_` or `LOCKED_` and anything after), declared or not, as its runs-on test
+  held.
 - **dazzer-app's stricter class** (`strict.json`, decision 54): every job not on the literal
   `ubuntu-latest`, whatever its class, holds no more than the code; `ubuntu-24.04` and
   `ubuntu-22.04` are held too, as `holdsMoreThanTheCode` held them (decision 181). That means no

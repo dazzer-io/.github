@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import {
   decide, summary, annotations, readMode, readNative, readAccepted, allowGhsas,
   requiredOutputs, fromCvss, fromWord, blocks, OPEN_SOURCE_OUTPUTS,
@@ -709,6 +710,83 @@ test('in advisory mode only the security-scan job decides the workflow\'s result
   for (const job of SCANNER_JOBS) {
     const upload = steps(job).find((s) => /upload-artifact/.test(s.text));
     assert.ok(upload && /if: \$\{\{ !cancelled\(\) \}\}/.test(upload.text), `the job ${job} drops its output when a step fails`);
+  }
+});
+
+// ---------- which runs a newer one cancels ----------
+// GitHub's expression grammar as far as concurrency here needs it: quoted text, true, false,
+// null and numbers, a context read by name, ==, !=, !, && and || (each giving back an operand),
+// parentheses and format(). A shape outside it throws, so the test goes red rather than guessing.
+function evaluateExpression(body, ctx) {
+  const toks = body.match(/'(?:[^']|'')*'|\|\||&&|==|!=|[!(),.]|[A-Za-z_][A-Za-z0-9_-]*|-?\d+|\S/g) ?? [];
+  let i = 0;
+  const peek = (v) => toks[i] === v;
+  const take = (v) => { if (toks[i] !== v) throw new Error(`expected ${v} in ${body}`); i++; };
+  const loose = (v) => (typeof v === 'string' ? v.toLowerCase() : v);
+  const or = () => { let v = and(); while (peek('||')) { i++; const r = and(); v = v || r; } return v; };
+  const and = () => { let v = cmp(); while (peek('&&')) { i++; const r = cmp(); v = v && r; } return v; };
+  const cmp = () => {
+    let v = unary();
+    while (peek('==') || peek('!=')) { const op = toks[i++]; const r = unary(); v = op === '==' ? loose(v) === loose(r) : loose(v) !== loose(r); }
+    return v;
+  };
+  const unary = () => (peek('!') ? (i++, !unary()) : primary());
+  const primary = () => {
+    const t = toks[i++];
+    if (t === undefined) throw new Error(`${body} ends where a value should be`);
+    if (t === '(') { const v = or(); take(')'); return v; }
+    if (t.startsWith("'")) return t.slice(1, -1).replaceAll("''", "'");
+    if (/^-?\d+$/.test(t)) return Number(t);
+    if (t === 'true' || t === 'false') return t === 'true';
+    if (t === 'null') return null;
+    if (t === 'format' && peek('(')) {
+      i++;
+      const args = [or()];
+      while (peek(',')) { i++; args.push(or()); }
+      take(')');
+      return String(args[0]).replace(/\{(\d+)\}/g, (_, n) => String(args[Number(n) + 1] ?? ''));
+    }
+    if (!/^[A-Za-z_]/.test(t) || !Object.hasOwn(ctx, t)) throw new Error(`${body} reads ${t}, which this test does not evaluate`);
+    let v = ctx[t];
+    while (peek('.')) { i++; const k = toks[i++]; v = v === null || v === undefined ? null : v[k] ?? null; }
+    return v;
+  };
+  const v = or();
+  if (i < toks.length) throw new Error(`${body} reads past its end at ${toks[i]}`);
+  return v;
+}
+// A value as GitHub gives it: one whole ${{ }} keeps its type; text around one is joined. A body
+// ends at its first }}, so a {0} inside it is read as text.
+function evaluateValue(value, ctx) {
+  if (typeof value !== 'string') return value;
+  const whole = value.match(/^\$\{\{((?:(?!\}\}).)*)\}\}$/);
+  if (whole) return evaluateExpression(whole[1], ctx);
+  return value.replace(/\$\{\{((?:(?!\}\}).)*)\}\}/g, (_, b) => String(evaluateExpression(b, ctx) ?? ''));
+}
+
+const SUPERSEDED = 'a superseded pull-request scan is left running';
+const CUT_SHORT = 'a scan that is no pull request\'s can be cancelled';
+test('a newer push to a pull request cancels its older scan, and nothing else is ever cancelled', () => {
+  const wf = parseYaml(fs.readFileSync(WORKFLOW, 'utf8'));
+  const c = wf.concurrency;
+  assert.ok(c && typeof c === 'object' && c.group !== undefined, `${SUPERSEDED}: the workflow's top holds no concurrency with a group, so every run of a pull request runs to its end: ${JSON.stringify(c)}`);
+  const withConcurrency = Object.entries(wf.jobs ?? {}).filter(([, j]) => j && Object.hasOwn(j, 'concurrency')).map(([id]) => id);
+  assert.deepEqual(withConcurrency, [], `${CUT_SHORT}: a job's own concurrency group can cancel or queue that job on any event`);
+  const runs = [
+    ['pull_request', 101, 7], ['pull_request', 102, 7], ['pull_request', 103, 8],
+    ['merge_group', 104], ['merge_group', 105], ['push', 106], ['schedule', 107], ['workflow_dispatch', 108],
+  ].map(([event, id, number]) => {
+    const ctx = { github: { workflow: 'Security scan', event_name: event, run_id: String(id), event: event === 'pull_request' ? { pull_request: { number } } : event === 'merge_group' ? { merge_group: { head_sha: 'f'.repeat(40) } } : {} } };
+    return { event, id, number, group: evaluateValue(c.group, ctx), cancel: evaluateValue(c['cancel-in-progress'], ctx) };
+  });
+  const [older, newer, other] = runs;
+  assert.ok(older.group && older.group === newer.group, `${SUPERSEDED}: two runs of pull request 7 fall in the groups ${older.group} and ${newer.group}`);
+  assert.ok(older.cancel === true && newer.cancel === true, `${SUPERSEDED}: cancel-in-progress reads ${JSON.stringify(newer.cancel)} on a pull request`);
+  assert.notEqual(other.group, older.group, `${CUT_SHORT}: pull requests 7 and 8 share the group ${older.group}, so one cancels the other's scan`);
+  for (const r of runs.slice(3)) {
+    assert.equal(r.cancel, false, `${CUT_SHORT}: cancel-in-progress reads ${JSON.stringify(r.cancel)} on a ${r.event} run`);
+    const sharing = runs.filter((x) => x !== r && x.group === r.group).map((x) => `${x.event} run ${x.id}`);
+    assert.deepEqual(sharing, [], `${CUT_SHORT}: the ${r.event} run ${r.id} shares its group ${r.group}, so a newer run there cancels it while it waits`);
   }
 });
 

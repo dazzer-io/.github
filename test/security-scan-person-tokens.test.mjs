@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parseDocument } from 'yaml';
 import {
   findPersonTokens, check, isCheckedFile, namedAsGitHubToken, EXCEPTIONS_FILE,
 } from '../security-scan/person-tokens.mjs';
@@ -354,29 +355,20 @@ test('an exceptions file that cannot be read allows nothing, and one the change 
 // ---------- as the workflow runs it ----------
 
 const WORKFLOW = path.join(here, '..', '.github', 'workflows', 'security-scan.yml');
-const workflowLines = fs.readFileSync(WORKFLOW, 'utf8').split('\n');
+const DOC = parseDocument(fs.readFileSync(WORKFLOW, 'utf8'));
+const workflow = DOC.toJS();
 
-function jobLines(name) {
-  const start = workflowLines.indexOf(`  ${name}:`);
-  assert.ok(start >= 0, `${MISSED}: the workflow has no job "${name}"`);
-  let end = start + 1;
-  while (end < workflowLines.length && !/^ {0,2}\S/.test(workflowLines[end])) end++;
-  return workflowLines.slice(start, end);
+function jobOf(name) {
+  const job = workflow.jobs?.[name];
+  assert.ok(job, `${MISSED}: the workflow has no job "${name}"`);
+  return job;
 }
 
-// The run: | script of the job's step that runs the person-token check.
+// The run: script of the job's step that runs the person-token check.
 function scanScript() {
-  const job = jobLines('person-tokens');
-  const at = job.findIndex((l) => /person-tokens\.mjs scan/.test(l));
-  assert.ok(at >= 0, `${MISSED}: the job person-tokens never runs person-tokens.mjs scan`);
-  let start = at;
-  while (start > 0 && !/^ {8}run: \|\s*$/.test(job[start])) start--;
-  const body = [];
-  for (const l of job.slice(start + 1)) {
-    if (l.trim() !== '' && !l.startsWith(' '.repeat(10))) break;
-    body.push(l.slice(10));
-  }
-  return body.join('\n');
+  const step = (jobOf('person-tokens').steps ?? []).find((s) => /person-tokens\.mjs scan/.test(s.run ?? ''));
+  assert.ok(step, `${MISSED}: the job person-tokens never runs person-tokens.mjs scan`);
+  return step.run;
 }
 
 function sandbox() {
@@ -503,15 +495,21 @@ test('a scan that cannot read the change does not finish, so the decision blocks
 });
 
 test('the person-token job runs on every branch, keeps no credentials, names no secret, and hands its output on', () => {
-  const job = jobLines('person-tokens');
-  const text = job.join('\n');
-  assert.ok(!job.some((l) => /^ {4}if:/.test(l)), `${MISSED}: the job runs on one branch only`);
+  const job = jobOf('person-tokens');
+  const text = JSON.stringify(job);
+  const steps = job.steps ?? [];
+  assert.ok(!('if' in job), `${MISSED}: the job runs on one branch only`);
   assert.doesNotMatch(text, /secrets\./, 'the job reads a secret');
-  for (const l of job.filter((x) => /uses: actions\/checkout@/.test(x))) assert.match(l, /@[0-9a-f]{40} /, `not pinned by commit: ${l}`);
-  assert.equal((text.match(/persist-credentials: false/g) || []).length, (text.match(/uses: actions\/checkout@/g) || []).length,
+  // Each checkout by a 40-hex commit, its tag in the comment beside it.
+  for (const step of DOC.getIn(['jobs', 'person-tokens', 'steps'], true)?.items ?? []) {
+    const uses = step.get('uses', true);
+    if (!String(uses?.value ?? '').startsWith('actions/checkout@')) continue;
+    assert.match(uses.value, /@[0-9a-f]{40}$/, `not pinned by commit: ${uses.value}`);
+    assert.ok(uses.comment, `not pinned by commit with its tag beside it: ${uses.value}`);
+  }
+  assert.ok(steps.filter((s) => String(s.uses ?? '').startsWith('actions/checkout@')).every((s) => s.with?.['persist-credentials'] === false),
     'a checkout in the job keeps its credentials');
-  assert.match(text, /fetch-depth: 0/, 'the job cannot see the change\'s base without its history');
-  assert.match(text, /name: security-scan-person-tokens/, 'the job does not hand its output to the final job');
-  const final = jobLines('security-scan').find((l) => /^ {4}needs:/.test(l));
-  assert.match(final, /person-tokens/, `${MISSED}: the final job does not wait for the person-token check`);
+  assert.ok(steps.some((s) => s.with?.['fetch-depth'] === 0), 'the job cannot see the change\'s base without its history');
+  assert.match(text, /"name":"security-scan-person-tokens"/, 'the job does not hand its output to the final job');
+  assert.ok([jobOf('security-scan').needs].flat().includes('person-tokens'), `${MISSED}: the final job does not wait for the person-token check`);
 });

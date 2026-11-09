@@ -294,9 +294,9 @@
       "job": "upload",
       "name": "Upload CodeQL results",
       "effect": "stay",
-      "reason": "it alone holds security-events: write in the shared scan, on GitHub's machine by a literal label; GitHub shows each leg as Upload CodeQL results (<language>)",
+      "reason": "it alone holds security-events: write in the shared scan, on GitHub's machine by a literal label; one job uploads every language in turn, so GitHub shows it as Upload CodeQL results",
       "decision": 36,
-      "source": "dazzer-io/.github .github/workflows/codeql.yml:238-245 at dca1d18"
+      "source": "dazzer-io/.github .github/workflows/codeql.yml:242-257 (this change, r-3.40)"
     },
     {
       "repository": "dazzer-io/.github",

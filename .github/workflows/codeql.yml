@@ -97,19 +97,21 @@
 #     of this run.
 #   - upload, on GitHub's own ubuntu-latest written as a literal label, is the only job holding
 #     security-events: write, since a write token on a machine of ours would sit within reach of
-#     whatever ran there before it (decision 36). It checks nothing out and runs no script: one run
-#     per language fetches that language's results by name, failing if they are missing, and hands
-#     them to code scanning under the same category. It runs only when every language's analysis
-#     succeeded, so a partial scan never passes (decision 101, kept for every caller by decision
-#     131): a failed analysis uploads nothing and the run is red; a cancelled one uploads nothing
-#     and the run ends cancelled, not red. An upload that fails after every analysis passed may
-#     leave other languages' results already sent; that run is red.
+#     whatever ran there before it (decision 36). It checks nothing out and runs no script: one job,
+#     named Upload CodeQL results, takes each language the caller names in turn, fetches that
+#     language's results by name into a folder of its own, failing if they are missing, and hands
+#     them to code scanning under the same category, /language:<language>. It runs only when every
+#     language's analysis succeeded, so a partial scan never passes (decision 101, kept for every
+#     caller by decision 131): a failed analysis uploads nothing and the run is red; a cancelled one
+#     uploads nothing and the run ends cancelled, not red. An upload that fails after every
+#     analysis passed leaves the languages before it already sent and sends none after it; that
+#     run is red.
 #   - complete, named "CodeQL complete", is the one check a caller requires (decision 135). It
 #     runs always, after analyze and upload, on GitHub's own ubuntu-latest with no token at all
 #     (permissions: {}), and fails unless the analysis and the upload both succeeded; its name is
 #     the same whatever languages a caller names. The Analyze and upload checks cannot be required
 #     in its place: a skipped upload reads as success to a required-check rule, and a pull request
-#     that adds a language to its own caller fails that leg's guard, skips every upload, and leaves
+#     that adds a language to its own caller fails that leg's guard, skips the upload, and leaves
 #     the Analyze checks of the languages already named green. It costs one GitHub minute a run.
 #
 # WHAT THE CALLER GRANTS. A called workflow's token is at most what its calling job grants, so the
@@ -238,37 +240,69 @@ jobs:
           retention-days: 7
 
   upload:
-    name: Upload CodeQL results (${{ matrix.language }})
+    name: Upload CodeQL results
     needs: analyze
     # Only when every language's analysis succeeded: a partial scan never passes (decision 101). A
     # skipped upload reads as success to a required-check rule, so callers require complete's check.
     if: ${{ needs.analyze.result == 'success' }}
     # GitHub's own standard machine, by a literal label: this job holds a write token (decision 36).
     runs-on: ubuntu-latest
-    # An upload waits for code scanning to process it, at most 155 s by the action's own backoff
-    # (5, 15, 35, 75 and 155 s); the fetch and the post take seconds.
-    timeout-minutes: 10
+    # Each upload waits for code scanning to process it, at most 155 s by the action's own backoff
+    # (5, 15, 35, 75 and 155 s), and the three languages are sent in turn, at most 465 s; the
+    # fetches and the posts take seconds.
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
       security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        language: ${{ fromJSON(inputs.languages) }}
+    # One job for every language, one machine start in place of one per language. Each language the
+    # analysis's guard takes has a pair of steps here, run only when the caller names it: its
+    # results fetched by name into a folder of its own, so a language whose results are missing
+    # fails here rather than uploading nothing and no language's upload holds another's file, then
+    # sent under that language's category. A language that joins the guard joins here too
+    # (test/codeql-shared.test.mjs holds the two lists the same).
     steps:
-      # By name, so a language whose results are missing fails here rather than uploading nothing.
-      - name: Fetch this language's results
+      - name: Fetch the results of actions
+        if: ${{ contains(fromJSON(inputs.languages), 'actions') }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: codeql-sarif-${{ matrix.language }}
-          path: ${{ runner.temp }}/codeql-sarif
+          name: codeql-sarif-actions
+          path: ${{ runner.temp }}/codeql-sarif-actions
 
-      - name: Upload the results under the language's category
+      - name: Upload the results of actions under its category
+        if: ${{ contains(fromJSON(inputs.languages), 'actions') }}
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
-          sarif_file: ${{ runner.temp }}/codeql-sarif
-          category: /language:${{ matrix.language }}
+          sarif_file: ${{ runner.temp }}/codeql-sarif-actions
+          category: /language:actions
+
+      - name: Fetch the results of javascript-typescript
+        if: ${{ contains(fromJSON(inputs.languages), 'javascript-typescript') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: codeql-sarif-javascript-typescript
+          path: ${{ runner.temp }}/codeql-sarif-javascript-typescript
+
+      - name: Upload the results of javascript-typescript under its category
+        if: ${{ contains(fromJSON(inputs.languages), 'javascript-typescript') }}
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/codeql-sarif-javascript-typescript
+          category: /language:javascript-typescript
+
+      - name: Fetch the results of python
+        if: ${{ contains(fromJSON(inputs.languages), 'python') }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: codeql-sarif-python
+          path: ${{ runner.temp }}/codeql-sarif-python
+
+      - name: Upload the results of python under its category
+        if: ${{ contains(fromJSON(inputs.languages), 'python') }}
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: ${{ runner.temp }}/codeql-sarif-python
+          category: /language:python
 
   # The one check a caller requires (decision 135): it fails unless every analysis and every upload
   # succeeded, whatever languages were named. It reads nothing but the results of analyze and

@@ -20,7 +20,8 @@
 //     repository are used."), so the setting resolves as the calling repository sees it;
 //   - its top holds exactly name, on, permissions (contents: read) and jobs; each job holds exactly
 //     the keys it holds today; each action step holds exactly name, uses and with, and each script
-//     step (the guard and the final check's) exactly name, env and run, its script a literal |
+//     step (the guard and the final check's) exactly name, env and run, each upload step exactly
+//     name, if, uses and with, its script a literal |
 //     block pinned whole and run here under bash; each step's with: holds exactly its inputs, the
 //     output and results paths by value; so a key this test does not name (an env:, defaults:,
 //     concurrency:, environment:, if: or continue-on-error:, a download's github-token or run-id)
@@ -30,12 +31,16 @@
 //     from the input, and runs the guard, the trusted-publisher step and then exactly four steps (a
 //     checkout of one commit keeping no credential, CodeQL's init with build-mode none and the
 //     security-extended suite, analyze with upload: never and the category /language:<language>,
-//     and the results kept as an artifact); upload runs on
-//     GitHub's own ubuntu-latest, written as a literal label, is the only job holding
-//     security-events: write (decision 36 keeps the write off our machines), runs only when every
-//     language's analysis succeeded (if: needs.analyze.result == 'success'), so a partial scan
-//     never passes (decisions 101 and 131), checks nothing out, and hands each language's results
-//     to code scanning under the same category; complete, named CodeQL complete whatever languages
+//     and the results kept as an artifact); upload, one job named Upload CodeQL results (the name
+//     machine-rule/kept.json carries) and no matrix, runs on GitHub's own ubuntu-latest, written as
+//     a literal label, is the only job holding security-events: write (decision 36 keeps the write
+//     off our machines), runs only when every language's analysis succeeded
+//     (if: needs.analyze.result == 'success'), so a partial scan never passes (decisions 101 and
+//     131), checks nothing out, and for each language the guard takes, in turn and only when the
+//     caller names it, fetches that language's results by name into a folder of its own and hands
+//     them to code scanning under the category /language:<language>, so for every list a caller
+//     may name, each named language is sent once under its own category; complete, named CodeQL
+//     complete whatever languages
 //     a caller names, runs always after both on GitHub's ubuntu-latest with no token
 //     (permissions: {}), and its script, taking the two results through env alone and holding no
 //     ${{ }}, passes only when both succeeded: the one check a caller requires (decision 135);
@@ -392,7 +397,22 @@ const GUARD_KEYS = ['name', 'env', 'run'];
 const COMPLETE_KEYS = ['name', 'needs', 'if', 'runs-on', 'timeout-minutes', 'permissions', 'steps'];
 const TOP_KEYS = ['name', 'on', 'permissions', 'jobs'];
 const ANALYZE_KEYS = ['name', 'runs-on', 'timeout-minutes', 'permissions', 'strategy', 'steps'];
-const UPLOAD_KEYS = ['name', 'needs', 'if', 'runs-on', 'timeout-minutes', 'permissions', 'strategy', 'steps'];
+// One upload job for every language, so no strategy: each language's fetch and upload are a pair
+// of steps, run only when the caller names the language, its results in a folder of its own.
+const UPLOAD_KEYS = ['name', 'needs', 'if', 'runs-on', 'timeout-minutes', 'permissions', 'steps'];
+const UPLOAD_NAME = 'Upload CodeQL results';
+const UPLOAD_STEP_KEYS = ['name', 'if', 'uses', 'with'];
+const NAMED = (l) => `\${{ contains(fromJSON(inputs.languages), '${l}') }}`;
+const SENT = (l) => `\${{ runner.temp }}/codeql-sarif-${l}`;
+// Whether a step's if: runs it for a caller naming `list`, as GitHub evaluates
+// ${{ contains(fromJSON(inputs.languages), '<l>') }} (an element compared ignoring case), or null
+// for any other shape.
+function namedIn(expr, list) {
+  const m = (typeof expr === 'string' ? expr : '').match(/^\$\{\{ contains\(fromJSON\(inputs\.languages\), '([^']*)'\) \}\}$/);
+  return m ? list.some((l) => l.toLowerCase() === m[1].toLowerCase()) : null;
+}
+// Every list of the languages the guard takes a caller may name, each in the guard's order.
+const LISTS = ALLOWED.reduce((all, l) => [...all, ...all.map((x) => [...x, l])], [[]]).filter((x) => x.length);
 const ALL_SUCCEEDED = "${{ needs.analyze.result == 'success' }}";
 
 function judgeShared(text) {
@@ -540,18 +560,31 @@ function judgeShared(text) {
     no(`the results kept as the artifact ${ARTIFACT}, from analyze's post-processed results, refusing an empty one, kept some days, and nothing else`, `upload-artifact takes ${show(keep?.with)}`);
   }
 
-  // The upload: GitHub's machine, the only write, every language or none.
+  // The upload: one job on GitHub's machine, the only write, every language or none, each language
+  // in turn under its own category.
   const u = top.jobs.upload;
-  if (!exactly(u, UPLOAD_KEYS)) no(`the upload job holding exactly ${UPLOAD_KEYS.join(', ')}`, `it holds ${show(keysOf(u))}`);
+  if (!exactly(u, UPLOAD_KEYS)) no(`the upload job holding exactly ${UPLOAD_KEYS.join(', ')}`, `it holds ${show(keysOf(u))}, and one upload job sends every language in turn, so it holds no strategy`);
+  if (u.name !== UPLOAD_NAME) no(`${UPLOAD_NAME} as the upload job's name, one fixed name, the one machine-rule/kept.json carries`, `it is named ${show(u.name)}`);
   if (u['runs-on'] !== 'ubuntu-latest') no('ubuntu-latest, written as a literal label, as the upload job\'s machine', `it reads ${show(u['runs-on'])}, and the one job holding security-events: write stays on GitHub's computers (decision 36)`);
   if (!same(u.permissions, { contents: 'read', actions: 'read', 'security-events': 'write' })) no('contents: read, actions: read and security-events: write as the upload job\'s token, and nothing else', `it grants ${show(u.permissions)}`);
   if (u.needs !== 'analyze') no('the upload waiting on the analysis', `its needs: reads ${show(u.needs)}`);
   if (u.if !== ALL_SUCCEEDED) no(`the upload running only when every language's analysis succeeded (if: ${ALL_SUCCEEDED})`, `its if: reads ${show(u.if)}, and a partial scan never passes (decisions 101 and 131): a failed analysis uploads nothing and the run is red, a cancelled one uploads nothing and the run ends cancelled`);
-  if (!same(u.strategy, MATRIX)) no(`one upload per language, the strategy exactly fail-fast: false and the matrix ${LANGUAGES}`, `its strategy reads ${show(u.strategy)}`);
-  const usteps = stepsOf(Array.isArray(u.steps) ? u.steps : [], 'upload', ['actions/download-artifact', `${CODEQL}upload-sarif`]);
-  const [fetch, upload] = usteps;
-  if (!same(fetch?.with, { name: ARTIFACT, path: SARIF })) no(`the artifact ${ARTIFACT} of this run fetched by name and path alone, into ${SARIF}, so a missing one fails the upload`, `download-artifact takes ${show(fetch?.with)}`);
-  if (!same(upload?.with, { sarif_file: SARIF, category: CATEGORY })) no(`upload-sarif sending the fetched results under the category ${CATEGORY}, and nothing else`, `upload-sarif takes ${show(upload?.with)}`);
+  const usteps = stepsOf(Array.isArray(u.steps) ? u.steps : [], 'upload', ALLOWED.flatMap(() => ['actions/download-artifact', `${CODEQL}upload-sarif`]), () => UPLOAD_STEP_KEYS);
+  ALLOWED.forEach((l, k) => {
+    const [fetch, send] = [usteps[2 * k], usteps[2 * k + 1]];
+    if (fetch?.if !== NAMED(l) || send?.if !== NAMED(l)) no(`the fetch and the upload of ${l}'s results running when the caller names ${l} (if: ${NAMED(l)})`, `their if: lines read ${show(fetch?.if)} and ${show(send?.if)}`);
+    if (!same(fetch?.with, { name: `codeql-sarif-${l}`, path: SENT(l) })) no(`the artifact codeql-sarif-${l} of this run fetched by name and path alone, into ${SENT(l)}, a folder of its own, so a missing one fails the upload`, `download-artifact takes ${show(fetch?.with)}`);
+    if (!same(send?.with, { sarif_file: SENT(l), category: `/language:${l}` })) no(`upload-sarif sending ${l}'s fetched results from ${SENT(l)} under the category /language:${l}, and nothing else`, `upload-sarif takes ${show(send?.with)}`);
+  });
+  // What the upload sends for every list a caller may name: each named language once, in turn,
+  // under its own category, from a folder no other language's results are fetched into.
+  for (const list of LISTS) {
+    const runs = usteps.filter((st) => namedIn(st?.if, list) === true);
+    const sends = runs.filter((st) => actionOf(st) === `${CODEQL}upload-sarif`).map((st) => st?.with?.category);
+    const into = runs.filter((st) => actionOf(st) === 'actions/download-artifact').map((st) => st?.with?.path);
+    const want = list.map((l) => `/language:${l}`);
+    if (!same(sends, want) || new Set(into).size !== into.length) no(`the upload sending, for a caller naming ${show(list)}, exactly ${show(want)} in turn, each language's results fetched into a folder of its own`, `it sends ${show(sends)}, fetching into ${show(into)}`);
+  }
 
   // The final job: the one check a caller requires, on GitHub's machine, with no token, failing
   // unless the analysis and the upload both succeeded (decision 135).
@@ -687,14 +720,19 @@ plant('the upload on a partial result', inJob('upload', `    if: ${ALL_SUCCEEDED
 plant('continue-on-error on the upload job', inJob('upload', '    needs: analyze', '    needs: analyze\n    continue-on-error: true'), /the upload job holding exactly name, needs, if/);
 plant('the upload without security-events: write', inJob('upload', '      security-events: write', '      security-events: read'), /security-events: write as the upload job's token/);
 plant('the upload not waiting on the analysis', inJob('upload', '    needs: analyze', '    needs: []'), /the upload waiting on the analysis/);
-plant('fail-fast on the upload', inJob('upload', '      fail-fast: false', '      fail-fast: true'), /one upload per language, the strategy exactly/);
-plant('another matrix on the upload', (t) => { const all = t.split('\n'); const u = all.indexOf('  upload:'); const k = all.findIndex((l, n) => n > u && l === `        language: ${LANGUAGES}`); if (k < 0) return t; all[k] = '        language: [actions]'; return all.join('\n'); }, /one upload per language, the strategy exactly/);
-plant('a checkout on the upload', (t) => t.replace('      - name: Fetch this language\'s results\n', '      - name: Check out\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n\n      - name: Fetch this language\'s results\n'), /the upload's steps, exactly actions\/download-artifact/);
-plant('if: on the upload-sarif step', (t) => t.replace('      - name: Upload the results under the language\'s category\n', '      - name: Upload the results under the language\'s category\n        if: github.event_name == \'push\'\n'), /step github\/codeql-action\/upload-sarif of the upload holding exactly/);
-plant('another artifact fetched', (t) => t.replace(`        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n        with:\n          name: ${ARTIFACT}\n`, '        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n        with:\n          name: codeql-sarif-actions\n'), /the artifact codeql-sarif-\$\{\{ matrix\.language \}\} of this run fetched by name and path alone/);
+plant('a matrix on the upload again', inJob('upload', '    needs: analyze', `    needs: analyze\n    strategy:\n      fail-fast: false\n      matrix:\n        language: ${LANGUAGES}`), /the upload job holding exactly name, needs, if, runs-on, timeout-minutes, permissions, steps in the shared scan \S+: it holds .*strategy/);
+plant('the upload named per language', inJob('upload', `    name: ${UPLOAD_NAME}`, `    name: ${UPLOAD_NAME} (\${{ inputs.languages }})`), /Upload CodeQL results as the upload job's name, one fixed name, the one machine-rule\/kept\.json carries/);
+plant('a checkout on the upload', (t) => t.replace('      - name: Fetch the results of actions\n', '      - name: Check out\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n\n      - name: Fetch the results of actions\n'), /the upload's steps, exactly actions\/download-artifact/);
+plant('python\'s upload dropped', (t) => { const all = t.split('\n'); const at = all.indexOf('      - name: Upload the results of python under its category'); if (at < 0) return t; let end = at + 1; while (end < all.length && all[end] !== '') end++; return [...all.slice(0, at), ...all.slice(end + 1)].join('\n'); }, [/the upload's steps, exactly actions\/download-artifact, github\/codeql-action\/upload-sarif, actions\/download-artifact/, /the upload sending, for a caller naming \["python"\], exactly \["\/language:python"\] in turn/]);
+plant('the upload of python on a push alone', (t) => t.replace(`      - name: Upload the results of python under its category\n        if: ${NAMED('python')}\n`, '      - name: Upload the results of python under its category\n        if: github.event_name == \'push\'\n'), [/the fetch and the upload of python's results running when the caller names python/, /the upload sending, for a caller naming \["python"\], exactly \["\/language:python"\] in turn, .*: it sends \[\]/]);
+plant('the upload of python when the caller names actions', (t) => t.replace(`      - name: Upload the results of python under its category\n        if: ${NAMED('python')}\n`, `      - name: Upload the results of python under its category\n        if: ${NAMED('actions')}\n`), /the upload sending, for a caller naming \["actions"\], exactly \["\/language:actions"\] in turn, .*: it sends \["\/language:actions","\/language:python"\]/);
+plant('the fetch of actions with no if:', (t) => t.replace(`      - name: Fetch the results of actions\n        if: ${NAMED('actions')}\n`, '      - name: Fetch the results of actions\n'), /step actions\/download-artifact of the upload holding exactly name, if, uses, with/);
+plant('another artifact fetched', (t) => t.replace(`          name: codeql-sarif-python\n          path: ${SENT('python')}\n`, `          name: codeql-sarif-actions\n          path: ${SENT('python')}\n`), /the artifact codeql-sarif-python of this run fetched by name and path alone/);
 plant('an older run\'s artifact fetched', intoWith('actions/download-artifact', ['          github-token: ${{ github.token }}', '          run-id: 1']), /fetched by name and path alone/);
-plant('another category on upload-sarif', (t) => t.replace(`          sarif_file: \${{ runner.temp }}/codeql-sarif\n          category: ${CATEGORY}`, '          sarif_file: ${{ runner.temp }}/codeql-sarif\n          category: /scan:${{ matrix.language }}'), /upload-sarif sending the fetched results under the category/);
-plant('upload-sarif sending another file', (t) => t.replace('          sarif_file: ${{ runner.temp }}/codeql-sarif\n', '          sarif_file: results.sarif\n'), /upload-sarif sending the fetched results/);
+plant('another category on upload-sarif', (t) => t.replace(`          sarif_file: ${SENT('python')}\n          category: /language:python\n`, `          sarif_file: ${SENT('python')}\n          category: /scan:python\n`), [/upload-sarif sending python's fetched results .* under the category \/language:python/, /the upload sending, for a caller naming \["python"\], exactly \["\/language:python"\] in turn/]);
+plant('python uploaded under the category of actions', (t) => t.replace(`          sarif_file: ${SENT('python')}\n          category: /language:python\n`, `          sarif_file: ${SENT('python')}\n          category: /language:actions\n`), /the upload sending, for a caller naming \["actions","python"\], exactly \["\/language:actions","\/language:python"\] in turn, .*: it sends \["\/language:actions","\/language:actions"\]/);
+plant('upload-sarif sending another file', (t) => t.replace(`          sarif_file: ${SENT('actions')}\n`, '          sarif_file: results.sarif\n'), /upload-sarif sending actions's fetched results/);
+plant('every language fetched into one folder', (t) => { const all = t.split('\n'); const u = all.indexOf('  upload:'); return all.map((l, n) => (n > u && /^ {10}(path|sarif_file): /.test(l) ? l.replace(/codeql-sarif-(actions|javascript-typescript|python)$/, 'codeql-sarif') : l)).join('\n'); }, [/fetched by name and path alone, into \$\{\{ runner\.temp \}\}\/codeql-sarif-python, a folder of its own/, /the upload sending, for a caller naming \["actions","python"\], .*each language's results fetched into a folder of its own/]);
 // Pins.
 plant('an action by tag', (t) => t.replace('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/checkout@v7'), /a commit as the ref of actions\/checkout/);
 plant('an older CodeQL pin on one action', (t) => t.replace(`${CODEQL}init@${PIN}`, `${CODEQL}init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370`), /one pin, 33d7b85/);
@@ -720,7 +758,7 @@ const WORKSPACE = '${{ github.workspace }}/codeql-sarif';
 plant('the results kept in the workspace (analyze and upload-artifact as a pair)', (t) => t.replace(`          post-processed-sarif-path: ${SARIF}\n`, `          post-processed-sarif-path: ${WORKSPACE}\n`).replace(`          name: ${ARTIFACT}\n          path: ${SARIF}\n`, `          name: ${ARTIFACT}\n          path: ${WORKSPACE}\n`), [/the analyze step with the category .*its two outputs, \$\{\{ runner\.temp \}\}\/codeql-results and \$\{\{ runner\.temp \}\}\/codeql-sarif/, /the results kept as the artifact .*takes .*github\.workspace/]);
 plant('the output in the workspace', (t) => t.replace(`          output: ${RESULTS}\n`, '          output: ${{ github.workspace }}/codeql-results\n'), /the analyze step with the category .*its two outputs/);
 plant('the artifact kept from the workspace', ((t) => { const all = t.split('\n'); const at = all.findIndex((l) => l.trim().startsWith('uses: actions/upload-artifact@')); const k = all.findIndex((l, n) => n > at && l === `          path: ${SARIF}`); if (k < 0) return t; all[k] = `          path: ${WORKSPACE}`; return all.join('\n'); }), /the results kept as the artifact/);
-plant('the results fetched into and sent from the workspace (download and upload-sarif as a pair)', (t) => { const all = t.split('\n'); const u = all.indexOf('  upload:'); return all.map((l, n) => (n > u && l === `          path: ${SARIF}` ? `          path: ${WORKSPACE}` : n > u && l === `          sarif_file: ${SARIF}` ? `          sarif_file: ${WORKSPACE}` : l)).join('\n'); }, [/fetched by name and path alone, into \$\{\{ runner\.temp \}\}\/codeql-sarif/, /upload-sarif sending the fetched results .*takes .*github\.workspace/]);
+plant('the results fetched into and sent from the workspace (download and upload-sarif as a pair)', (t) => { const all = t.split('\n'); const u = all.indexOf('  upload:'); return all.map((l, n) => (n > u ? l.replace('${{ runner.temp }}/codeql-sarif-', '${{ github.workspace }}/codeql-sarif-') : l)).join('\n'); }, [/fetched by name and path alone, into \$\{\{ runner\.temp \}\}\/codeql-sarif-actions/, /upload-sarif sending actions's fetched results .*takes .*github\.workspace/]);
 // The third review (decision 135): the guard written as a folded block, every body line at one
 // indent, which GitHub joins into one line so exit 1 is echoed, and the header alone changed.
 const foldGuard = (t) => {

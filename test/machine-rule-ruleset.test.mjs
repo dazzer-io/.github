@@ -857,8 +857,12 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
     'keeps every `LOCKED_` setting empty until then', 'Holding it to main in any other repository is other work', 'this command reads no branch',
     '`machine-rule-required` still watches: it is written `evaluate` until r-3.37',
     '`codeql-complete-required` is required (blocking): it is written `active`',
-    'read reporting on dazzer 1421 and 1407 and dazzer-app 381, 380, 379 and 377 (two of them Dependabot) on 9 Nov',
-    'The way back: an organisation owner sets a ruleset to `evaluate` with a local edit of its file and `node machine-rule/apply-ruleset.mjs --apply`, or in GitHub\'s organisation settings',
+    // The rule reaches direct pushes too, and its basis is a reading of pushes and check runs (review of a8bbdaa).
+    'A direct push to the default branch of dazzer or dazzer-app is refused unless its commit already passed `codeql / CodeQL complete`, the same as their own rulesets already require',
+    'both repositories\' own main-protection rulesets are active with no bypass and already require status checks on every update of the default branch (dazzer: CI Gate, PR-diff gates (fast), CodeQL, Drizzle migration journal (drizzle-kit check), actionlint; dazzer-app: CI Gate), so this rule adds no new kind of refusal',
+    'Every push to main since 8 Nov in both repositories was a merged pull request: 17 of 17 (dazzer 1397, 1399, 1403, 1404, 1410, 1412, 1414, 1415, 1419, 1420, 1421, 1422; dazzer-app 376, 377, 379, 380, 381), and `codeql / CodeQL complete` passed on each one\'s head, read on 9 Nov',
+    'This is a reading of the pushes and check runs, not of GitHub\'s evaluate record: GitHub\'s rule-suite listing records no evaluate result for `codeql-complete-required`',
+    'The way back: an organisation owner sets `codeql-complete-required` to `evaluate` with a local edit of `codeql-complete.json` and `node machine-rule/apply-ruleset.mjs --apply`, or in GitHub\'s organisation settings; `main-spelling-refused` accepts only `active`',
     'Each kept ruleset stands alone', 'holds back that one alone and names it', 'the others are still written and read back',
     "Exit 0 means every ruleset is its file's version", 'exit 1 means one or more were held back or differ', 'exit 2 means GitHub could not be read at all',
     // D212: a write gh gets no answer to is that ruleset's alone, and the ids a write and its read-back go to.
@@ -870,7 +874,7 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
   for (const s of plain.split(/(?<=\.) /)) if (s.includes('`main-spelling-refused` is live') && !(s.includes('dazzer and dazzer-app') && s.includes("the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included"))) misses.push(`Could not find this sentence of machine-rule/README.md bounded to dazzer and dazzer-app, with the locked switch-on finding no other spelling of main there, non-ASCII ones included: ${s}`);
   // codeql-complete-required no longer watches (r-3.27), and machine-rule-required is not called required
   // while it is written evaluate (review of dazzer-io/.github 27, finding 1).
-  for (const words of ['watches, in `evaluate`, until it is made active', '`machine-rule-required` is required (blocking)', 'passed on all 21 pull requests']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: codeql-complete-required is required (blocking), machine-rule-required watches until r-3.37`);
+  for (const words of ['watches, in `evaluate`, until it is made active', '`machine-rule-required` is required (blocking)', 'passed on all 21 pull requests', 'read reporting on dazzer 1421 and 1407', 'sets a ruleset to `evaluate`']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: codeql-complete-required is required (blocking), machine-rule-required watches until r-3.37`);
   if (/Its one ignore/.test(plain)) misses.push('Could not find machine-rule/README.md rid of "Its one ignore": the lint step holds two (decision 201)');
   // The guard and the branch read are gone, and their account with them (decision 210).
   for (const words of ['default-branch head carries', 'one refusal and nothing is written', 'Any of these and nothing is written', 'the head of the newest pull request merged into', 'the newest merge-group commit', 'a branch spelled main in other letters already exists', 'its guard reads']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}, the guard or the branch read decision 210 removed`);

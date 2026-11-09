@@ -67,11 +67,21 @@ its origin does not say so, or GitHub could not be asked about a commit.
   integration or none, and a bypass. Its check accepts `evaluate` or `active` and nothing else,
   and the file is held to `active` by its test. `codeql-complete-required` is required
   (blocking): it is written `active`, so a merge to the default branch of dazzer or dazzer-app
-  without `codeql / CodeQL complete` is blocked. It watched in `evaluate` first, and the check
-  was read reporting on dazzer 1421 and 1407 and dazzer-app 381, 380, 379 and 377 (two of them
-  Dependabot) on 9 Nov (r-3.27, decision 210). The way back: an organisation owner sets a
-  ruleset to `evaluate` with a local edit of its file and `node machine-rule/apply-ruleset.mjs
-  --apply`, or in GitHub's organisation settings.
+  without `codeql / CodeQL complete` is blocked. A direct push to the default branch of dazzer
+  or dazzer-app is refused unless its commit already passed `codeql / CodeQL complete`, the same
+  as their own rulesets already require: both repositories' own main-protection rulesets are
+  active with no bypass and already require status checks on every update of the default branch
+  (dazzer: CI Gate, PR-diff gates (fast), CodeQL, Drizzle migration journal (drizzle-kit check),
+  actionlint; dazzer-app: CI Gate), so this rule adds no new kind of refusal. It watched in
+  `evaluate` first (r-3.27, decision 210). Every push to main since 8 Nov in both repositories
+  was a merged pull request: 17 of 17 (dazzer 1397, 1399, 1403, 1404, 1410, 1412, 1414, 1415,
+  1419, 1420, 1421, 1422; dazzer-app 376, 377, 379, 380, 381), and `codeql / CodeQL complete`
+  passed on each one's head, read on 9 Nov. This is a reading of the pushes and check runs, not
+  of GitHub's evaluate record: GitHub's rule-suite listing records no evaluate result for
+  `codeql-complete-required`. The way back: an organisation owner sets
+  `codeql-complete-required` to `evaluate` with a local edit of `codeql-complete.json` and
+  `node machine-rule/apply-ruleset.mjs --apply`, or in GitHub's organisation settings;
+  `main-spelling-refused` accepts only `active`.
 - **Why `main-spelling-refused` comes first** (decisions 195, 210). GitHub compares strings
   without regard to case (its expressions page: "GitHub ignores case when comparing strings"), so
   the guard `github.ref == 'refs/heads/main'` is true on a branch named `MAIN`. A creation rule

@@ -40,7 +40,8 @@ test('it holds a read-only token, keeps no credentials and names no secret', () 
   assert.doesNotMatch(t, /secrets\./, 'the workflow reads a secret');
 });
 
-test('the tests run as test/*.test.mjs on a Node it sets up', () => {
+test('every action is pinned by commit and the tests run as test/*.test.mjs', () => {
+  for (const u of jobs(parse(read())).flatMap((j) => [j.uses, ...(j.steps ?? []).map((s) => s.uses)]).filter(Boolean)) assert.match(u, /@[0-9a-f]{40}$/, `the action ${u} is not pinned by commit`);
   const job = jobs(parse(read())).find((j) => j.check === REQUIRED_CHECK);
   assert.ok(job, MISSING);
   assert.ok(job.steps?.some((s) => s.uses?.startsWith('actions/setup-node@')), 'the workflow sets up no Node');

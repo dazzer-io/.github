@@ -241,11 +241,12 @@ test('the caller file pins its reusable workflow to a commit and names nothing o
   assert.throws(() => renderCaller(caller, { owner: 'harbor-lane/x', repo: '.github', commit }), /owner/);
 });
 
-test('the reusable workflow answers to calls and to this repository\'s own events, with its least rights', () => {
+test('the reusable workflow answers to calls and to this repository\'s own events, pinned and with its least rights', () => {
   const wf = parse(fs.readFileSync(workflowPath, 'utf8'));
   for (const trigger of ['workflow_call', 'pull_request', 'issue_comment', 'pull_request_review']) assert.ok(trigger in wf.on, trigger);
   assert.deepEqual(wf.permissions, { statuses: 'write', 'pull-requests': 'read' });
   assert.ok(Object.values(wf.jobs).every((job) => !job.permissions), 'a job widens the token');
+  for (const u of Object.values(wf.jobs).flatMap((job) => (job.steps ?? []).map((s) => s.uses)).filter(Boolean)) assert.match(u, /@[0-9a-f]{40}$/, `every uses: is pinned to a commit: ${u}`);
 });
 
 test('the job is named apart from the status it sets', () => {
@@ -258,7 +259,7 @@ test('the job is named apart from the status it sets', () => {
 test('the script is fetched with checkout at the workflow\'s own repository and commit, failing closed on an empty context', () => {
   const wf = fs.readFileSync(workflowPath, 'utf8');
   assert.doesNotMatch(wf, /curl|raw\.githubusercontent/);
-  assert.match(wf, /uses: actions\/checkout@/);
+  assert.match(wf, /uses: actions\/checkout@[0-9a-f]{40}/);
   assert.match(wf, /SOURCE_REPO: \$\{\{ job\.workflow_repository \}\}/);
   assert.match(wf, /SOURCE_SHA: \$\{\{ job\.workflow_sha \}\}/);
   assert.match(wf, /repository: \$\{\{ steps\.source\.outputs\.repo \}\}/);
@@ -307,7 +308,7 @@ test("a comment run fetches only the workflow's own commit and runs only the scr
   const actions = steps.filter((s) => s.uses);
   assert.equal(actions.length, 1, `${UNTRUSTED}: ${actions.length} steps run an action, where the one allowed is the script's checkout`);
   const [checkout] = actions;
-  assert.match(checkout.uses, /^actions\/checkout@/, `${UNTRUSTED}: the one action is not the checkout`);
+  assert.match(checkout.uses, /^actions\/checkout@[0-9a-f]{40}$/, `${UNTRUSTED}: the one action is not the pinned checkout`);
   assert.equal(checkout.with?.repository, '${{ steps.source.outputs.repo }}', `${UNTRUSTED}: the checkout's repository is not the workflow's own`);
   assert.equal(checkout.with?.ref, '${{ steps.source.outputs.sha }}', `${UNTRUSTED}: the checkout's commit is not the workflow's own`);
   assert.equal(checkout.with?.['persist-credentials'], false, `${UNTRUSTED}: the checkout leaves the token in the fetched copy`);

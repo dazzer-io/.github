@@ -38,8 +38,11 @@ its origin does not say so, or GitHub could not be asked about a commit.
   organisation's own workflows excepted, and counts its other findings without refusing them.
 - **The ruleset `machine-rule-required`** (`ruleset.json`) is a workflows rule. It runs that
   file, read from dazzer-io/.github by its repository id at `refs/heads/main`, on the default
-  branch of every repository, and not when a branch is created. It is written in `evaluate`
-  first, so it watches before it refuses. Every repository is `~ALL` with nothing excluded and
+  branch of every repository, and not when a branch is created. `machine-rule-required` still
+  watches: it is written `evaluate` until r-3.37, so GitHub blocks nothing and records each merge
+  it would have refused. Its reach is every repository, public ones included, and direct pushes
+  to a default branch, wider than the pull requests read so far, so it is made active only once
+  r-3.37 reads all of that (decision 177). Every repository is `~ALL` with nothing excluded and
   no `protected: true`: GitHub refuses that pairing with 422 ("Protected repository name
   conditions cannot include `~ALL`"), and a renamed repository stays in `~ALL` anyway, so the
   check refuses the pairing in GitHub's words, and the read-back counts a `protected` read back
@@ -63,11 +66,24 @@ its origin does not say so, or GitHub could not be asked about a commit.
   includes `~DEFAULT_BRANCH`, and holds one `required_status_checks` rule: that one context from
   integration 15368, GitHub Actions, with `do_not_enforce_on_create: true` and the strict policy
   off, so a branch need not be up to date to merge. Its check refuses another context, another
-  integration or none, and a bypass. It is written in `evaluate`, and its check accepts
-  `evaluate` or `active` and nothing else. In `evaluate` GitHub blocks no merge and records each
-  one the rule would have refused, so GitHub's own reading, not one this command takes, says
-  whether it is safe to enforce: `codeql-complete-required` watches, in `evaluate`, until it is
-  made active once its readings show no merge it would have refused (r-3.27, decision 210).
+  integration or none, and a bypass. Its check accepts `evaluate` or `active` and nothing else,
+  and the file is held to `active` by its test. `codeql-complete-required` is required
+  (blocking): it is written `active`, so a merge to the default branch of dazzer or dazzer-app
+  without `codeql / CodeQL complete` is blocked. A direct push to the default branch of dazzer
+  or dazzer-app is refused unless its commit already passed `codeql / CodeQL complete`, the same
+  as their own rulesets already require: both repositories' own main-protection rulesets are
+  active with no bypass and already require status checks on every update of the default branch
+  (dazzer: CI Gate, PR-diff gates (fast), CodeQL, Drizzle migration journal (drizzle-kit check),
+  actionlint; dazzer-app: CI Gate), so this rule adds no new kind of refusal. It watched in
+  `evaluate` first (r-3.27, decision 210). Every push to main since 8 Nov in both repositories
+  was a merged pull request: 17 of 17 (dazzer 1397, 1399, 1403, 1404, 1410, 1412, 1414, 1415,
+  1419, 1420, 1421, 1422; dazzer-app 376, 377, 379, 380, 381), and `codeql / CodeQL complete`
+  passed on each one's head, read on 9 Nov. This is a reading of the pushes and check runs, not
+  of GitHub's evaluate record: GitHub's rule-suite listing records no evaluate result for
+  `codeql-complete-required`. The way back: an organisation owner sets
+  `codeql-complete-required` to `evaluate` with a local edit of `codeql-complete.json` and
+  `node machine-rule/apply-ruleset.mjs --apply`, or in GitHub's organisation settings;
+  `main-spelling-refused` accepts only `active`.
 - **Why `main-spelling-refused` comes first** (decisions 195, 210). GitHub compares strings
   without regard to case (its expressions page: "GitHub ignores case when comparing strings"), so
   the guard `github.ref == 'refs/heads/main'` is true on a branch named `MAIN`. A creation rule

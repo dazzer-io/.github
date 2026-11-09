@@ -3,9 +3,11 @@
 //   machine-rule-required (machine-rule/ruleset.json): the workflows rule that runs
 //     .github/workflows/machine-rule.yml, read from dazzer-io/.github (named by its repository id)
 //     at refs/heads/main, on the default branch of every repository, not on create;
-//   main-spelling-refused (machine-rule/main-spelling.json): in dazzer and dazzer-app, creating a
-//     branch spelled main in other letters is refused, with no bypass (decisions 188, 192);
-//   codeql-complete-required (machine-rule/codeql-complete.json): in dazzer and dazzer-app, the
+//   main-spelling-refused (machine-rule/main-spelling.json): in dazzer, dazzer-app and runners, the
+//     repositories the locked runner group google-locked admits (runners for its locked canary,
+//     r-3.45), creating a branch spelled main in other letters is refused, with no bypass
+//     (decisions 188, 192);
+//   codeql-complete-required (machine-rule/codeql-complete.json): in dazzer and dazzer-app alone, the
 //     shared scan's codeql / CodeQL complete from GitHub Actions (integration 15368) on the default
 //     branch, not on create, written in evaluate: GitHub then blocks no merge and records each one
 //     the rule would have refused, until r-3.27 makes it active (decisions 188, 192, 210).
@@ -110,7 +112,13 @@ export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID } = {}) {
 // branches to be created if a check would otherwise prohibit it".
 export const MAIN_SPELLING_NAME = 'main-spelling-refused';
 export const CODEQL_COMPLETE_NAME = 'codeql-complete-required';
-export const RULE_REPOSITORIES = ['dazzer', 'dazzer-app'];
+// main-spelling-refused reaches every repository the locked runner group google-locked admits:
+// dazzer and dazzer-app, and runners, whose one dispatch-only locked-canary.yml the group admits at
+// refs/heads/main alone; held to main only within the existing-branch bound, since a creation rule
+// never touches a branch that is already there (r-3.45). codeql-complete-required stays in dazzer
+// and dazzer-app alone.
+export const MAIN_SPELLING_REPOSITORIES = ['dazzer', 'dazzer-app', 'runners'];
+export const CODEQL_REPOSITORIES = ['dazzer', 'dazzer-app'];
 export const CODEQL_CONTEXT = 'codeql / CodeQL complete';
 // GitHub Actions' integration id: every codeql / CodeQL complete on dazzer's and dazzer-app's pull
 // requests carries it (decision 192, read 8 Nov), as their main-protection rulesets name it.
@@ -168,11 +176,14 @@ export function namesMatched(pattern) {
   return { names };
 }
 
+// Names in words: a, a and b, or a, b and c; with or for the last, a or b.
+const inWords = (names, last = 'and') => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} ${last} ${names[names.length - 1]}`);
+
 // What the two rules on main share: a branch ruleset in one of the enforcements it is given, with
-// no bypass, in dazzer and dazzer-app by name, protected so that renaming either cannot take it out
-// of the rule, holding the conditions ref_name and repository_name alone, and one rule of the type
-// it names.
-function checkOnMain(r, name, ruleType, enforcements) {
+// no bypass, in exactly the repositories it is given by name, protected so that renaming one cannot
+// take it out of the rule, holding the conditions ref_name and repository_name alone, and one rule
+// of the type it names.
+function checkOnMain(r, name, ruleType, enforcements, repositories) {
   const problems = [];
   if (!isObj(r)) return { problems: ['the ruleset is not an object'], rule: null };
   if (r.name !== name) problems.push(`it is named ${JSON.stringify(r.name)}, not ${name}`);
@@ -180,9 +191,9 @@ function checkOnMain(r, name, ruleType, enforcements) {
   if (!enforcements.includes(r.enforcement)) problems.push(`its enforcement is ${JSON.stringify(r.enforcement)}, ${enforcements.length === 1 ? `not ${enforcements[0]}` : `neither ${enforcements.join(' nor ')}`}`);
   if (!Array.isArray(r.bypass_actors) || r.bypass_actors.length) problems.push('it names bypass actors, so someone could pass the rule');
   const repo = r.conditions?.repository_name;
-  if (!isObj(repo) || !same(repo.include, RULE_REPOSITORIES)) problems.push(`its repository condition includes ${JSON.stringify(isObj(repo) ? repo.include : repo)}, not dazzer and dazzer-app by name`);
+  if (!isObj(repo) || !same(repo.include, repositories)) problems.push(`its repository condition includes ${JSON.stringify(isObj(repo) ? repo.include : repo)}, not ${inWords(repositories)} by name`);
   if (isObj(repo) && !same(repo.exclude ?? [], [])) problems.push(`its repository condition excludes ${JSON.stringify(repo.exclude)}`);
-  if (isObj(repo) && repo.protected !== true) problems.push(`its repository condition sets protected ${JSON.stringify(repo.protected)}, not protected: true, so renaming dazzer or dazzer-app would take it out of the rule`);
+  if (isObj(repo) && repo.protected !== true) problems.push(`its repository condition sets protected ${JSON.stringify(repo.protected)}, not protected: true, so renaming ${inWords(repositories, 'or')} would take it out of the rule`);
   for (const k of Object.keys(r.conditions ?? {})) if (!['ref_name', 'repository_name'].includes(k)) problems.push(`it holds the condition ${k}, which narrows the repositories it runs in`);
   const rules = Array.isArray(r.rules) ? r.rules : [];
   if (rules.length !== 1) problems.push(`it holds ${Array.isArray(r.rules) ? r.rules.length : 'no'} rules, not one ${ruleType} rule`);
@@ -190,13 +201,14 @@ function checkOnMain(r, name, ruleType, enforcements) {
   return { problems, rule: rules.length === 1 && rules[0]?.type === ruleType ? rules[0] : null };
 }
 
-// Every way a ruleset differs from main-spelling-refused, each as a sentence. It is active. Its
+// Every way a ruleset differs from main-spelling-refused, each as a sentence. It is active, in
+// dazzer, dazzer-app and runners exactly, the repositories google-locked admits. Its
 // patterns, matched case-sensitively, must match exactly the fifteen other spellings of main and
 // never main itself, with no exclude, and its one rule is creation: so among those sixteen it holds
 // whether GitHub folds case or not, and even folded it restricts only the creation of main, never a
 // push to it (decision 192).
 export function checkMainSpelling(r) {
-  const { problems, rule } = checkOnMain(r, MAIN_SPELLING_NAME, 'creation', ['active']);
+  const { problems, rule } = checkOnMain(r, MAIN_SPELLING_NAME, 'creation', ['active'], MAIN_SPELLING_REPOSITORIES);
   if (!isObj(r)) return problems;
   if (rule && Object.keys(rule).some((k) => k !== 'type')) problems.push(`its creation rule holds ${JSON.stringify(Object.keys(rule).filter((k) => k !== 'type'))} beside its type`);
   const ref = r.conditions?.ref_name;
@@ -216,12 +228,13 @@ export function checkMainSpelling(r) {
   return problems;
 }
 
-// Every way a ruleset differs from codeql-complete-required, each as a sentence: evaluate, as its
+// Every way a ruleset differs from codeql-complete-required, each as a sentence: in dazzer and
+// dazzer-app exactly, runners never among them; evaluate, as its
 // file is written, or active, as r-3.27 makes it once its readings show no merge it would have
 // refused, and nothing else (decision 210); the default branch alone, one required check, codeql /
 // CodeQL complete from integration 15368, not enforced on create, strict policy off.
 export function checkCodeqlComplete(r) {
-  const { problems, rule } = checkOnMain(r, CODEQL_COMPLETE_NAME, 'required_status_checks', ['evaluate', 'active']);
+  const { problems, rule } = checkOnMain(r, CODEQL_COMPLETE_NAME, 'required_status_checks', ['evaluate', 'active'], CODEQL_REPOSITORIES);
   if (!isObj(r)) return problems;
   const ref = r.conditions?.ref_name;
   if (!isObj(ref) || !same(ref.include, ['~DEFAULT_BRANCH']) || !same(ref.exclude ?? [], [])) problems.push(`its ref condition is ${JSON.stringify(ref)}, not the default branch alone (include ~DEFAULT_BRANCH, exclude nothing)`);

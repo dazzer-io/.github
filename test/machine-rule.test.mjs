@@ -931,7 +931,7 @@ test('machine-rule.yml runs the judge, then a pinned actionlint and zizmor, on t
     [JSON.stringify(js.permissions) === JSON.stringify({ contents: 'read' }), 'its token reading the code alone'],
     [jobs.length === 1 && only['runs-on'] === 'ubuntu-latest' && !('permissions' in only), 'one job on the literal ubuntu-latest'],
     [!/secrets/i.test(text), 'no secret anywhere in it'],
-    [steps.filter((s) => s.uses?.startsWith('actions/checkout@')).length === 2 && steps.filter((s) => s.uses?.startsWith('actions/checkout@')).every((s) => s.with?.['persist-credentials'] === false), 'two checkouts, each with persist-credentials: false'],
+    [steps.filter((s) => /^actions\/checkout@[0-9a-f]{40}$/.test(String(s.uses).split(' ')[0])).length === 2 && steps.filter((s) => s.uses?.startsWith('actions/checkout@')).every((s) => s.with?.['persist-credentials'] === false), 'two checkouts pinned by commit, each with persist-credentials: false'],
     [steps.some((s) => s.uses?.startsWith('actions/checkout@') && s.with?.repository === '${{ steps.source.outputs.repo }}' && s.with?.ref === '${{ steps.source.outputs.sha }}' && s.with?.path === '.machine-rule') && text.includes('${{ job.workflow_repository }}') && text.includes('${{ job.workflow_sha }}'), 'the rule checked out of job.workflow_repository at job.workflow_sha'],
     [text.includes('${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}') && steps.some((s) => s.uses?.startsWith('actions/checkout@') && s.with?.path === '.change' && !('repository' in (s.with ?? {}))), 'the change checked out of the triggering repository at its head commit'],
     [runs.includes('npm ci --ignore-scripts'), 'the YAML reader installed with npm ci --ignore-scripts'],

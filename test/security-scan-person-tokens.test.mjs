@@ -507,6 +507,7 @@ test('the person-token job runs on every branch, keeps no credentials, names no 
   const text = job.join('\n');
   assert.ok(!job.some((l) => /^ {4}if:/.test(l)), `${MISSED}: the job runs on one branch only`);
   assert.doesNotMatch(text, /secrets\./, 'the job reads a secret');
+  for (const l of job.filter((x) => /uses: actions\/checkout@/.test(x))) assert.match(l, /@[0-9a-f]{40} /, `not pinned by commit: ${l}`);
   assert.equal((text.match(/persist-credentials: false/g) || []).length, (text.match(/uses: actions\/checkout@/g) || []).length,
     'a checkout in the job keeps its credentials');
   assert.match(text, /fetch-depth: 0/, 'the job cannot see the change\'s base without its history');

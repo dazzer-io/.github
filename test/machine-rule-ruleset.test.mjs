@@ -3,9 +3,10 @@
 // machine-rule-required runs .github/workflows/machine-rule.yml, read from dazzer-io/.github by its
 // repository id at refs/heads/main, on the default branch of every repository; main-spelling-refused
 // restricts the creation of the fifteen other spellings of main in dazzer and dazzer-app; and
-// codeql-complete-required requires codeql / CodeQL complete from GitHub Actions there. The two rules
-// are written active, so each blocks: decision 177's watch-first period is over, and a file written
-// as evaluate is refused (r-3.27). Each file is checked by its own check, each
+// codeql-complete-required requires codeql / CodeQL complete from GitHub Actions there.
+// codeql-complete-required is written active, so it blocks, and a file written as evaluate is refused
+// (r-3.27); machine-rule-required stays in evaluate, watching, until r-3.37 reads every repository and
+// direct pushes to a default branch. Each file is checked by its own check, each
 // way it could be wrong red alone; the command's read, write and readings modes are run against a
 // fake GitHub that answers the organisation's rulesets a page at a time and dazzer-io/.github's id,
 // and nothing else, so each kept ruleset is seen standing alone, nothing here reaches the network,
@@ -80,11 +81,11 @@ const refusalsMissed = (check, base, cases) => {
   return misses;
 };
 
-test('ruleset.json is the rule\'s ruleset: machine-rule.yml of dazzer-io/.github at refs/heads/main, every repository\'s default branch, active', () => {
+test('ruleset.json is the rule\'s ruleset: machine-rule.yml of dazzer-io/.github at refs/heads/main, every repository\'s default branch, evaluate until r-3.37', () => {
   need();
   const r = fileRuleset();
   assert.deepEqual(A.checkRuleset(r), [], 'Could not find machine-rule/ruleset.json passing checkRuleset');
-  assert.equal(r.enforcement, 'active', `Could not find machine-rule-required written as active, so it blocks a merge the machine rule refuses; decision 177's watch-first period is over (r-3.27): ${JSON.stringify(r.enforcement)}`);
+  assert.equal(r.enforcement, 'evaluate', `Could not find machine-rule-required written as evaluate: it stays watching until r-3.37 reads every repository, public ones included, and direct pushes to a default branch, which its 21 passing pull requests do not (decision 177): ${JSON.stringify(r.enforcement)}`);
   assert.equal(A.SHARED_REPOSITORY_ID, ID, 'Could not find dazzer-io/.github\'s repository id as GitHub gives it');
   const w = r.rules?.[0]?.parameters?.workflows?.[0];
   assert.deepEqual(w, { path: '.github/workflows/machine-rule.yml', ref: 'refs/heads/main', repository_id: ID }, `Could not find the workflows rule naming machine-rule.yml of dazzer-io/.github at refs/heads/main: ${JSON.stringify(w)}`);
@@ -246,7 +247,7 @@ test('the read: exit 0 when every live ruleset is its file\'s, 1 naming each fie
   const misses = [];
   const same = fakeGitHub({ rulesets: [...allThree(), { id: 8, name: 'made-up-other', rules: [] }] });
   const s = await run([], same);
-  if (s.code !== 0 || !/machine-rule-required \(7\) on dazzer-io is the file's version, enforcement active/.test(s.all)) misses.push(`Could not find the matching ruleset read as the file's version, exit 0: ${s.code} ${s.all}`);
+  if (s.code !== 0 || !/machine-rule-required \(7\) on dazzer-io is the file's version, enforcement evaluate/.test(s.all)) misses.push(`Could not find the matching ruleset read as the file's version, exit 0: ${s.code} ${s.all}`);
   for (const [name, id, r] of [[SPELLING, 10, spellingFile()], [CODEQL, 11, codeqlFile()]]) if (!s.all.includes(`${name} (${id}) on dazzer-io is the file's version, enforcement ${r.enforcement}`)) misses.push(`Could not find ${name} read as its file's version: ${s.all}`);
   const drifted = clone(file);
   drifted.rules[0].parameters.workflows[0].ref = 'refs/heads/made-up-branch';
@@ -386,7 +387,7 @@ test('the read-back counts a repository condition GitHub reads as protected: fal
   const misses = [];
   const file = clone(fileRuleset());
   delete file.conditions.repository_name.protected;
-  const live = readBack({ ...clone(file), id: 7 });
+  const live = readBack({ ...clone(file), id: 7, enforcement: 'evaluate' });
   if (live.conditions.repository_name.protected !== false) misses.push('Could not find the fake GitHub reading protected back as false');
   const left = A.diffRuleset(live, file);
   if (left.length) misses.push(`Could not find a live protected: false matching a file that leaves protected out: ${JSON.stringify(left)}`);
@@ -402,9 +403,9 @@ test('the read-back counts a repository condition GitHub reads as protected: fal
   // reading it back in its own shape, then the no-argument read.
   const gh = fakeGitHub({ rulesets: [{ id: 8, name: 'made-up-other', target: 'branch', enforcement: 'active', rules: [{ type: 'deletion' }] }] });
   const apply = await run(['--apply'], gh);
-  if (apply.code !== 0 || !/now is the file's version, enforcement active/.test(apply.all)) misses.push(`Could not find --apply of the shipped file accepted by GitHub and read back as the file's version, exit 0: ${apply.code} ${apply.all}`);
+  if (apply.code !== 0 || !/machine-rule-required \(\d+\) on dazzer-io now is the file's version, enforcement evaluate/.test(apply.all)) misses.push(`Could not find --apply of the shipped file accepted by GitHub and read back as the file's version, exit 0: ${apply.code} ${apply.all}`);
   const after = await run([], gh);
-  if (after.code !== 0 || !/is the file's version, enforcement active/.test(after.all)) misses.push(`Could not find the read after --apply saying it matches, exit 0: ${after.code} ${after.all}`);
+  if (after.code !== 0 || !/machine-rule-required \(\d+\) on dazzer-io is the file's version, enforcement evaluate/.test(after.all)) misses.push(`Could not find the read after --apply saying it matches, exit 0: ${after.code} ${after.all}`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 
@@ -844,7 +845,7 @@ test('without --apply, each of the three is said as its file\'s version, differi
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'s command, that each ruleset stands alone and what each exit code means, where the locked shape is held to main, that machine-rule-required and codeql-complete-required are required (blocking), and the lint step\'s two ignores', () => {
+test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'s command, that each ruleset stands alone and what each exit code means, where the locked shape is held to main, that machine-rule-required watches until r-3.37, that codeql-complete-required is required (blocking) and the way back, and the lint step\'s two ignores', () => {
   const md = readFileSync(join(ROOT, 'machine-rule/README.md'), 'utf8');
   const plain = md.replace(/\s+/g, ' ');
   const misses = [];
@@ -854,8 +855,10 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
     'without regard to case', "github.ref == 'refs/heads/main'", 'a branch named `MAIN`',
     "held to main only in dazzer and dazzer-app, once `main-spelling-refused` is live and the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included",
     'keeps every `LOCKED_` setting empty until then', 'Holding it to main in any other repository is other work', 'this command reads no branch',
-    '`machine-rule-required` is required (blocking): it is written `active`',
+    '`machine-rule-required` still watches: it is written `evaluate` until r-3.37',
     '`codeql-complete-required` is required (blocking): it is written `active`',
+    'read reporting on dazzer 1421 and 1407 and dazzer-app 381, 380, 379 and 377 (two of them Dependabot) on 9 Nov',
+    'The way back: an organisation owner sets a ruleset to `evaluate` with a local edit of its file and `node machine-rule/apply-ruleset.mjs --apply`, or in GitHub\'s organisation settings',
     'Each kept ruleset stands alone', 'holds back that one alone and names it', 'the others are still written and read back',
     "Exit 0 means every ruleset is its file's version", 'exit 1 means one or more were held back or differ', 'exit 2 means GitHub could not be read at all',
     // D212: a write gh gets no answer to is that ruleset's alone, and the ids a write and its read-back go to.
@@ -865,8 +868,9 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
   // Every sentence saying main-spelling-refused is live bounds the claim to the two repositories and
   // to the locked switch-on finding no other spelling there, non-ASCII ones included (decision 210).
   for (const s of plain.split(/(?<=\.) /)) if (s.includes('`main-spelling-refused` is live') && !(s.includes('dazzer and dazzer-app') && s.includes("the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included"))) misses.push(`Could not find this sentence of machine-rule/README.md bounded to dazzer and dazzer-app, with the locked switch-on finding no other spelling of main there, non-ASCII ones included: ${s}`);
-  // Neither rule watches any more: decision 177's watch-first period is over (r-3.27).
-  for (const words of ['written in `evaluate`', 'watches, in `evaluate`', 'so it watches before it refuses']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: both rules are required (blocking), written active`);
+  // codeql-complete-required no longer watches (r-3.27), and machine-rule-required is not called required
+  // while it is written evaluate (review of dazzer-io/.github 27, finding 1).
+  for (const words of ['watches, in `evaluate`, until it is made active', '`machine-rule-required` is required (blocking)', 'passed on all 21 pull requests']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: codeql-complete-required is required (blocking), machine-rule-required watches until r-3.37`);
   if (/Its one ignore/.test(plain)) misses.push('Could not find machine-rule/README.md rid of "Its one ignore": the lint step holds two (decision 201)');
   // The guard and the branch read are gone, and their account with them (decision 210).
   for (const words of ['default-branch head carries', 'one refusal and nothing is written', 'Any of these and nothing is written', 'the head of the newest pull request merged into', 'the newest merge-group commit', 'a branch spelled main in other letters already exists', 'its guard reads']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}, the guard or the branch read decision 210 removed`);

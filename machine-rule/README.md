@@ -36,10 +36,11 @@ its origin does not say so, or GitHub could not be asked about a commit.
   (decisions 198, 201).
 - **The ruleset `machine-rule-required`** (`ruleset.json`) is a workflows rule. It runs that
   file, read from dazzer-io/.github by its repository id at `refs/heads/main`, on the default
-  branch of every repository, and not when a branch is created. `machine-rule-required` is
-  required (blocking): it is written `active`, so a merge the machine rule refuses is blocked.
-  It watched in `evaluate` first, and that period is over: the Machine rule check passed on all
-  21 pull requests across the private repositories since 8 Nov (decision 177, r-3.27). Every repository is `~ALL` with nothing excluded and
+  branch of every repository, and not when a branch is created. `machine-rule-required` still
+  watches: it is written `evaluate` until r-3.37, so GitHub blocks nothing and records each merge
+  it would have refused. Its reach is every repository, public ones included, and direct pushes
+  to a default branch, wider than the pull requests read so far, so it is made active only once
+  r-3.37 reads all of that (decision 177). Every repository is `~ALL` with nothing excluded and
   no `protected: true`: GitHub refuses that pairing with 422 ("Protected repository name
   conditions cannot include `~ALL`"), and a renamed repository stays in `~ALL` anyway, so the
   check refuses the pairing in GitHub's words, and the read-back counts a `protected` read back
@@ -66,8 +67,11 @@ its origin does not say so, or GitHub could not be asked about a commit.
   integration or none, and a bypass. Its check accepts `evaluate` or `active` and nothing else,
   and the file is held to `active` by its test. `codeql-complete-required` is required
   (blocking): it is written `active`, so a merge to the default branch of dazzer or dazzer-app
-  without `codeql / CodeQL complete` is blocked. It watched in `evaluate` first, and that period
-  is over: the check reports on dazzer's pull requests (r-3.27, decision 210).
+  without `codeql / CodeQL complete` is blocked. It watched in `evaluate` first, and the check
+  was read reporting on dazzer 1421 and 1407 and dazzer-app 381, 380, 379 and 377 (two of them
+  Dependabot) on 9 Nov (r-3.27, decision 210). The way back: an organisation owner sets a
+  ruleset to `evaluate` with a local edit of its file and `node machine-rule/apply-ruleset.mjs
+  --apply`, or in GitHub's organisation settings.
 - **Why `main-spelling-refused` comes first** (decisions 195, 210). GitHub compares strings
   without regard to case (its expressions page: "GitHub ignores case when comparing strings"), so
   the guard `github.ref == 'refs/heads/main'` is true on a branch named `MAIN`. A creation rule

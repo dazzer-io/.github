@@ -160,7 +160,7 @@ it does not declare is empty for ever, so reading one is refused.
   so an empty setting always means GitHub's machine.
 - **None of our own machines is named literally** (`dazzer-<set>-<N>-core`). The watcher empties
   the setting to send a waiting job back to GitHub's, and it cannot move a literal label. The
-  one exception is the canary, below.
+  one exception is runners' two canaries, below.
 
 ## The classes
 
@@ -169,7 +169,7 @@ a shared workflow, and a job kept.json keeps, by any effect (decision 184). A cl
 machine reads a job that names one; its rule on what a job reads, holds and signs in for reads
 every job, its workflow's top included. A kept.json effect admits a job only where its decision
 did: `stay` keeps a job of a workflow that signs in on GitHub's machine (decisions 9, 40),
-`canary` keeps runners' canary on our sets named literally (decision 50), and `checks` moves a
+`canary` keeps runners' two canaries on our sets named literally (decisions 50, 223), and `checks` moves a
 job onto the change-check machines (decision 47). No effect lifts the write-token class or the
 public one.
 
@@ -299,8 +299,12 @@ fails its check leaves the rule unread.
     are (decisions 9, 23, 36, 181).
   - `checks`: judged as a change check after every class rule, naming the writes it may hold,
     which it holds only off a pull request in a private repository (decision 47).
-  - `canary`: runners' `canary.yml` alone. It is started by hand, under `contents: read`, with
-    no secret, on our own sets named literally (decision 50).
+  - `canary`: runners' `canary.yml` and `locked-canary.yml` alone; an entry for any other file
+    is refused, naming those two. Each is started by hand, under `contents: read`, with no
+    permission of its own and no secret, on our own sets named literally (decision 50), since a
+    canary proves a set before any setting names it. `locked-canary.yml` names the locked sets
+    alone (`dazzer-locked-<N>-core`) and `canary.yml` only sets that are not locked, so no canary
+    carries a locked set past the locked canary's own guards (decision 223).
 
   An entry is whole-file (`jobs`, every job id of its file, effect `stay` or `canary`) or one
   job (`job` and `name`). A stay entry carries the name GitHub shows, as the readings match it, a

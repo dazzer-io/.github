@@ -446,6 +446,9 @@ test('kept.json\'s own check refuses an entry with no effect or an unknown one, 
     ['an unknown effect', { ...base, effect: 'both' }, /an unknown one/],
     ['a canary entry naming another file', { ...base, repository: 'dazzer-io/runners', workflow: 'check.yml', effect: 'canary' }, /only dazzer-io\/runners's .*canary\.yml may take/],
     ['a canary entry naming another repository', { ...base, workflow: 'canary.yml', effect: 'canary' }, /only dazzer-io\/runners's/],
+    ['a canary entry naming a third file of runners', { ...base, repository: 'dazzer-io/runners', workflow: 'other-canary.yml', effect: 'canary' }, /only dazzer-io\/runners's \.github\/workflows\/canary\.yml and \.github\/workflows\/locked-canary\.yml may take/],
+    ['a locked canary entry naming another repository', { ...base, workflow: 'locked-canary.yml', effect: 'canary' }, /only dazzer-io\/runners's .*locked-canary\.yml may take/],
+    ['a job entry with the effect canary', { repository: 'dazzer-io/runners', workflow: 'locked-canary.yml', job: 'locked', name: 'locked', effect: 'canary', reason: 'r', decision: 223, source: 's' }, /is a job entry with the effect canary/],
     ['a whole-file entry with the effect checks', { ...base, effect: 'checks' }, /a whole-file entry is for a file whose every job stays/],
     ['writes on a stay entry', { repository: 'dazzer-io/dazzer', workflow: 'x.yml', job: 'a', name: 'a', effect: 'stay', writes: ['contents'], reason: 'r', decision: 1, source: 's' }, /only a checks entry names writes/],
     ['a stay entry carrying an expression for its name', { repository: 'dazzer-io/dazzer', workflow: 'x.yml', job: 'a', name: 'a @{{ matrix.x }}', effect: 'stay', reason: 'r', decision: 1, source: 's' }, /a stay entry carries the name GitHub shows, a fixed string/],
@@ -459,6 +462,8 @@ test('kept.json\'s own check refuses an entry with no effect or an unknown one, 
       const problems = J.checkKept({ about: 'made up', entries: [fixed] });
       await c(() => assert.ok(problems.some((p) => says.test(p)), `Could not find kept.json's check refusing ${name}: ${JSON.stringify(problems)}`));
     }
+    const lockedEntry = J.checkKept({ about: 'made up', entries: [{ repository: 'dazzer-io/runners', workflow: 'locked-canary.yml', jobs: ['locked'], effect: 'canary', reason: 'r', decision: 223, source: 's' }] });
+    await c(() => assert.deepEqual(lockedEntry, [], `Could not find kept.json's check taking runners' locked-canary.yml as a canary entry: ${JSON.stringify(lockedEntry)}`));
     const twice = J.checkKept({ about: 'made up', entries: [base, base] });
     await c(() => assert.ok(twice.some((p) => /twice/.test(p)), `Could not find a job named twice refused: ${JSON.stringify(twice)}`));
   });
@@ -485,6 +490,7 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
     ['runners', 'apply.yml', 'apply', 'stay', 9], ['runners', 'image.yml', 'build', 'stay', 9], ['runners', 'image.yml', 'push', 'stay', 9],
     ['runners', 'canary.yml', 'canary', 'canary', 50], ['runners', 'canary.yml', 'scan', 'canary', 50],
     ['runners', 'canary.yml', 'nvmrc-exact-v7', 'canary', 50], ['runners', 'canary.yml', 'nvmrc-exact-v7-in-a-container', 'canary', 50],
+    ['runners', 'locked-canary.yml', 'locked', 'canary', 223],
     ['.github', 'codeql.yml', 'upload', 'stay', 36], ['.github', 'codeql.yml', 'complete', 'stay', 93], ['.github', 'engineer-review.yml', 'engineer-review', 'stay', 36], ['.github', 'machine-rule.yml', 'machine-rule', 'stay', 104],
   ];
   const misses = [];
@@ -512,7 +518,7 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('the canary effect: runners\' canary.yml alone, by hand, reading only the code, on our own sets named literally', async () => {
+test('the canary effect: runners\' canary.yml and locked-canary.yml alone, by hand, reading only the code, on our own sets named literally, the locked sets in locked-canary.yml alone', async () => {
   need();
   const RUNNERS = { repository: 'dazzer-io/runners', visibility: 'private' };
   const canary = (on = 'workflow_dispatch', top = READ, extra = '', values = '[dazzer-checks-2-core, dazzer-checks-8-core]') => workflow(on, top, `  canary:\n    name: canary on @{{ matrix.set }}\n    runs-on: @{{ matrix.set }}\n    strategy:\n      matrix:\n        set: ${values}\n${extra}${STEPS}`, job('scan', 'dazzer-scan-2-core'));
@@ -525,6 +531,24 @@ test('the canary effect: runners\' canary.yml alone, by hand, reading only the c
     await c(() => mustRefuse('a canary job reading a secret', { 'canary.yml': canary('workflow_dispatch', READ, '    env:\n      K: @{{ secrets.MADE_UP }}\n') }, keptBy, { file: 'canary.yml', job: 'canary', says: /reads a secret/ }));
     await c(() => mustRefuse('a canary matrix naming GitHub\'s machine', { 'canary.yml': canary('workflow_dispatch', READ, '', '[dazzer-checks-2-core, ubuntu-latest]') }, keptBy, { file: 'canary.yml', job: 'canary', says: /takes "ubuntu-latest", not one of our own sets/ }));
     await c(() => mustRefuse('our set named literally anywhere but the canary', { 'check.yml': canary() }, RUNNERS, { file: 'check.yml', job: 'scan', says: /names one of our own machines literally/ }));
+    await c(() => mustRefuse('canary.yml naming a locked set', { 'canary.yml': canary('workflow_dispatch', READ, '', '[dazzer-checks-2-core, dazzer-locked-2-core]') }, keptBy, { file: 'canary.yml', job: 'canary', says: /takes "dazzer-locked-2-core", a locked set, which only locked-canary\.yml may name/ }));
+  });
+});
+
+// runners' locked-canary.yml as written at bb859e4 (decisions 221, 223), its steps made up.
+test('the canary effect admits runners\' locked-canary.yml as written, on the locked sets alone (decision 223)', async () => {
+  need();
+  const RUNNERS = { repository: 'dazzer-io/runners', visibility: 'private' };
+  const locked = ({ on = 'workflow_dispatch', top = READ, values = '\n          - dazzer-locked-2-core\n          - dazzer-locked-8-core', runsOn = '@{{ matrix.set }}' } = {}) => workflow(on, top, `  locked:\n    name: locked canary on @{{ matrix.set }}\n    if: github.ref == 'refs/heads/main'\n    strategy:\n      fail-fast: false\n      matrix:\n        set:${values}\n    runs-on: ${runsOn}\n    timeout-minutes: 15\n${STEPS}`);
+  const keptBy = { ...RUNNERS, ...lists(), kept: { about: 'made up', entries: [{ repository: 'dazzer-io/runners', workflow: 'locked-canary.yml', jobs: ['locked'], effect: 'canary', reason: 'r', decision: 223, source: 's' }] } };
+  await everyCase(async (c) => {
+    await c(() => mustPass('the locked canary as written', { 'locked-canary.yml': locked() }, keptBy));
+    await c(() => mustPass('the locked canary as written, under kept.json as it stands', { 'locked-canary.yml': locked() }, { ...RUNNERS, ...lists() }));
+    await c(() => mustRefuse('a locked canary naming a checks set', { 'locked-canary.yml': locked({ values: ' [dazzer-locked-2-core, dazzer-checks-2-core]' }) }, keptBy, { file: 'locked-canary.yml', job: 'locked', says: /takes "dazzer-checks-2-core", not one of the locked sets/ }));
+    await c(() => mustRefuse('a locked canary on a checks set named literally', { 'locked-canary.yml': locked({ runsOn: 'dazzer-checks-8-core' }) }, keptBy, { file: 'locked-canary.yml', job: 'locked', says: /is a canary job on 'dazzer-checks-8-core', not one of the locked sets/ }));
+    await c(() => mustRefuse('a locked canary started on a push', { 'locked-canary.yml': locked({ on: 'push' }) }, keptBy, { file: 'locked-canary.yml', job: 'locked', says: /not by workflow_dispatch alone/ }));
+    await c(() => mustRefuse('a locked canary under a wider grant', { 'locked-canary.yml': locked({ top: 'permissions:\n  contents: write\n' }) }, keptBy, { file: 'locked-canary.yml', job: 'locked', says: /not exactly contents: read/ }));
+    await c(() => mustRefuse('the locked sets named literally with no entry keeping the file', { 'locked-canary.yml': locked() }, { ...RUNNERS, ...lists(), kept: { about: 'made up', entries: [] } }, { file: 'locked-canary.yml', job: 'locked', says: /matrix\.set takes "dazzer-locked-2-core" literally/ }));
   });
 });
 

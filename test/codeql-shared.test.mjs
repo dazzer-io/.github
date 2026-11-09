@@ -38,7 +38,8 @@
 //     (if: needs.analyze.result == 'success'), so a partial scan never passes (decisions 101 and
 //     131), checks nothing out, and for each language the guard takes, in turn and only when the
 //     caller names it, fetches that language's results by name into a folder of its own and hands
-//     them to code scanning under the category /language:<language>, so for every list a caller
+//     them to code scanning under the category /language:<language> and the matrix
+//     {"language":"<language>"}, the environment its analyses are stored under, so for every list a caller
 //     may name, each named language is sent once under its own category; complete, named CodeQL
 //     complete whatever languages
 //     a caller names, runs always after both on GitHub's ubuntu-latest with no token
@@ -404,6 +405,13 @@ const UPLOAD_NAME = 'Upload CodeQL results';
 const UPLOAD_STEP_KEYS = ['name', 'if', 'uses', 'with'];
 const NAMED = (l) => `\${{ contains(fromJSON(inputs.languages), '${l}') }}`;
 const SENT = (l) => `\${{ runner.temp }}/codeql-sarif-${l}`;
+// The matrix each upload-sarif step names, the environment its analysis is stored under. The
+// action's input defaults to ${{ toJson(matrix) }}, which in the old per-language upload jobs
+// gave {"language":"<l>"}; code scanning keeps one set of analyses per analysis key and
+// environment, and dazzer's analyses on main are stored under .github/workflows/codeql.yml:upload
+// with that environment (read 9 Nov 2026). In one job with no matrix the default is null, so each
+// step names its language's matrix as the old job did, and each analysis carries on in its set.
+const MATRIX_FOR = (l) => `{"language":"${l}"}`;
 // Whether a step's if: runs it for a caller naming `list`, as GitHub evaluates
 // ${{ contains(fromJSON(inputs.languages), '<l>') }} (an element compared ignoring case), or null
 // for any other shape.
@@ -574,7 +582,14 @@ function judgeShared(text) {
     const [fetch, send] = [usteps[2 * k], usteps[2 * k + 1]];
     if (fetch?.if !== NAMED(l) || send?.if !== NAMED(l)) no(`the fetch and the upload of ${l}'s results running when the caller names ${l} (if: ${NAMED(l)})`, `their if: lines read ${show(fetch?.if)} and ${show(send?.if)}`);
     if (!same(fetch?.with, { name: `codeql-sarif-${l}`, path: SENT(l) })) no(`the artifact codeql-sarif-${l} of this run fetched by name and path alone, into ${SENT(l)}, a folder of its own, so a missing one fails the upload`, `download-artifact takes ${show(fetch?.with)}`);
-    if (!same(send?.with, { sarif_file: SENT(l), category: `/language:${l}` })) no(`upload-sarif sending ${l}'s fetched results from ${SENT(l)} under the category /language:${l}, and nothing else`, `upload-sarif takes ${show(send?.with)}`);
+    if (!same(send?.with, { sarif_file: SENT(l), category: `/language:${l}`, matrix: MATRIX_FOR(l) })) no(`upload-sarif sending ${l}'s fetched results from ${SENT(l)} under the category /language:${l} and the matrix ${MATRIX_FOR(l)}, and nothing else`, `upload-sarif takes ${show(send?.with)}`);
+    let env = null;
+    try { env = JSON.parse(send?.with?.matrix ?? ''); } catch { /* refused below */ }
+    const sentAs = String(send?.with?.category ?? '').replace(/^\/language:/, '');
+    const fetchedAs = String(fetch?.with?.name ?? '').replace(/^codeql-sarif-/, '');
+    if (!exactly(env, ['language']) || env.language !== l || sentAs !== l || fetchedAs !== l) {
+      no(`the upload of ${l}'s results under the matrix {"language":"${l}"}, agreeing with its category /language:${l} and its artifact codeql-sarif-${l}, the environment its analyses are stored under on main`, `its matrix reads ${show(send?.with?.matrix)}, its category ${show(send?.with?.category)} and its artifact ${show(fetch?.with?.name)}, and code scanning keeps one set of analyses per analysis key and environment, so another environment starts a new set and leaves the old one standing`);
+    }
   });
   // What the upload sends for every list a caller may name: each named language once, in turn,
   // under its own category, from a folder no other language's results are fetched into.
@@ -731,6 +746,9 @@ plant('another artifact fetched', (t) => t.replace(`          name: codeql-sarif
 plant('an older run\'s artifact fetched', intoWith('actions/download-artifact', ['          github-token: ${{ github.token }}', '          run-id: 1']), /fetched by name and path alone/);
 plant('another category on upload-sarif', (t) => t.replace(`          sarif_file: ${SENT('python')}\n          category: /language:python\n`, `          sarif_file: ${SENT('python')}\n          category: /scan:python\n`), [/upload-sarif sending python's fetched results .* under the category \/language:python/, /the upload sending, for a caller naming \["python"\], exactly \["\/language:python"\] in turn/]);
 plant('python uploaded under the category of actions', (t) => t.replace(`          sarif_file: ${SENT('python')}\n          category: /language:python\n`, `          sarif_file: ${SENT('python')}\n          category: /language:actions\n`), /the upload sending, for a caller naming \["actions","python"\], exactly \["\/language:actions","\/language:python"\] in turn, .*: it sends \["\/language:actions","\/language:actions"\]/);
+plant('python\'s upload without its matrix', (t) => t.replace(`          category: /language:python\n          matrix: '${MATRIX_FOR('python')}'\n`, '          category: /language:python\n'), [/upload-sarif sending python's fetched results .* and the matrix \{"language":"python"\}, and nothing else/, /the upload of python's results under the matrix \{"language":"python"\}.*: its matrix reads undefined/]);
+plant('python\'s upload under the matrix of actions', (t) => t.replace(`          matrix: '${MATRIX_FOR('python')}'\n`, `          matrix: '${MATRIX_FOR('actions')}'\n`), /the upload of python's results under the matrix \{"language":"python"\}.*: its matrix reads \{"language":"actions"\}/);
+plant('python\'s upload under a matrix of two keys', (t) => t.replace(`          matrix: '${MATRIX_FOR('python')}'\n`, `          matrix: '{"language":"python","os":"linux"}'\n`), /the upload of python's results under the matrix \{"language":"python"\}/);
 plant('upload-sarif sending another file', (t) => t.replace(`          sarif_file: ${SENT('actions')}\n`, '          sarif_file: results.sarif\n'), /upload-sarif sending actions's fetched results/);
 plant('every language fetched into one folder', (t) => { const all = t.split('\n'); const u = all.indexOf('  upload:'); return all.map((l, n) => (n > u && /^ {10}(path|sarif_file): /.test(l) ? l.replace(/codeql-sarif-(actions|javascript-typescript|python)$/, 'codeql-sarif') : l)).join('\n'); }, [/fetched by name and path alone, into \$\{\{ runner\.temp \}\}\/codeql-sarif-python, a folder of its own/, /the upload sending, for a caller naming \["actions","python"\], .*each language's results fetched into a folder of its own/]);
 // Pins.

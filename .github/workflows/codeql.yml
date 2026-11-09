@@ -261,6 +261,12 @@ jobs:
     # fails here rather than uploading nothing and no language's upload holds another's file, then
     # sent under that language's category. A language that joins the guard joins here too
     # (test/codeql-shared.test.mjs holds the two lists the same).
+    # Each upload names its language's matrix, {"language":"<language>"}. upload-sarif's matrix
+    # input defaults to ${{ toJson(matrix) }}, which the old per-language jobs gave as that very
+    # value and this job, with no matrix, would give as null; code scanning keeps one set of
+    # analyses per analysis key (.github/workflows/codeql.yml:upload, the job id) and environment
+    # (the matrix), so another environment would start a new set and leave the old one standing
+    # on main, its alerts never closed.
     steps:
       - name: Fetch the results of actions
         if: ${{ contains(fromJSON(inputs.languages), 'actions') }}
@@ -275,6 +281,7 @@ jobs:
         with:
           sarif_file: ${{ runner.temp }}/codeql-sarif-actions
           category: /language:actions
+          matrix: '{"language":"actions"}'
 
       - name: Fetch the results of javascript-typescript
         if: ${{ contains(fromJSON(inputs.languages), 'javascript-typescript') }}
@@ -289,6 +296,7 @@ jobs:
         with:
           sarif_file: ${{ runner.temp }}/codeql-sarif-javascript-typescript
           category: /language:javascript-typescript
+          matrix: '{"language":"javascript-typescript"}'
 
       - name: Fetch the results of python
         if: ${{ contains(fromJSON(inputs.languages), 'python') }}
@@ -303,6 +311,7 @@ jobs:
         with:
           sarif_file: ${{ runner.temp }}/codeql-sarif-python
           category: /language:python
+          matrix: '{"language":"python"}'
 
   # The one check a caller requires (decision 135): it fails unless every analysis and every upload
   # succeeded, whatever languages were named. It reads nothing but the results of analyze and

@@ -100,6 +100,9 @@ const PIN_ADMITTED = '.github/workflows/engineer-review.yml';
 const AT_MAIN = new Set(['main', 'refs/heads/main']);
 export const SCAN_SHAPE = "${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}";
 const MAIN_REF = "github.ref == 'refs/heads/main'";
+// A job's if: that is the main guard exactly: MAIN_REF bare, as the judge reads an if: holding no
+// ${{ (expressionsUnder, bodiesIn), or MAIN_REF alone in one ${{ }} wrapping the whole value.
+const isMainGuard = (cond) => typeof cond === 'string' && (cond.trim() === MAIN_REF || /^\$\{\{\s*(.*?)\s*\}\}$/.exec(cond.trim())?.[1] === MAIN_REF);
 const LOCKED_SHAPE = /^\$\{\{\s*github\.ref\s*==\s*'refs\/heads\/main'\s*&&\s*vars\.(LOCKED_RUNNER_(\d+))\s*\|\|\s*'([^']+)'\s*\}\}$/;
 // The one shape dazzer-app's stricter class exempts beside the literal ubuntu-latest (decision
 // 190, as r-3.8 teaches the app's own holdsMoreThanTheCode): LOCKED_SHAPE, any LOCKED_RUNNER_<N>,
@@ -115,7 +118,14 @@ const PULL_REQUEST_EVENTS = Object.freeze(['pull_request', 'pull_request_target'
 // The CodeQL steps that run a scan (dazzer's SCANNER_ACTIONS, decision 91).
 const SCANNER_ACTIONS = /^github\/codeql-action\/(init|analyze)@/i;
 export const EFFECTS = Object.freeze(['stay', 'checks', 'canary']);
-const CANARY_HOME = Object.freeze({ repository: `${ORG}/runners`, workflow: 'canary.yml' });
+// The two canaries, both runners' (decisions 50, 223): canary.yml proves each set that is not
+// locked, and locked-canary.yml each locked set, before any setting names it. A canary file names
+// only its own kind of set, so a canary cannot carry a locked set past the locked canary's guards.
+const CANARY_REPOSITORY = `${ORG}/runners`;
+const CANARY_FILES = Object.freeze({ 'canary.yml': false, 'locked-canary.yml': true });
+const isCanaryHome = (repository, file) => repository === CANARY_REPOSITORY && Object.hasOwn(CANARY_FILES, file);
+const CANARY_WHERE = `${CANARY_REPOSITORY}'s ${Object.keys(CANARY_FILES).map((f) => `.github/workflows/${f}`).join(' and ')}`;
+const isLockedSet = (label) => OUR_MACHINE.exec(String(label))?.[1] === 'locked';
 
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const show = (v) => JSON.stringify(v);
@@ -1142,14 +1152,14 @@ export function checkKept(kept) {
     if (!REPOSITORY.test(String(e.repository))) problems.push(`kept.json's ${label} names no dazzer-io repository`);
     if (!WORKFLOW_FILE.test(String(e.workflow))) problems.push(`kept.json's ${label} names no workflow file directly in .github/workflows`);
     if (!EFFECTS.includes(e.effect)) problems.push(`kept.json's ${label} has ${e.effect === undefined ? 'no effect' : `the effect ${show(e.effect)}, an unknown one`}: each entry has exactly one of ${EFFECTS.join(', ')}, so one entry never exempts a job both from reading its setting and from the write ban`);
-    if (e.effect === 'canary' && (e.repository !== CANARY_HOME.repository || e.workflow !== CANARY_HOME.workflow)) problems.push(`kept.json's ${label} has the effect canary, which only ${CANARY_HOME.repository}'s .github/workflows/${CANARY_HOME.workflow} may take, so no other repository can pin one of our sets and skip the setting the watcher empties`);
+    if (e.effect === 'canary' && !isCanaryHome(e.repository, e.workflow)) problems.push(`kept.json's ${label} has the effect canary, which only ${CANARY_WHERE} may take, so no other repository can pin one of our sets and skip the setting the watcher empties`);
     if (whole) {
       if (!Array.isArray(e.jobs) || !e.jobs.length || !e.jobs.every(nonEmpty) || new Set(e.jobs).size !== e.jobs.length) problems.push(`kept.json's ${label} lists its jobs as no list of distinct job ids`);
-      if (e.effect === 'checks') problems.push(`kept.json's ${label} names a whole file with the effect checks: a whole-file entry is for a file whose every job stays (or runners' canary.yml), and a checks entry names its job`);
+      if (e.effect === 'checks') problems.push(`kept.json's ${label} names a whole file with the effect checks: a whole-file entry is for a file whose every job stays (or one of runners' two canaries), and a checks entry names its job`);
     } else {
       if (!nonEmpty(e.job)) problems.push(`kept.json's ${label} names no job`);
       if (!nonEmpty(e.name)) problems.push(`kept.json's ${label} carries no name, the name GitHub's jobs API shows for it`);
-      if (e.effect === 'canary') problems.push(`kept.json's ${label} is a job entry with the effect canary: canary.yml's jobs are named per run from a matrix, so its entry names the whole file`);
+      if (e.effect === 'canary') problems.push(`kept.json's ${label} is a job entry with the effect canary: a canary's jobs are named per run from a matrix, so its entry names the whole file`);
       if ('writes' in e && (e.effect !== 'checks' || !Array.isArray(e.writes) || !e.writes.length || !e.writes.every((s) => SCOPES.includes(s)))) problems.push(`kept.json's ${label} names writes ${show(e.writes)}: only a checks entry names writes, each a permission scope`);
       if (e.effect === 'stay' && nonEmpty(e.name) && e.name.includes('${{')) problems.push(`kept.json's ${label} carries the name ${show(e.name)}, which holds an expression: a stay entry carries the name GitHub shows, a fixed string`);
     }
@@ -1593,12 +1603,19 @@ function judgeStrict({ job, text, no, call, theCall }) {
   if (checkouts(job).some((c) => !keepsNone(c))) no(`${who}, and checks out without persist-credentials: false, so it keeps a git credential.`);
 }
 
-// runners' canary.yml (effect canary): started by workflow_dispatch alone, under top permissions
-// exactly contents: read, no job-level permission and no secret, on a matrix value every one of
-// whose values names one of our own sets literally, since the canary proves each set before any
-// setting names it.
+// runners' canary.yml and locked-canary.yml (effect canary): started by workflow_dispatch alone,
+// under top permissions exactly contents: read, no job-level permission and no secret, on a matrix
+// value every one of whose values names one of our own sets literally, since a canary proves each
+// set before any setting names it. locked-canary.yml names the locked sets alone and canary.yml
+// none of them (decision 223).
 function judgeCanary({ repository, file, js, job, triggers, secretReads, no, noAt, routes, w, id }) {
-  if (repository !== CANARY_HOME.repository || file !== CANARY_HOME.workflow) { no(`is kept by a canary entry, which only ${CANARY_HOME.repository}'s ${CANARY_HOME.workflow} may hold.`); return; }
+  if (!isCanaryHome(repository, file)) { no(`is kept by a canary entry, which only ${CANARY_WHERE} may hold.`); return; }
+  const locked = CANARY_FILES[file];
+  // The locked canary runs only from main, as every other route to a locked set is held to main;
+  // canary.yml is run by hand from any branch (decision 50) and carries no such guard.
+  if (locked && !isMainGuard(job.if)) no(`is a canary job of locked-canary.yml whose if: is ${job.if === undefined ? 'none' : show(job.if)}, not exactly ${MAIN_REF}: a dispatch from any other branch would put that branch's code on the locked sets (decision 223).`);
+  // Why a label of ours is not this canary's to name, or null when it is.
+  const notItsSet = (v) => (locked ? (isLockedSet(v) ? null : 'not one of the locked sets (dazzer-locked-<N>-core), which alone locked-canary.yml names') : isLockedSet(v) ? 'a locked set, which only locked-canary.yml may name' : null);
   if (!(triggers.length === 1 && triggers[0] === 'workflow_dispatch')) no(`is a canary job of a workflow started by ${triggers.join(', ')}, not by workflow_dispatch alone: the canary is run by hand (decision 50).`);
   const p = js.permissions;
   if (!(isObj(p) && Object.keys(p).length === 1 && p.contents === 'read')) no(`is a canary job of a workflow whose top grants ${show(p)}, not exactly contents: read.`);
@@ -1608,13 +1625,17 @@ function judgeCanary({ repository, file, js, job, triggers, secretReads, no, noA
   const literal = typeof runsOn === 'string' && !runsOn.includes('${{') ? runsOn.trim() : null;
   if (literal !== null) {
     if (!OUR_MACHINE.test(literal)) noAt(`is a canary job on '${literal}', not one of our own sets.`);
+    else if (notItsSet(literal)) noAt(`is a canary job on '${literal}', ${notItsSet(literal)}.`);
     return;
   }
   const m = typeof runsOn === 'string' ? /^\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}$/.exec(runsOn.trim()) : null;
   if (!m) { noAt(`is a canary job whose runs-on, ${show(runsOn)}, is not one matrix value.`); return; }
   const got = routes.matrixValues(m[1], job);
   if (!got || got.unread || got.sources.length || !got.values.length) { noAt(`is a canary job whose matrix.${m[1]} is not a list of our own sets written literally.`); return; }
-  for (const v of got.values) if (!OUR_MACHINE.test(String(v))) noAt(`is a canary job whose matrix.${m[1]} takes ${show(v)}, not one of our own sets.`);
+  for (const v of got.values) {
+    if (!OUR_MACHINE.test(String(v))) noAt(`is a canary job whose matrix.${m[1]} takes ${show(v)}, not one of our own sets.`);
+    else if (notItsSet(v)) noAt(`is a canary job whose matrix.${m[1]} takes ${show(v)}, ${notItsSet(v)}.`);
+  }
 }
 
 // A job that calls a reusable workflow (decision 171): only a shared workflow of dazzer-io/.github

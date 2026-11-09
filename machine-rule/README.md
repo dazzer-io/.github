@@ -50,9 +50,12 @@ its origin does not say so, or GitHub could not be asked about a commit.
 - **The ruleset `main-spelling-refused`** (`main-spelling.json`) refuses the creation of a branch
   spelled main in other letters in dazzer, dazzer-app and runners, the repositories the locked
   runner group `google-locked` admits (decisions 188, 192; r-3.45). runners is admitted for one
-  workflow alone, `locked-canary.yml`, dispatched by hand and run from main alone on the locked
-  machines, and the group's admission at main may match `refs/heads/main` without regard to case,
-  so a branch named `MAIN` there must never be created either. It names the three by name, with
+  workflow alone, `locked-canary.yml`, dispatched by hand: `google-locked` admits it to the locked
+  machines at `refs/heads/main` alone, and it is held to main only within the existing-branch
+  bound, since a creation rule never touches a branch that is already there (Why
+  `main-spelling-refused` comes first, below). The group's admission may match `refs/heads/main`
+  without regard to case, so a branch named `MAIN` there must never be created either. It names
+  the three by name, with
   `protected: true` so none can be renamed out of it, is `active`, names no
   bypass actor, and holds one rule, `creation`: only someone with bypass permission may create a
   branch it matches, and it names no one. Its refs are `refs/heads/M[Aa][Ii][Nn]`,
@@ -94,18 +97,21 @@ its origin does not say so, or GitHub could not be asked about a commit.
   without regard to case (its expressions page: "GitHub ignores case when comparing strings"), so
   the guard `github.ref == 'refs/heads/main'` is true on a branch named `MAIN`. A creation rule
   never touches a branch that is already there, and the four patterns name ASCII letters alone,
-  so the locked shape below is held to main only in dazzer and dazzer-app, once
-  `main-spelling-refused` is live and the locked machines' switch-on finds no other spelling of
-  main there, non-ASCII ones included. That read is runners' `switch-on --locked` gate (r-2.3),
-  the one place a `LOCKED_` setting is written, which keeps every `LOCKED_` setting empty until
-  then; this command reads no branch. In runners too, a creation rule never touches a branch that
-  is already there, so runners' locked canary is held to main only once runners' own reads find
-  no branch spelled main in other letters there, ASCII or not: runners' routine settings apply
-  refuses to write `google-locked`'s repository list while any repository it admits is not under
-  a live `main-spelling-refused` creation rule or holds a branch spelled main in other letters,
-  ASCII or not, and its `switch-on --locked` reads the same before the locked settings are
-  written (runners pull request 41). This command reads neither. Holding a locked set to main in
-  any repository `google-locked` does not admit is other work, outside these rulesets.
+  so the locked shape below, the guarded `LOCKED_` setting, reaches dazzer and dazzer-app alone,
+  and is held to main there only once `main-spelling-refused` is live and the locked machines'
+  switch-on finds no other spelling of main there, non-ASCII ones included. That read is
+  runners' `switch-on --locked` gate (r-2.3), the one place a `LOCKED_` setting is written, which
+  keeps every `LOCKED_` setting empty until then; this command reads no branch. runners' locked
+  canary reads no `LOCKED_` setting: it names its sets literally, and the runner group admits it
+  to them. In runners too, a creation rule never touches a branch that is already there, so
+  runners' locked canary is held to main only once runners' own reads find no branch spelled
+  main in other letters there, ASCII or not: runners' routine settings apply refuses to write
+  `google-locked`'s repository list while any repository it admits is not under a live
+  `main-spelling-refused` creation rule or holds a branch spelled main in other letters, ASCII or
+  not, and its `switch-on --locked` reads the same before the locked settings are written
+  (runners pull request 41). This command reads neither. So runners' apply never writes a
+  `google-locked` repository list naming a repository `main-spelling-refused` does not cover; a
+  change made by hand in GitHub's settings is read by neither.
 - **`apply-ruleset.mjs`** is the one command that writes these three rulesets. With no flag it
   reads each live ruleset and says, for each, how it differs from its file and exactly what
   `--apply` would do with it, closing on that list: each ruleset it would create, update or

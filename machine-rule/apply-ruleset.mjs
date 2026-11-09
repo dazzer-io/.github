@@ -113,8 +113,10 @@ export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID } = {}) {
 export const MAIN_SPELLING_NAME = 'main-spelling-refused';
 export const CODEQL_COMPLETE_NAME = 'codeql-complete-required';
 // main-spelling-refused reaches every repository the locked runner group google-locked admits:
-// dazzer and dazzer-app, and runners, admitted for its one dispatch-only locked-canary.yml, run
-// from main alone (r-3.45). codeql-complete-required stays in dazzer and dazzer-app alone.
+// dazzer and dazzer-app, and runners, whose one dispatch-only locked-canary.yml the group admits at
+// refs/heads/main alone; held to main only within the existing-branch bound, since a creation rule
+// never touches a branch that is already there (r-3.45). codeql-complete-required stays in dazzer
+// and dazzer-app alone.
 export const MAIN_SPELLING_REPOSITORIES = ['dazzer', 'dazzer-app', 'runners'];
 export const CODEQL_REPOSITORIES = ['dazzer', 'dazzer-app'];
 export const CODEQL_CONTEXT = 'codeql / CodeQL complete';

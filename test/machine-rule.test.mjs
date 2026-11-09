@@ -938,7 +938,7 @@ test('machine-rule.yml runs the judge, then a pinned actionlint and zizmor, on t
     [runs.includes('node .machine-rule/machine-rule/judge.mjs --repository "$REPOSITORY" --visibility "$VISIBILITY" .change'), 'the judge run over the change'],
     [steps.some((s) => s.env?.ACTIONLINT_VERSION === '1.7.12' && /^[0-9a-f]{64}$/.test(s.env?.ACTIONLINT_SHA256 ?? '')) && runs.includes('sha256sum -c -') && runs.includes('-shellcheck= -pyflakes='), 'actionlint 1.7.12 checked by its SHA-256, shellcheck and pyflakes off'],
     [runs.indexOf('judge.mjs') < runs.indexOf('actionlint'), 'the judge before actionlint'],
-    [steps.some((s) => s.env?.ZIZMOR_VERSION === '1.31.1' && /^[0-9a-f]{64}$/.test(s.env?.ZIZMOR_SHA256 ?? '')) && runs.includes('--offline --no-progress --no-exit-codes --no-ignores --config ../.machine-rule/machine-rule/zizmor.yml') && runs.includes('select(.ident == "unpinned-uses")'), 'zizmor 1.31.1 checked by its SHA-256, offline, honouring no ignore comment, refusing an action not pinned by commit'],
+    [steps.some((s) => s.env?.ZIZMOR_VERSION === '1.31.1' && /^[0-9a-f]{64}$/.test(s.env?.ZIZMOR_SHA256 ?? '')) && runs.includes('--offline --no-progress --no-exit-codes --no-ignores --config ../.machine-rule/machine-rule/zizmor.yml --format json .github ') && runs.includes('select(.ident == "unpinned-uses")'), 'zizmor 1.31.1 checked by its SHA-256, offline, honouring no ignore comment, refusing an action not pinned by commit'],
   ];
   const misses = checks.filter(([ok]) => !ok).map(([, what]) => `Could not find machine-rule.yml holding ${what}`);
   assert.ok(!misses.length, misses.join('\n'));

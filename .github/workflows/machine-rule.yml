@@ -20,8 +20,8 @@
 # judge alone rules where our names may stand: it admits them literally in runners' canary alone
 # (decision 50). So the second drops actionlint's unknown-label error for exactly a name judge.mjs's
 # OUR_MACHINE matches, and any other label actionlint does not know is still reported (decision 198).
-# zizmor is pinned and checked the same way, run offline, honouring no ignore comment, by the policy
-# in machine-rule/zizmor.yml: it refuses only an action not pinned by commit (the organisation's own
+# zizmor is pinned and checked the same way, reads .github offline, honouring no ignore comment, by
+# machine-rule/zizmor.yml: it refuses only an action not pinned by commit (the organisation's own
 # workflows may be called on a branch), and counts every other finding without refusing it.
 name: Machine rule
 
@@ -114,7 +114,7 @@ jobs:
           curl -fsSL --retry 5 --retry-all-errors -o "$archive" "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
           echo "${ZIZMOR_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "$archive" -C "$RUNNER_TEMP" zizmor
-          "$RUNNER_TEMP/zizmor" --offline --no-progress --no-exit-codes --no-ignores --config ../.machine-rule/machine-rule/zizmor.yml --format json . > "$RUNNER_TEMP/zizmor.json"
+          "$RUNNER_TEMP/zizmor" --offline --no-progress --no-exit-codes --no-ignores --config ../.machine-rule/machine-rule/zizmor.yml --format json .github > "$RUNNER_TEMP/zizmor.json"
           jq -r '.[] | select(.ident == "unpinned-uses") | .locations[0] | "::error file=\(.symbolic.key.Local.verbatim_path | ltrimstr("./")),line=\(.concrete.location.start_point.row + 1),title=Machine rule::an action used by tag or branch: pin it by its commit, its version in a comment"' "$RUNNER_TEMP/zizmor.json" | tee "$RUNNER_TEMP/unpinned"
           echo "Machine rule: zizmor read $(jq length "$RUNNER_TEMP/zizmor.json") finding(s) and refuses only an action not pinned by commit"
           [ ! -s "$RUNNER_TEMP/unpinned" ]

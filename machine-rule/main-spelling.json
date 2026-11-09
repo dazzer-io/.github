@@ -14,7 +14,7 @@
       "exclude": []
     },
     "repository_name": {
-      "include": ["dazzer", "dazzer-app"],
+      "include": ["dazzer", "dazzer-app", "runners"],
       "exclude": [],
       "protected": true
     }

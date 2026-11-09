@@ -2,8 +2,9 @@
 // machine-rule/apply-ruleset.mjs (decisions 121, 177, 192, 210): the organisation ruleset
 // machine-rule-required runs .github/workflows/machine-rule.yml, read from dazzer-io/.github by its
 // repository id at refs/heads/main, on the default branch of every repository; main-spelling-refused
-// restricts the creation of the fifteen other spellings of main in dazzer and dazzer-app; and
-// codeql-complete-required requires codeql / CodeQL complete from GitHub Actions there.
+// restricts the creation of the fifteen other spellings of main in dazzer, dazzer-app and runners,
+// the repositories the locked runner group google-locked admits; and codeql-complete-required
+// requires codeql / CodeQL complete from GitHub Actions in dazzer and dazzer-app alone.
 // codeql-complete-required is written active, so it blocks, and a file written as evaluate is refused
 // (r-3.27); machine-rule-required stays in evaluate, watching, until r-3.37 reads every repository and
 // direct pushes to a default branch. Each file is checked by its own check, each
@@ -49,7 +50,11 @@ const CONTEXT = 'codeql / CodeQL complete';
 // GitHub Actions' integration id, as every codeql / CodeQL complete on dazzer's and dazzer-app's
 // pull requests carries it (decision 192) and as their main-protection rulesets name it.
 const ACTIONS = 15368;
-const REPOSITORIES = ['dazzer', 'dazzer-app'];
+// main-spelling-refused reaches every repository the locked runner group google-locked admits:
+// dazzer and dazzer-app, and runners for its locked canary (r-3.45); codeql-complete-required stays
+// in dazzer and dazzer-app alone.
+const SPELLING_REPOSITORIES = ['dazzer', 'dazzer-app', 'runners'];
+const CODEQL_REPOSITORIES = ['dazzer', 'dazzer-app'];
 // The four patterns decision 192 names, in its words.
 const PATTERNS = ['refs/heads/M[Aa][Ii][Nn]', 'refs/heads/mA[Ii][Nn]', 'refs/heads/maI[Nn]', 'refs/heads/maiN'];
 // The sixteen spellings of main, each letter in either case, main itself first.
@@ -410,9 +415,9 @@ test('the read-back counts a repository condition GitHub reads as protected: fal
 });
 
 // ================================================================ the two rules on main (decisions 188, 192, 195, 210)
-// main-spelling-refused restricts creating a branch spelled main in other letters in dazzer and
-// dazzer-app, and codeql-complete-required, written active, reads the shared scan's codeql /
-// CodeQL complete from GitHub Actions there before a merge. Both are kept as files beside
+// main-spelling-refused restricts creating a branch spelled main in other letters in dazzer,
+// dazzer-app and runners, and codeql-complete-required, written active, reads the shared scan's
+// codeql / CodeQL complete from GitHub Actions in dazzer and dazzer-app before a merge. Both are kept as files beside
 // ruleset.json and written by the same --apply. GitHub's rulesets pages name fnmatch with
 // File::FNM_PATHNAME and say nothing of case, so the patterns hold either way among the sixteen
 // ASCII spellings: matched case-sensitively they take the fifteen other spellings and never main;
@@ -425,16 +430,17 @@ const asRegExp = (p, flags = '') => new RegExp(`^${p.replace(/\[([^\]]*)\]|([^[]
 // How many names a pattern of literals and bracket classes of single letters names.
 const sizeOf = (p) => (p.match(/\[[^\]]*\]/g) ?? []).reduce((n, cls) => n * new Set(cls.slice(1, -1)).size, 1);
 
-test('main-spelling.json is main-spelling-refused: branches, active, no bypass, dazzer and dazzer-app by name, the four patterns with no exclude, one creation rule', () => {
+test('main-spelling.json is main-spelling-refused: branches, active, no bypass, dazzer, dazzer-app and runners by name, the four patterns with no exclude, one creation rule', () => {
   needKept();
   const r = spellingFile();
   assert.deepEqual(A.checkMainSpelling(r), [], `Could not find machine-rule/main-spelling.json passing checkMainSpelling: ${JSON.stringify(A.checkMainSpelling(r))}`);
+  assert.ok((r.conditions?.repository_name?.include ?? []).includes('runners'), `Could not find runners in main-spelling-refused's repositories, though the locked runner group admits runners' locked canary: ${JSON.stringify(r.conditions?.repository_name)}`);
   assert.deepEqual(r, {
     name: SPELLING,
     target: 'branch',
     enforcement: 'active',
     bypass_actors: [],
-    conditions: { ref_name: { include: PATTERNS, exclude: [] }, repository_name: { include: REPOSITORIES, exclude: [], protected: true } },
+    conditions: { ref_name: { include: PATTERNS, exclude: [] }, repository_name: { include: SPELLING_REPOSITORIES, exclude: [], protected: true } },
     rules: [{ type: 'creation' }],
   }, `Could not find main-spelling.json holding exactly decision 192's ruleset: ${JSON.stringify(r)}`);
 });
@@ -510,13 +516,14 @@ test('checkMainSpelling refuses a bypass, another repository, an exclude, a rule
   const cases = [
     ['a bypass actor', (r) => { r.bypass_actors = [{ actor_id: 1, actor_type: 'OrganizationAdmin', bypass_mode: 'always' }]; }, /names bypass actors/],
     ['a bypass for a pull request alone', (r) => { r.bypass_actors = [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'pull_request' }]; }, /names bypass actors/],
-    ['another repository in place of one', (r) => { r.conditions.repository_name.include = ['dazzer', 'made-up-tools']; }, /not dazzer and dazzer-app by name/],
-    ['a third repository', (r) => { r.conditions.repository_name.include.push('made-up-tools'); }, /not dazzer and dazzer-app by name/],
-    ['every repository', (r) => { r.conditions.repository_name.include = ['~ALL']; }, /not dazzer and dazzer-app by name/],
-    ['a repository pattern', (r) => { r.conditions.repository_name.include = ['dazzer*']; }, /not dazzer and dazzer-app by name/],
-    ['one repository alone', (r) => { r.conditions.repository_name.include = ['dazzer']; }, /not dazzer and dazzer-app by name/],
-    ['a repository excluded', (r) => { r.conditions.repository_name.exclude = ['dazzer-app']; }, /repository condition excludes/],
-    ['renaming left open', (r) => { r.conditions.repository_name.protected = false; }, /protected: true/],
+    ['another repository in place of one', (r) => { r.conditions.repository_name.include = ['dazzer', 'dazzer-app', 'made-up-tools']; }, /not dazzer, dazzer-app and runners by name/],
+    ['runners left out', (r) => { r.conditions.repository_name.include = ['dazzer', 'dazzer-app']; }, /not dazzer, dazzer-app and runners by name/],
+    ['a fourth repository', (r) => { r.conditions.repository_name.include.push('made-up-tools'); }, /not dazzer, dazzer-app and runners by name/],
+    ['every repository', (r) => { r.conditions.repository_name.include = ['~ALL']; }, /not dazzer, dazzer-app and runners by name/],
+    ['a repository pattern', (r) => { r.conditions.repository_name.include = ['dazzer*', 'runners']; }, /not dazzer, dazzer-app and runners by name/],
+    ['one repository alone', (r) => { r.conditions.repository_name.include = ['runners']; }, /not dazzer, dazzer-app and runners by name/],
+    ['a repository excluded', (r) => { r.conditions.repository_name.exclude = ['runners']; }, /repository condition excludes/],
+    ['renaming left open', (r) => { r.conditions.repository_name.protected = false; }, /not protected: true, so renaming dazzer, dazzer-app or runners/],
     ['an exclude', (r) => { r.conditions.ref_name.exclude = ['refs/heads/MAIN']; }, /ref condition excludes \["refs\/heads\/MAIN"\]/],
     ['no ref condition', (r) => { delete r.conditions.ref_name; }, /no ref condition/],
     ['a property condition beside them', (r) => { r.conditions.repository_property = { include: [], exclude: [] }; }, /holds the condition repository_property/],
@@ -537,7 +544,7 @@ test('checkMainSpelling refuses a bypass, another repository, an exclude, a rule
     ['a tag target', (r) => { r.target = 'tag'; }, /its target is "tag", not branch/],
     ['a null pattern', (r) => { inc(r).push(null); }, /the pattern null is no pattern/],
     ['a null rule', (r) => { r.rules = [null]; }, /a rule of type undefined, not creation/],
-    ['a null repository condition', (r) => { r.conditions.repository_name = null; }, /not dazzer and dazzer-app by name/],
+    ['a null repository condition', (r) => { r.conditions.repository_name = null; }, /not dazzer, dazzer-app and runners by name/],
     ['null conditions', (r) => { r.conditions = null; }, /no ref condition/],
   ];
   const misses = refusalsMissed('checkMainSpelling', base, cases);
@@ -557,7 +564,7 @@ test('codeql-complete.json is codeql-complete-required: branches, active, no byp
     target: 'branch',
     enforcement: 'active',
     bypass_actors: [],
-    conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] }, repository_name: { include: REPOSITORIES, exclude: [], protected: true } },
+    conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] }, repository_name: { include: CODEQL_REPOSITORIES, exclude: [], protected: true } },
     rules: [{ type: 'required_status_checks', parameters: { do_not_enforce_on_create: true, required_status_checks: [{ context: CONTEXT, integration_id: ACTIONS }], strict_required_status_checks_policy: false } }],
   }, `Could not find codeql-complete.json holding exactly decisions 192's and 210's ruleset: ${JSON.stringify(r)}`);
 });
@@ -578,8 +585,9 @@ test('checkCodeqlComplete accepts evaluate or active and nothing else, and refus
     ['enforced on create', (r) => { p(r).do_not_enforce_on_create = false; }, /enforced on create/],
     ['the strict policy', (r) => { p(r).strict_required_status_checks_policy = true; }, /strict policy is true, not false/],
     ['another repository', (r) => { r.conditions.repository_name.include = ['dazzer', 'made-up-tools']; }, /not dazzer and dazzer-app by name/],
+    ['runners beside them', (r) => { r.conditions.repository_name.include.push('runners'); }, /includes \["dazzer","dazzer-app","runners"\], not dazzer and dazzer-app by name/],
     ['a repository excluded', (r) => { r.conditions.repository_name.exclude = ['dazzer']; }, /repository condition excludes/],
-    ['renaming left open', (r) => { delete r.conditions.repository_name.protected; }, /protected: true/],
+    ['renaming left open', (r) => { delete r.conditions.repository_name.protected; }, /not protected: true, so renaming dazzer or dazzer-app/],
     ['a ref beyond the default branch', (r) => { r.conditions.ref_name.include.push('refs/heads/made-up'); }, /not the default branch alone/],
     ['a ref exclude', (r) => { r.conditions.ref_name.exclude = ['refs/heads/main']; }, /not the default branch alone/],
     ['a rule of another type', (r) => { r.rules = [{ type: 'creation' }]; }, /a rule of type "creation", not required_status_checks/],
@@ -868,7 +876,15 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
     // D212: a write gh gets no answer to is that ruleset's alone, and the ids a write and its read-back go to.
     'a write GitHub refuses with a 4xx', 'a write gh gets no answer to or GitHub answers with a 5xx, said as one that may have landed', "a created one by the id in GitHub's answer to its creation", 'an update goes to the id the list names',
     'Its two ignores are narrow',
+    // main-spelling-refused reaches runners too, for its locked canary, and the canary's main guard
+    // is not the protection by itself (r-3.45).
+    'refuses the creation of a branch spelled main in other letters in dazzer, dazzer-app and runners, the repositories the locked runner group `google-locked` admits',
+    "runners is admitted for one workflow alone, `locked-canary.yml`, dispatched by hand and run from main alone on the locked machines",
+    '`codeql-complete-required` stays in dazzer and dazzer-app alone',
+    "A dispatch runs the branch's own copy of the file, so the main guard is not the protection by itself",
+    "the runner group's selected-workflow admission at `refs/heads/main`, with `main-spelling-refused` in each repository it admits, is",
   ]) if (!plain.includes(words)) misses.push(`Could not find machine-rule/README.md saying ${JSON.stringify(words)}`);
+  for (const words of ['so a dispatch from another branch runs nothing on the locked sets', 'It names the two by name']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: a dispatch runs its branch's own copy, and main-spelling-refused names three repositories (r-3.45)`);
   // Every sentence saying main-spelling-refused is live bounds the claim to the two repositories and
   // to the locked switch-on finding no other spelling there, non-ASCII ones included (decision 210).
   for (const s of plain.split(/(?<=\.) /)) if (s.includes('`main-spelling-refused` is live') && !(s.includes('dazzer and dazzer-app') && s.includes("the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included"))) misses.push(`Could not find this sentence of machine-rule/README.md bounded to dazzer and dazzer-app, with the locked switch-on finding no other spelling of main there, non-ASCII ones included: ${s}`);

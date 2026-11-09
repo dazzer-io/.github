@@ -63,9 +63,9 @@
 // read-only scan job runs on ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }} exactly and holds no
 // secret; a write-token job names a literal GitHub label), refuses a spelling another YAML parser
 // could read another way, and test/machine-rule.test.mjs runs it over this repository's workflow
-// folder. The reader below is a plain one: it reads the plain YAML this file is written in into
-// keys and lists, refuses a line it does not read as a key or a list item, and refuses a key
-// written twice in any mapping. The kept cases at the end plant into the real file's text at least
+// folder. This test reads the file with the yaml package's parseDocument, its failsafe schema
+// reading every value as the text written, and refuses a file yaml finds a fault in (a key written
+// twice in one mapping, a quote never closed) in yaml's words. The kept cases at the end plant into the real file's text at least
 // one fault for every refusal judgeShared makes, each named for the part it plants into, and each
 // must be refused with that refusal's words.
 import { test } from 'node:test';
@@ -75,6 +75,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { LineCounter, parseDocument, visit } from 'yaml';
 
 const FILE = fileURLToPath(new URL('../.github/workflows/codeql.yml', import.meta.url));
 const WHERE = '.github/workflows/codeql.yml';
@@ -95,44 +96,43 @@ const SARIF = '${{ runner.temp }}/codeql-sarif';
 const ALLOWED = ['actions', 'javascript-typescript', 'python'];
 // Languages and spellings the guard must refuse, beside every one it takes.
 const OTHERS = ['go', 'csharp', 'java-kotlin', 'swift', 'c-cpp', 'ruby', 'rust', 'Python', 'python ', ' actions', 'actions|python', '*', ''];
-// The guard's script as the reader reads a block (each line trimmed).
+// The guard's script as GitHub reads its | block.
 const GUARD = [
   'case "$LANGUAGE" in',
-  'actions | javascript-typescript | python) ;;',
-  '*)',
-  'echo "::error::This scan takes only actions, javascript-typescript and python (decision 133)."',
-  'exit 1',
-  ';;',
+  '  actions | javascript-typescript | python) ;;',
+  '  *)',
+  '    echo "::error::This scan takes only actions, javascript-typescript and python (decision 133)."',
+  '    exit 1',
+  '    ;;',
   'esac',
+  '',
 ].join('\n');
 // What the guard does with `language`: its exit status under bash, as GitHub runs a run: step.
 const guardStatus = (script, language) => spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script], {
   env: { PATH: process.env.PATH, LANGUAGE: language }, stdio: 'ignore',
 }).status;
 
-// The final job's script (decision 135), as the reader reads a | block, and what it does with the
+// The final job's script (decision 135), as GitHub reads its | block, and what it does with the
 // two jobs' results: its exit status under bash.
 const COMPLETE = [
   'if [ "$ANALYZE" = success ] && [ "$UPLOAD" = success ]; then',
-  'echo "Every language was analysed and uploaded."',
-  'exit 0',
+  '  echo "Every language was analysed and uploaded."',
+  '  exit 0',
   'fi',
   'echo "::error::The scan is not complete: analysis $ANALYZE, upload $UPLOAD."',
   'exit 1',
+  '',
 ].join('\n');
 const RESULTS_OF_A_JOB = ['success', 'failure', 'cancelled', 'skipped', ''];
 const completeStatus = (script, analyze, upload) => spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script], {
   env: { PATH: process.env.PATH, ANALYZE: analyze, UPLOAD: upload }, stdio: 'ignore',
 }).status;
-// The header of the run: line of the step named `name`, as written: a script is a literal | block,
+// The header of the run: value of the step named `name`, as written: a script is a literal | block,
 // so a folded > block, which GitHub joins into one line, is refused by its header too.
-function runHeaderOf(lines, name) {
-  const at = lines.findIndex((l) => l.trim() === `- name: ${name}`);
-  if (at < 0) return null;
-  for (let k = at + 1; k < lines.length && lines[k].trim() !== '' && !lines[k].trim().startsWith('- '); k++) {
-    if (/^ +run:/.test(lines[k])) return lines[k].trim();
-  }
-  return null;
+function runHeaderOf(doc, text, name) {
+  let run = null;
+  visit(doc, { Map(_, m) { if (m.get('name') === name) run = m.get('run', true) ?? null; } });
+  return run ? `run: ${text.slice(run.range[0]).split('\n')[0].trim()}` : null;
 }
 const GUARD_NAME = 'Refuse a language this scan does not take';
 const COMPLETE_NAME = 'Refuse unless every analysis and every upload succeeded';
@@ -163,8 +163,7 @@ const PACK_LINES = [
   'dataExtensions: [models/*.json]',
 ];
 const MODEL_LINE = `{"extensions": [{"addsTo": {"pack": "${PACK_TARGET}", "extensible": "${TRUSTED_LIST}"}, "data": ${JSON.stringify(TRUSTED_ROWS)}}]}`;
-// The step's script as the reader reads a | block (each line trimmed); its lines sit at one indent
-// in the file, so this is the script GitHub runs.
+// The step's script as GitHub reads its | block, every line at the block's one indent.
 const TRUST = [
   `pack="$HOME/${PACK_DIR}"`,
   'rm -rf "$pack"',
@@ -175,6 +174,7 @@ const TRUST = [
   'cat > "$pack/models/trusted-publishers.model.json" <<\'MODEL\'',
   MODEL_LINE,
   'MODEL',
+  '',
 ].join('\n');
 // The options the analyze step hands CodeQL's database run-queries, by language, by their exact
 // text, as CODEQL_ACTION_EXTRA_OPTIONS gives them; the action reads the value with yaml.load
@@ -225,18 +225,6 @@ function forLanguage(expr, language) {
 // which the action reads as no options (src/util.ts:76-81); a value holding no ${{ }} is itself;
 // an expression as forLanguage reads it.
 const envFor = (value, language) => (value === undefined ? '' : typeof value === 'string' && !value.includes('${{') ? value : forLanguage(value, language));
-// The body lines of the run: block of the step named `name`, as written in the file.
-function runBodyOf(lines, name) {
-  const at = lines.findIndex((l) => l.trim() === `- name: ${name}`);
-  if (at < 0) return null;
-  let k = at + 1;
-  while (k < lines.length && lines[k].trim() !== '' && !/^ +run:/.test(lines[k])) k++;
-  if (k >= lines.length || !/^ +run:/.test(lines[k])) return null;
-  const header = lines[k].match(/^ */)[0].length;
-  const body = [];
-  for (k++; k < lines.length && lines[k].trim() !== '' && lines[k].match(/^ */)[0].length > header; k++) body.push(lines[k]);
-  return body;
-}
 // Every file under `dir`, by its path from there.
 function filesUnder(dir) {
   return fs.readdirSync(dir, { recursive: true, withFileTypes: true })
@@ -265,115 +253,25 @@ function runTrust(script) {
   }
 }
 
-// ---- THE READER: the plain subset into objects and lists ----
-const isBlank = (l) => /^\s*(#.*)?$/.test(l);
-const indentOf = (l) => l.match(/^ */)[0].length;
-const KEY = /^(['"]?)([A-Za-z_][A-Za-z0-9_-]*)\1:(?: +(.*))?$/;
-const ITEM = /^-( +|$)/;
-
-// A value on its line; `at` names the line for a refusal of a quote not closed on it.
-function scalar(raw, at) {
-  const s = raw.trim();
-  const unclosed = (kind) => { throw new Error(`Could not find a reading of ${WHERE}: line ${at} holds a ${kind}-quoted value not closed on its line`); };
-  if (s.startsWith("'")) return (s.match(/^'((?:[^']|'')*)'/) ?? unclosed('single'))[1].replaceAll("''", "'");
-  if (s.startsWith('"')) return (s.match(/^"([^"]*)"/) ?? unclosed('double'))[1];
-  if (s.startsWith('{}')) return {};
-  if (s.startsWith('[')) return s.slice(1, s.indexOf(']')).split(',').map((x) => scalar(x, at)).filter((x) => x !== '');
-  const k = s.search(/ #/);
-  return (k < 0 ? s : s.slice(0, k)).trimEnd();
-}
-
-// A > block's body folded as YAML folds it: lines at the body's own indent join with one space; a
-// blank line, or a line indented further, keeps its line break.
-function fold(raw) {
-  const base = Math.min(...raw.filter((l) => !/^ *$/.test(l)).map(indentOf));
-  let out = '';
-  let prev = null;
-  for (const l of raw) {
-    if (/^ *$/.test(l)) { out += '\n'; prev = 'blank'; continue; }
-    const more = indentOf(l) > base;
-    const t = l.slice(base);
-    if (prev === null) out += t;
-    else if (prev === 'text' && !more) out += ` ${t}`;
-    else out += (prev === 'blank' ? '' : '\n') + t;
-    prev = more ? 'more' : 'text';
-  }
-  return out.trim();
-}
-
-function parse(text) {
-  const lines = text.split('\n').map((l) => l.replace(/\r$/, ''));
-  const original = [...lines];
-  // The lines of a | or > block's body, by line number: GitHub evaluates an expression on each,
-  // one starting with # included, so they are read as text, never as comments.
-  const blockLines = new Set();
-  let i = 0;
-  const skip = () => { while (i < lines.length && isBlank(lines[i])) i++; };
-  const fail = (why) => { throw new Error(`Could not find a reading of ${WHERE}: line ${i + 1} ${why}`); };
-
-  function node(minIndent) {
-    skip();
-    if (i >= lines.length) return null;
-    const n = indentOf(lines[i]);
-    if (n < minIndent) return null;
-    return ITEM.test(lines[i].slice(n)) ? list(n) : map(n);
-  }
-  function valueAfter(rest, n, at) {
-    const v = (rest ?? '').trim();
-    if (v === '' || v.startsWith('#')) {
-      skip();
-      if (i >= lines.length) return null;
-      const next = indentOf(lines[i]);
-      if (next > n || (next === n && ITEM.test(lines[i].slice(n)))) return node(next);
-      return null;
-    }
-    if (/^[|>][+-]?( *| +#.*)$/.test(v)) {
-      const raw = [];
-      while (i < lines.length && (/^ *$/.test(lines[i]) || indentOf(lines[i]) > n)) { blockLines.add(i + 1); raw.push(lines[i++]); }
-      // A | body is its lines, read here each trimmed; a > body is folded as YAML folds it, so this
-      // test reads the words GitHub reads.
-      return v[0] === '>' ? fold(raw) : raw.map((l) => l.trim()).join('\n').trim();
-    }
-    return scalar(v, at);
-  }
-  function map(n) {
-    const out = {};
-    for (;;) {
-      skip();
-      if (i >= lines.length) break;
-      const l = lines[i];
-      if (indentOf(l) !== n || ITEM.test(l.slice(n))) break;
-      const m = l.slice(n).match(KEY);
-      if (!m) fail(`reads ${l.trim()}, which is not a key line`);
-      if (Object.hasOwn(out, m[2])) fail(`writes ${m[2]} a second time in one mapping`);
-      i++;
-      out[m[2]] = valueAfter(m[3], n, i);
-    }
-    return out;
-  }
-  function list(n) {
-    const out = [];
-    for (;;) {
-      skip();
-      if (i >= lines.length) break;
-      const l = lines[i];
-      if (indentOf(l) !== n || !ITEM.test(l.slice(n))) break;
-      const dash = l.slice(n).match(ITEM)[0].length;
-      const body = l.slice(n + dash);
-      if (KEY.test(body)) {
-        lines[i] = ' '.repeat(n + dash) + body;
-        out.push(map(n + dash));
-      } else {
-        i++;
-        out.push(scalar(body, i));
-      }
-    }
-    return out;
-  }
-  const top = map(0);
-  skip();
-  if (i < lines.length) fail(`reads ${lines[i].trim()}, which no key above holds`);
-  return { top, lines: original, blockLines };
+// ---- THE READER: the yaml package's parseDocument, every value read as the text written ----
+// The file, and every line GitHub reads by its number: the line as written and each key or value
+// on it, with that value's source on the line (a block's every line, a # line in it included; a
+// comment never).
+function read(text) {
+  const counter = new LineCounter();
+  const doc = parseDocument(text, { schema: 'failsafe', lineCounter: counter });
+  if (doc.errors.length) throw new Error(`Could not find a reading of ${WHERE}: ${doc.errors[0].message.split('\n')[0].replace(/:$/, '')}`);
+  const file = text.split('\n');
+  const live = new Map();
+  visit(doc, { Scalar(_, node) {
+    const first = counter.linePos(node.range[0]).line;
+    text.slice(node.range[0], node.range[1]).split('\n').forEach((src, k) => {
+      const n = first + k;
+      if (!live.has(n)) live.set(n, { n, line: file[n - 1].trim(), parts: [] });
+      live.get(n).parts.push({ node, src });
+    });
+  } });
+  return { doc, top: doc.toJS(), live: [...live.values()].sort((a, b) => a.n - b.n) };
 }
 
 // ---- THE RULES ----
@@ -398,28 +296,27 @@ const ALL_SUCCEEDED = "${{ needs.analyze.result == 'success' }}";
 function judgeShared(text) {
   const refusals = [];
   const no = (what, why) => refusals.push(`Could not find ${what} in the shared scan ${WHERE}: ${why}.`);
-  let read;
-  try { read = parse(text); } catch (e) { return [e.message]; }
-  const { top, lines, blockLines } = read;
+  let doc, top, live;
+  try { ({ doc, top, live } = read(text)); } catch (e) { return [e.message]; }
 
-  // No secret, declared or read; one setting, SCAN_RUNNER_2, on the analysis job's machine line.
-  // A block's body is read whole, its # lines included.
-  const live = lines.map((l, n) => [l, n + 1]).filter(([l, n]) => !isBlank(l) || (l.trim() !== '' && blockLines.has(n)));
-  for (const [l, n] of live) {
-    if (A_SECRET.test(l)) no('a scan free of secrets', `line ${n} reads ${l.trim()}, and the shared scan declares no secret and reads none, so a caller never hands one to it`);
+  // No secret, declared or read; one setting, SCAN_RUNNER_2, as the analysis job's machine. A
+  // block's body is read whole, its # lines included.
+  for (const { n, line, parts } of live) {
+    if (parts.some((p) => A_SECRET.test(p.src))) no('a scan free of secrets', `line ${n} reads ${line}, and the shared scan declares no secret and reads none, so a caller never hands one to it`);
   }
-  for (const [l, n] of live.filter(([l]) => A_SETTING.test(l))) {
-    if (l.trim() !== `runs-on: ${SCAN}`) no('SCAN_RUNNER_2 as the only setting it reads', `line ${n} reads ${l.trim()}, and the shared scan reads no setting but SCAN_RUNNER_2, written ${SCAN} as the analysis job's machine`);
+  const machine = doc.getIn(['jobs', 'analyze', 'runs-on'], true);
+  for (const { n, line, parts } of live) {
+    if (parts.some((p) => A_SETTING.test(p.src) && !(p.node === machine && machine.value === SCAN))) no('SCAN_RUNNER_2 as the only setting it reads', `line ${n} reads ${line}, and the shared scan reads no setting but SCAN_RUNNER_2, written ${SCAN} as the analysis job's machine`);
   }
   // No backslash inside a double-quoted value, where YAML decodes it as an escape (so a secret or a
   // setting could be spelled past the two rules above); a block's body is literal, and not read so.
-  for (const [l, n] of live.filter(([, n]) => !blockLines.has(n))) {
-    if (/"[^"]*\\/.test(l)) no('a double-quoted value without a backslash', `line ${n} reads ${l.trim()}, and YAML decodes a backslash in a double-quoted value as an escape, so the words this test reads are not the words GitHub reads`);
+  for (const { n, line, parts } of live) {
+    if (parts.some((p) => p.node.type === 'QUOTE_DOUBLE' && p.src.includes('\\'))) no('a double-quoted value without a backslash', `line ${n} reads ${line}, and YAML decodes a backslash in a double-quoted value as an escape, so the words this test reads are not the words GitHub reads`);
   }
 
   // The top, whole.
   if (!exactly(top, TOP_KEYS)) no(`the workflow's top holding exactly ${TOP_KEYS.join(', ')}`, `it holds ${show(keysOf(top))}, and a key at the top (an env:, defaults: or concurrency:) reaches every job`);
-  const on = top.on ?? top.true;
+  const on = top.on;
   if (!same(keysOf(on), ['workflow_call'])) {
     no('workflow_call as the only trigger', `it is started by ${show(on)}, and the shared scan runs only when a repository calls it, so its own repository's changes never start it and a change can never run its own copy`);
   }
@@ -456,7 +353,7 @@ function judgeShared(text) {
   if (!exactly(guard, GUARD_KEYS) || !same(guard?.env, { LANGUAGE }) || guard?.run !== GUARD) {
     no('the language guard as the analysis\'s first step, exactly as this test holds it (name, env LANGUAGE and its case script)', `the first step reads ${show(guard)}`);
   }
-  const guardHeader = runHeaderOf(lines, GUARD_NAME);
+  const guardHeader = runHeaderOf(doc, text, GUARD_NAME);
   if (guardHeader !== 'run: |') no('the language guard\'s script written as a literal block (run: |)', `its run: line reads ${show(guardHeader)}, and a folded > block is joined into one line, which turns exit 1 into words echo prints`);
   const takes = [...ALLOWED, ...OTHERS].filter((l) => typeof guard?.run === 'string' && guardStatus(guard.run, l) === 0);
   if (!same(takes, ALLOWED)) no(`a guard taking exactly ${ALLOWED.join(', ')}`, `run under bash, the analysis's first step takes ${show(takes)}, and any other language joins by its own decision (decision 133), since build mode none for it may read the change's build files`);
@@ -470,10 +367,9 @@ function judgeShared(text) {
   if (!same(trustRuns, ['actions'])) no('the trusted-publisher step running for actions and no other language', `its if: runs it for ${show(trustRuns)}, and the pack extends ${PACK_TARGET} alone`);
   if (typeof trust?.run !== 'string' || /\$\{\{|token/i.test(trust.run)) no('the trusted-publisher step\'s script free of ${{ }} and of any token', `it reads ${show(trust?.run)}, and the step holds no token and reads nothing the change wrote`);
   if (trust?.run !== TRUST) no('the trusted-publisher step\'s script exactly as this test holds it', `it reads ${show(trust?.run)}`);
-  const trustHeader = runHeaderOf(lines, TRUST_NAME);
+  const trustHeader = runHeaderOf(doc, text, TRUST_NAME);
   if (trustHeader !== 'run: |') no('the trusted-publisher step\'s script written as a literal block (run: |)', `its run: line reads ${show(trustHeader)}`);
-  const trustBody = runBodyOf(lines, TRUST_NAME) ?? [];
-  const indents = [...new Set(trustBody.map(indentOf))];
+  const indents = [...new Set(String(trust?.run ?? '').split('\n').filter(Boolean).map((l) => l.match(/^ */)[0].length))];
   if (indents.length !== 1) no('the trusted-publisher step\'s script with every line at one indent', `its lines sit at ${show(indents)} spaces, and GitHub keeps a line's extra indent, so the files it writes would not be the files this test reads`);
   if (typeof trust?.run === 'string') {
     const ran = runTrust(trust.run);
@@ -497,8 +393,8 @@ function judgeShared(text) {
   }
   // No --additional-packs anywhere: the action passes its own for a pull request's diff-informed
   // analysis (src/analyze.ts:468-469), and the scan leaves that option to it (decision 166).
-  for (const [l, n] of live) {
-    if (/additional-packs/.test(l)) no('a scan free of --additional-packs', `line ${n} reads ${l.trim()}, and the action passes its own --additional-packs for a pull request's diff-informed analysis`);
+  for (const { n, line, parts } of live) {
+    if (parts.some((p) => /additional-packs/.test(p.src))) no('a scan free of --additional-packs', `line ${n} reads ${line}, and the action passes its own --additional-packs for a pull request's diff-informed analysis`);
   }
 
   const want = ['actions/checkout', `${CODEQL}init`, `${CODEQL}analyze`, 'actions/upload-artifact'];
@@ -568,7 +464,7 @@ function judgeShared(text) {
   }
   if (typeof done?.run !== 'string' || done.run.includes('${{')) no('the final job\'s script free of ${{ }}', `it reads ${show(done?.run)}, and the results reach it through env, never written into the script`);
   if (done?.run !== COMPLETE) no('the final job\'s script exactly as this test holds it', `it reads ${show(done?.run)}`);
-  const doneHeader = runHeaderOf(lines, COMPLETE_NAME);
+  const doneHeader = runHeaderOf(doc, text, COMPLETE_NAME);
   if (doneHeader !== 'run: |') no('the final job\'s script written as a literal block (run: |)', `its run: line reads ${show(doneHeader)}`);
   const passes = RESULTS_OF_A_JOB.flatMap((x) => RESULTS_OF_A_JOB.map((y) => [x, y])).filter(([x, y]) => typeof done?.run === 'string' && completeStatus(done.run, x, y) === 0);
   if (!same(passes, [['success', 'success']])) no('a final job passing only when the analysis and the upload both succeeded', `run under bash, it passes on ${show(passes)}`);
@@ -745,8 +641,8 @@ plant('the final job reading another result', inJob('complete', '          UPLOA
 plant('the final job passing on a skipped upload', inJob('complete', '          if [ "$ANALYZE" = success ] && [ "$UPLOAD" = success ]; then', '          if [ "$ANALYZE" = success ] && { [ "$UPLOAD" = success ] || [ "$UPLOAD" = skipped ]; }; then'), [/the final job's script exactly as this test holds it/, /a final job passing only when the analysis and the upload both succeeded in the shared scan \S+: run under bash, it passes on \[\["success","success"\],\["success","skipped"\]\]/]);
 plant('${{ }} in the final job\'s script', inJob('complete', '          if [ "$ANALYZE" = success ] && [ "$UPLOAD" = success ]; then', '          if [ "${{ needs.analyze.result }}" = success ] && [ "$UPLOAD" = success ]; then'), /the final job's script free of \$\{\{ \}\}/);
 plant('the final job\'s header as |-', inJob('complete', '        run: |', '        run: |-'), /the final job's script written as a literal block \(run: \|\) in the shared scan \S+: its run: line reads run: \|-/);
-// The fourth note: a double-quoted value not closed on its line is refused by name.
-plant('a double-quoted value not closed on its line', (t) => t.replace('      - name: Check out the code\n', '      - name: "Check out the code\n'), /Could not find a reading of \S+: line \d+ holds a double-quoted value not closed on its line/);
+// The fourth note: a double-quoted value never closed is refused by name.
+plant('a double-quoted value not closed on its line', (t) => t.replace('      - name: Check out the code\n', '      - name: "Check out the code\n'), /Could not find a reading of \S+: Missing closing "quote at line \d+/);
 
 // The trusted publishers (decisions 165 and 166): the step, its pack and the option naming it.
 const TRUST_HEAD = `      - name: ${TRUST_NAME}`;
@@ -832,4 +728,4 @@ plant('another variable beside the option', (t) => t.replace(`${EXTRA_LINE}\n`, 
 plant('the option on init in place of analyze', (t) => t.replace(`        env:\n${EXTRA_LINE}\n`, '').replace('      - name: Initialize CodeQL\n', `      - name: Initialize CodeQL\n        env:\n${EXTRA_LINE}\n`), [/step github\/codeql-action\/init of the analysis holding exactly name, uses, with/, /the analyze step's env exactly/]);
 
 // The reader.
-plant('a key written twice', (t) => t.replace('          upload: never\n', '          upload: never\n          upload: always\n'), /a second time in one mapping/);
+plant('a key written twice', (t) => t.replace('          upload: never\n', '          upload: never\n          upload: always\n'), /Could not find a reading of \S+: Map keys must be unique at line \d+/);

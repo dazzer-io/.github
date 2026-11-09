@@ -100,6 +100,9 @@ const PIN_ADMITTED = '.github/workflows/engineer-review.yml';
 const AT_MAIN = new Set(['main', 'refs/heads/main']);
 export const SCAN_SHAPE = "${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}";
 const MAIN_REF = "github.ref == 'refs/heads/main'";
+// A job's if: that is the main guard exactly: MAIN_REF bare, as the judge reads an if: holding no
+// ${{ (expressionsUnder, bodiesIn), or MAIN_REF alone in one ${{ }} wrapping the whole value.
+const isMainGuard = (cond) => typeof cond === 'string' && (cond.trim() === MAIN_REF || /^\$\{\{\s*(.*?)\s*\}\}$/.exec(cond.trim())?.[1] === MAIN_REF);
 const LOCKED_SHAPE = /^\$\{\{\s*github\.ref\s*==\s*'refs\/heads\/main'\s*&&\s*vars\.(LOCKED_RUNNER_(\d+))\s*\|\|\s*'([^']+)'\s*\}\}$/;
 // The one shape dazzer-app's stricter class exempts beside the literal ubuntu-latest (decision
 // 190, as r-3.8 teaches the app's own holdsMoreThanTheCode): LOCKED_SHAPE, any LOCKED_RUNNER_<N>,
@@ -1608,6 +1611,9 @@ function judgeStrict({ job, text, no, call, theCall }) {
 function judgeCanary({ repository, file, js, job, triggers, secretReads, no, noAt, routes, w, id }) {
   if (!isCanaryHome(repository, file)) { no(`is kept by a canary entry, which only ${CANARY_WHERE} may hold.`); return; }
   const locked = CANARY_FILES[file];
+  // The locked canary runs only from main, as every other route to a locked set is held to main;
+  // canary.yml is run by hand from any branch (decision 50) and carries no such guard.
+  if (locked && !isMainGuard(job.if)) no(`is a canary job of locked-canary.yml whose if: is ${job.if === undefined ? 'none' : show(job.if)}, not exactly ${MAIN_REF}: a dispatch from any other branch would put that branch's code on the locked sets (decision 223).`);
   // Why a label of ours is not this canary's to name, or null when it is.
   const notItsSet = (v) => (locked ? (isLockedSet(v) ? null : 'not one of the locked sets (dazzer-locked-<N>-core), which alone locked-canary.yml names') : isLockedSet(v) ? 'a locked set, which only locked-canary.yml may name' : null);
   if (!(triggers.length === 1 && triggers[0] === 'workflow_dispatch')) no(`is a canary job of a workflow started by ${triggers.join(', ')}, not by workflow_dispatch alone: the canary is run by hand (decision 50).`);

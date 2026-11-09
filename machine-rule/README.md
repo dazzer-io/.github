@@ -304,7 +304,12 @@ fails its check leaves the rule unread.
     permission of its own and no secret, on our own sets named literally (decision 50), since a
     canary proves a set before any setting names it. `locked-canary.yml` names the locked sets
     alone (`dazzer-locked-<N>-core`) and `canary.yml` only sets that are not locked, so no canary
-    carries a locked set past the locked canary's own guards (decision 223).
+    carries a locked set past the locked canary's own guards (decision 223). Each job of
+    `locked-canary.yml` must carry the main guard as its `if:`, exactly
+    `github.ref == 'refs/heads/main'` (bare, or alone in one `${{ }}`), and the judge refuses
+    one with no guard or a wider one, so a dispatch from another branch runs nothing on the locked
+    sets, as every other route to them is held to main. `canary.yml` is run by hand from any
+    branch and carries none.
 
   An entry is whole-file (`jobs`, every job id of its file, effect `stay` or `canary`) or one
   job (`job` and `name`). A stay entry carries the name GitHub shows, as the readings match it, a

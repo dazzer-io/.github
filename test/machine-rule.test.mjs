@@ -532,6 +532,8 @@ test('the canary effect: runners\' canary.yml and locked-canary.yml alone, by ha
     await c(() => mustRefuse('a canary matrix naming GitHub\'s machine', { 'canary.yml': canary('workflow_dispatch', READ, '', '[dazzer-checks-2-core, ubuntu-latest]') }, keptBy, { file: 'canary.yml', job: 'canary', says: /takes "ubuntu-latest", not one of our own sets/ }));
     await c(() => mustRefuse('our set named literally anywhere but the canary', { 'check.yml': canary() }, RUNNERS, { file: 'check.yml', job: 'scan', says: /names one of our own machines literally/ }));
     await c(() => mustRefuse('canary.yml naming a locked set', { 'canary.yml': canary('workflow_dispatch', READ, '', '[dazzer-checks-2-core, dazzer-locked-2-core]') }, keptBy, { file: 'canary.yml', job: 'canary', says: /takes "dazzer-locked-2-core", a locked set, which only locked-canary\.yml may name/ }));
+    await c(() => mustRefuse('canary.yml on a locked set named literally', { 'canary.yml': workflow('workflow_dispatch', READ, job('canary', 'dazzer-locked-2-core')) }, keptBy, { file: 'canary.yml', job: 'canary', says: /is a canary job on 'dazzer-locked-2-core', a locked set, which only locked-canary\.yml may name/ }));
+    await c(() => mustPass('canary.yml with no main guard, run by hand from any branch (decision 50)', { 'canary.yml': canary() }, keptBy));
   });
 });
 
@@ -539,10 +541,15 @@ test('the canary effect: runners\' canary.yml and locked-canary.yml alone, by ha
 test('the canary effect admits runners\' locked-canary.yml as written, on the locked sets alone (decision 223)', async () => {
   need();
   const RUNNERS = { repository: 'dazzer-io/runners', visibility: 'private' };
-  const locked = ({ on = 'workflow_dispatch', top = READ, values = '\n          - dazzer-locked-2-core\n          - dazzer-locked-8-core', runsOn = '@{{ matrix.set }}' } = {}) => workflow(on, top, `  locked:\n    name: locked canary on @{{ matrix.set }}\n    if: github.ref == 'refs/heads/main'\n    strategy:\n      fail-fast: false\n      matrix:\n        set:${values}\n    runs-on: ${runsOn}\n    timeout-minutes: 15\n${STEPS}`);
+  const locked = ({ on = 'workflow_dispatch', top = READ, values = '\n          - dazzer-locked-2-core\n          - dazzer-locked-8-core', runsOn = '@{{ matrix.set }}', guard = "github.ref == 'refs/heads/main'" } = {}) => workflow(on, top, `  locked:\n    name: locked canary on @{{ matrix.set }}\n${guard === null ? '' : `    if: ${guard}\n`}    strategy:\n      fail-fast: false\n      matrix:\n        set:${values}\n    runs-on: ${runsOn}\n    timeout-minutes: 15\n${STEPS}`);
   const keptBy = { ...RUNNERS, ...lists(), kept: { about: 'made up', entries: [{ repository: 'dazzer-io/runners', workflow: 'locked-canary.yml', jobs: ['locked'], effect: 'canary', reason: 'r', decision: 223, source: 's' }] } };
   await everyCase(async (c) => {
     await c(() => mustPass('the locked canary as written', { 'locked-canary.yml': locked() }, keptBy));
+    await c(() => mustPass('the locked canary with its main guard inside @{{ }}', { 'locked-canary.yml': locked({ guard: "@{{ github.ref == 'refs/heads/main' }}" }) }, keptBy));
+    await c(() => mustRefuse('a locked canary with no main guard', { 'locked-canary.yml': locked({ guard: null }) }, keptBy, { file: 'locked-canary.yml', job: 'locked', says: /is a canary job of locked-canary\.yml whose if: is none, not exactly github\.ref == 'refs\/heads\/main'/ }));
+    await c(() => mustRefuse('a locked canary whose guard is always()', { 'locked-canary.yml': locked({ guard: 'always()' }) }, keptBy, { file: 'locked-canary.yml', job: 'locked', says: /whose if: is "always\(\)", not exactly github\.ref == 'refs\/heads\/main'/ }));
+    await c(() => mustRefuse('a locked canary whose guard is widened', { 'locked-canary.yml': locked({ guard: "github.ref == 'refs/heads/main' || true" }) }, keptBy, { file: 'locked-canary.yml', job: 'locked', says: /whose if: is .*\|\| true", not exactly github\.ref == 'refs\/heads\/main'/ }));
+    await c(() => mustRefuse('a locked canary whose wrapped guard is widened', { 'locked-canary.yml': locked({ guard: "@{{ github.ref == 'refs/heads/main' }} || @{{ true }}" }) }, keptBy, { file: 'locked-canary.yml', job: 'locked', says: /not exactly github\.ref == 'refs\/heads\/main'/ }));
     await c(() => mustPass('the locked canary as written, under kept.json as it stands', { 'locked-canary.yml': locked() }, { ...RUNNERS, ...lists() }));
     await c(() => mustRefuse('a locked canary naming a checks set', { 'locked-canary.yml': locked({ values: ' [dazzer-locked-2-core, dazzer-checks-2-core]' }) }, keptBy, { file: 'locked-canary.yml', job: 'locked', says: /takes "dazzer-checks-2-core", not one of the locked sets/ }));
     await c(() => mustRefuse('a locked canary on a checks set named literally', { 'locked-canary.yml': locked({ runsOn: 'dazzer-checks-8-core' }) }, keptBy, { file: 'locked-canary.yml', job: 'locked', says: /is a canary job on 'dazzer-checks-8-core', not one of the locked sets/ }));

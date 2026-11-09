@@ -862,7 +862,7 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
     'refs/heads/M[Aa][Ii][Nn]', 'refs/heads/mA[Ii][Nn]', 'refs/heads/maI[Nn]', 'refs/heads/maiN', 'integration 15368', 'do_not_enforce_on_create',
     'without regard to case', "github.ref == 'refs/heads/main'", 'a branch named `MAIN`',
     "held to main only in dazzer and dazzer-app, once `main-spelling-refused` is live and the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included",
-    'keeps every `LOCKED_` setting empty until then', 'Holding it to main in any other repository is other work', 'this command reads no branch',
+    'keeps every `LOCKED_` setting empty until then', 'Holding a locked set to main in any repository `google-locked` does not admit is other work', 'this command reads no branch',
     '`machine-rule-required` still watches: it is written `evaluate` until r-3.37',
     '`codeql-complete-required` is required (blocking): it is written `active`',
     // The rule reaches direct pushes too, and its basis is a reading of pushes and check runs (review of a8bbdaa).
@@ -883,8 +883,16 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
     '`codeql-complete-required` stays in dazzer and dazzer-app alone',
     "A dispatch runs the branch's own copy of the file, so the main guard is not the protection by itself",
     "the runner group's selected-workflow admission at `refs/heads/main`, with `main-spelling-refused` in each repository it admits, is",
+    // runners is held to main within the same bound as dazzer and dazzer-app, and runners' own
+    // reads clear it (runners pull request 41; review of 4f57c6a).
+    'In runners too, a creation rule never touches a branch that is already there',
+    "runners' routine settings apply refuses to write `google-locked`'s repository list while any repository it admits is not under a live `main-spelling-refused` creation rule or holds a branch spelled main in other letters, ASCII or not",
+    'its `switch-on --locked` reads the same before the locked settings are written (runners pull request 41)',
   ]) if (!plain.includes(words)) misses.push(`Could not find machine-rule/README.md saying ${JSON.stringify(words)}`);
-  for (const words of ['so a dispatch from another branch runs nothing on the locked sets', 'It names the two by name']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: a dispatch runs its branch's own copy, and main-spelling-refused names three repositories (r-3.45)`);
+  for (const words of ['so a dispatch from another branch runs nothing on the locked sets', 'It names the two by name', 'Holding it to main in any other repository is other work', "held to main by the runner group's admission", '`main-spelling-refused` covers runners too']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: a dispatch runs its branch's own copy, main-spelling-refused names three repositories, and runners is held to main only within the existing-branch bound (r-3.45)`);
+  // Every sentence saying runners, or its runner group, holds to main carries the bound: a creation
+  // rule never touches a branch that is already there.
+  for (const s of plain.split(/(?<=\.) /)) if (/runner/.test(s) && /held to main|holds? (?:it|the locked sets) to main/.test(s) && !s.includes('never touches a branch that is already there')) misses.push(`Could not find this sentence of machine-rule/README.md bounded by a creation rule never touching a branch that is already there: ${s}`);
   // Every sentence saying main-spelling-refused is live bounds the claim to the two repositories and
   // to the locked switch-on finding no other spelling there, non-ASCII ones included (decision 210).
   for (const s of plain.split(/(?<=\.) /)) if (s.includes('`main-spelling-refused` is live') && !(s.includes('dazzer and dazzer-app') && s.includes("the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included"))) misses.push(`Could not find this sentence of machine-rule/README.md bounded to dazzer and dazzer-app, with the locked switch-on finding no other spelling of main there, non-ASCII ones included: ${s}`);

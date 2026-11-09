@@ -98,9 +98,14 @@ its origin does not say so, or GitHub could not be asked about a commit.
   `main-spelling-refused` is live and the locked machines' switch-on finds no other spelling of
   main there, non-ASCII ones included. That read is runners' `switch-on --locked` gate (r-2.3),
   the one place a `LOCKED_` setting is written, which keeps every `LOCKED_` setting empty until
-  then; this command reads no branch. Holding it to main in any other repository is other work,
-  outside these rulesets. `main-spelling-refused` reaches runners as well, for its locked canary
-  alone, held to main by the runner group's admission (`locked-canary.yml`, below).
+  then; this command reads no branch. In runners too, a creation rule never touches a branch that
+  is already there, so runners' locked canary is held to main only once runners' own reads find
+  no branch spelled main in other letters there, ASCII or not: runners' routine settings apply
+  refuses to write `google-locked`'s repository list while any repository it admits is not under
+  a live `main-spelling-refused` creation rule or holds a branch spelled main in other letters,
+  ASCII or not, and its `switch-on --locked` reads the same before the locked settings are
+  written (runners pull request 41). This command reads neither. Holding a locked set to main in
+  any repository `google-locked` does not admit is other work, outside these rulesets.
 - **`apply-ruleset.mjs`** is the one command that writes these three rulesets. With no flag it
   reads each live ruleset and says, for each, how it differs from its file and exactly what
   `--apply` would do with it, closing on that list: each ruleset it would create, update or
@@ -186,8 +191,10 @@ public one.
   machine>' }}`, and nowhere else (decisions 9, 23, 40); in dazzer and dazzer-app, the guard
   holds it to main alone once `main-spelling-refused` is live and the locked machines' switch-on
   finds no other spelling of main there, non-ASCII ones included (decisions 195, 210, above).
-  `main-spelling-refused` covers runners too, where the locked canary runs on the locked machines
-  (r-3.45, below). Unless kept.json keeps it on GitHub,
+  In runners, where the locked canary runs on the locked machines, `main-spelling-refused` refuses
+  the same creations, and since a creation rule never touches a branch that is already there, the
+  canary is held to main only once runners' own reads find no other spelling of main there, ASCII
+  or not (r-3.45, above and below). Unless kept.json keeps it on GitHub,
   such a workflow is refused when it is started:
   - by `pull_request_target` or `workflow_run`, where `github.ref` is the default branch
     whatever started the run;
@@ -321,8 +328,13 @@ fails its check leaves the rule unread.
     the runner group's selected-workflow admission at `refs/heads/main`, with
     `main-spelling-refused` in each repository it admits, is: the admission takes
     `locked-canary.yml` from main alone, and since it may match `refs/heads/main` without regard to
-    case, `main-spelling-refused` keeps a branch named `MAIN` from being created there (r-3.45).
-    `canary.yml` is run by hand from any branch and carries none.
+    case, `main-spelling-refused` keeps a branch named `MAIN` from being created there, though a
+    creation rule never touches a branch that is already there, so this holds only once runners'
+    own reads find none, ASCII or not (r-3.45): runners' routine settings apply refuses to write
+    `google-locked`'s repository list while any repository it admits is not under a live
+    `main-spelling-refused` creation rule or holds a branch spelled main in other letters, ASCII or
+    not, and its `switch-on --locked` reads the same before the locked settings are written
+    (runners pull request 41). `canary.yml` is run by hand from any branch and carries none.
 
   An entry is whole-file (`jobs`, every job id of its file, effect `stay` or `canary`) or one
   job (`job` and `name`). A stay entry carries the name GitHub shows, as the readings match it, a

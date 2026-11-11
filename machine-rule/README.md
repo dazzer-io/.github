@@ -38,15 +38,33 @@ its origin does not say so, or GitHub could not be asked about a commit.
   organisation's own workflows excepted, and counts its other findings without refusing them.
 - **The ruleset `machine-rule-required`** (`ruleset.json`) is a workflows rule. It runs that
   file, read from dazzer-io/.github by its repository id at `refs/heads/main`, on the default
-  branch of every repository, and not when a branch is created. `machine-rule-required` still
-  watches: it is written `evaluate` until r-3.37, so GitHub blocks nothing and records each merge
-  it would have refused. Its reach is every repository, public ones included, and direct pushes
-  to a default branch, wider than the pull requests read so far, so it is made active only once
-  r-3.37 reads all of that (decision 177). Every repository is `~ALL` with nothing excluded and
-  no `protected: true`: GitHub refuses that pairing with 422 ("Protected repository name
-  conditions cannot include `~ALL`"), and a renamed repository stays in `~ALL` anyway, so the
-  check refuses the pairing in GitHub's words, and the read-back counts a `protected` read back
-  as false the same as the file leaving it out (decision 187).
+  branch of every repository but the two below, public ones included, and not when a branch is
+  created. `machine-rule-required` is required (blocking): it is written `active` since r-3.37,
+  so GitHub blocks a merge into a default branch it covers until the workflow has passed. A pull
+  request whose machine rule check fails cannot merge into the default branch until a commit that
+  passes it is pushed to the pull request; the check's refusal names the file, line and job to
+  change. A direct push to a default branch it covers has not run the workflow, so it is taken to
+  be refused: GitHub's rule-suite listing recorded no evaluate result for `machine-rule-required`
+  on any push, so that was not read before it was made active. Before it was made active, on 11
+  Nov, `--readings` over every private, non-archived repository's default branch refused nothing,
+  and `--readings --only dazzer-plugin,.github`, the two public ones, refused nothing either;
+  every commit on a default branch since 8 Nov came through a merged pull request, but in the two
+  repositories below (decision 177).
+  It excludes exactly two repositories by name, each with its reason, held in one place,
+  `EXCLUDED_REPOSITORIES` in `apply-ruleset.mjs`:
+  - `dev-cycle`: its release door lands main as a fast-forward push after its own full check (machine rules 9).
+  - `dazzer-skills`: a mirror rewritten by a sync job, with no workflows to judge.
+
+  Its check admits exactly that list as the exclude, and refuses any other exclude, an include
+  narrower than `~ALL`, a bypass actor, and an enforcement other than `evaluate` or `active`; its
+  test holds the file to `active`. The way back: an organisation owner writes `evaluate` in
+  `ruleset.json` and runs `node machine-rule/apply-ruleset.mjs --apply`, or sets it in GitHub's
+  organisation settings; in `evaluate` GitHub blocks nothing and records each merge it would have
+  refused. Every repository is `~ALL` with no `protected: true`: GitHub refuses that pairing
+  with 422 ("Protected repository name conditions cannot include `~ALL`"), and a renamed
+  repository stays in `~ALL` anyway, so the check refuses the pairing in GitHub's words, and the
+  read-back counts a `protected` read back as false the same as the file leaving it out
+  (decision 187).
 - **The ruleset `main-spelling-refused`** (`main-spelling.json`) refuses the creation of a branch
   spelled main in other letters in dazzer, dazzer-app and runners, the repositories the locked
   runner group `google-locked` admits (decisions 188, 192; r-3.45). runners is admitted for one

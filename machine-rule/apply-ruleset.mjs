@@ -2,7 +2,9 @@
 // The organisation rulesets this repository keeps as files, each written by Ben's hand alone:
 //   machine-rule-required (machine-rule/ruleset.json): the workflows rule that runs
 //     .github/workflows/machine-rule.yml, read from dazzer-io/.github (named by its repository id)
-//     at refs/heads/main, on the default branch of every repository, not on create;
+//     at refs/heads/main, on the default branch of every repository but the two
+//     EXCLUDED_REPOSITORIES names, each with its reason, not on create, written active since r-3.37:
+//     GitHub blocks a merge until that workflow has passed;
 //   main-spelling-refused (machine-rule/main-spelling.json): in dazzer, dazzer-app and runners, the
 //     repositories the locked runner group google-locked admits (runners for its locked canary,
 //     r-3.45), creating a branch spelled main in other letters is refused, with no bypass
@@ -64,21 +66,48 @@ export const RULE_REF = 'refs/heads/main';
 export const SHARED_REPOSITORY_ID = 1433582766;
 // GitHub's own words when a repository name condition pairs protected: true with ~ALL (decision 187).
 export const GITHUB_ALL_REFUSAL = 'Protected repository name conditions cannot include `~ALL`';
+// The repositories machine-rule-required leaves out, each by name with its reason, held here alone
+// (r-3.37): its check admits exactly these as the exclude beside ~ALL, and refuses any other
+// exclude. A direct push to a default branch has not run the workflow, so an active workflows rule
+// is taken to refuse it; these two land their default branch by a direct push, by design.
+export const EXCLUDED_REPOSITORIES = [
+  { name: 'dev-cycle', reason: 'its release door lands main as a fast-forward push after its own full check (machine rules 9)' },
+  { name: 'dazzer-skills', reason: 'a mirror rewritten by a sync job, with no workflows to judge' },
+];
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-// Every way a ruleset differs from the one this repository keeps, each as a sentence.
-export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID } = {}) {
+// Every way a ruleset differs from the one this repository keeps, each as a sentence. excluded is
+// the list of repositories it leaves out, EXCLUDED_REPOSITORIES unless a test hands it another.
+export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID, excluded = EXCLUDED_REPOSITORIES } = {}) {
   const problems = [];
   if (!isObj(r)) return ['the ruleset is not an object'];
   if (r.name !== RULESET_NAME) problems.push(`it is named ${JSON.stringify(r.name)}, not ${RULESET_NAME}`);
   if (r.target !== 'branch') problems.push(`its target is ${JSON.stringify(r.target)}, not branch`);
+  // active blocks; evaluate is the way back an organisation owner may take, and the file is held
+  // to active by its test (r-3.37).
   if (!['evaluate', 'active'].includes(r.enforcement)) problems.push(`its enforcement is ${JSON.stringify(r.enforcement)}, neither evaluate nor active`);
   if (!Array.isArray(r.bypass_actors) || r.bypass_actors.length) problems.push('it names bypass actors, so someone could merge past the rule');
   const ref = r.conditions?.ref_name;
   if (!isObj(ref) || !same(ref.include, ['~DEFAULT_BRANCH']) || !same(ref.exclude ?? [], [])) problems.push(`its ref condition is ${JSON.stringify(ref)}, not the default branch alone (include ~DEFAULT_BRANCH, exclude nothing)`);
+  // The list of repositories it leaves out: each entry a name and a reason, no name twice.
+  const list = Array.isArray(excluded) ? excluded : [];
+  if (!Array.isArray(excluded)) problems.push(`the list of repositories it leaves out is ${JSON.stringify(excluded)}, no list`);
+  const seen = new Set();
+  for (const e of list) {
+    if (!isObj(e) || typeof e.name !== 'string' || !e.name.trim()) { problems.push(`the list of repositories it leaves out holds ${JSON.stringify(e)}, naming no repository`); continue; }
+    if (seen.has(e.name)) problems.push(`the list of repositories it leaves out names ${e.name} twice`);
+    seen.add(e.name);
+    if (typeof e.reason !== 'string' || !e.reason.trim()) problems.push(`the list of repositories it leaves out names ${e.name} with no reason, so nothing says why the rule does not reach it`);
+  }
+  const names = list.filter((e) => isObj(e) && typeof e.name === 'string').map((e) => e.name);
   const repo = r.conditions?.repository_name;
-  if (!isObj(repo) || !same(repo.include, ['~ALL']) || !same(repo.exclude ?? [], [])) problems.push(`its repository condition is ${JSON.stringify(repo)}, narrower than every repository (include ~ALL, exclude nothing)`);
+  if (!isObj(repo)) problems.push(`its repository condition is ${JSON.stringify(repo)}, narrower than every repository (include ~ALL)`);
+  else {
+    if (!same(repo.include, ['~ALL'])) problems.push(`its repository condition includes ${JSON.stringify(repo.include)}, narrower than every repository (include ~ALL)`);
+    const exclude = repo.exclude ?? [];
+    if (!Array.isArray(exclude) || !same([...exclude].sort(), [...names].sort())) problems.push(`its repository condition excludes ${JSON.stringify(repo.exclude)}, not exactly ${names.length ? inWords(names) : 'nothing'}, the repositories EXCLUDED_REPOSITORIES leaves out, each with its reason`);
+  }
   // protected blocks renaming the repositories a list of names targets; GitHub refuses it beside
   // ~ALL, as it refused Ben's --apply of 8 Nov, and a renamed repository stays in ~ALL anyway.
   if (isObj(repo) && repo.protected === true && Array.isArray(repo.include) && repo.include.includes('~ALL')) problems.push(`its repository condition sets protected: true beside include ~ALL, which GitHub refuses with 422: "${GITHUB_ALL_REFUSAL}" (decision 187)`);

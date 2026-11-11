@@ -6,8 +6,9 @@
 // the repositories the locked runner group google-locked admits; and codeql-complete-required
 // requires codeql / CodeQL complete from GitHub Actions in dazzer and dazzer-app alone.
 // codeql-complete-required is written active, so it blocks, and a file written as evaluate is refused
-// (r-3.27); machine-rule-required stays in evaluate, watching, until r-3.37 reads every repository and
-// direct pushes to a default branch. Each file is checked by its own check, each
+// (r-3.27); machine-rule-required is written active too, leaving out exactly the repositories
+// apply-ruleset.mjs's EXCLUDED_REPOSITORIES names, each with its reason (r-3.37). Each file is checked
+// by its own check, each
 // way it could be wrong red alone; the command's read, write and readings modes are run against a
 // fake GitHub that answers the organisation's rulesets a page at a time and dazzer-io/.github's id,
 // and nothing else, so each kept ruleset is seen standing alone, nothing here reaches the network,
@@ -86,11 +87,10 @@ const refusalsMissed = (check, base, cases) => {
   return misses;
 };
 
-test('ruleset.json is the rule\'s ruleset: machine-rule.yml of dazzer-io/.github at refs/heads/main, every repository\'s default branch, evaluate until r-3.37', () => {
+test('ruleset.json is the rule\'s ruleset: machine-rule.yml of dazzer-io/.github at refs/heads/main, the default branch of every repository but the named two', () => {
   need();
   const r = fileRuleset();
-  assert.deepEqual(A.checkRuleset(r), [], 'Could not find machine-rule/ruleset.json passing checkRuleset');
-  assert.equal(r.enforcement, 'evaluate', `Could not find machine-rule-required written as evaluate: it stays watching until r-3.37 reads every repository, public ones included, and direct pushes to a default branch, which its 21 passing pull requests do not (decision 177): ${JSON.stringify(r.enforcement)}`);
+  assert.deepEqual(A.checkRuleset(r), [], `Could not find machine-rule/ruleset.json passing checkRuleset: ${JSON.stringify(A.checkRuleset(r))}`);
   assert.equal(A.SHARED_REPOSITORY_ID, ID, 'Could not find dazzer-io/.github\'s repository id as GitHub gives it');
   const w = r.rules?.[0]?.parameters?.workflows?.[0];
   assert.deepEqual(w, { path: '.github/workflows/machine-rule.yml', ref: 'refs/heads/main', repository_id: ID }, `Could not find the workflows rule naming machine-rule.yml of dazzer-io/.github at refs/heads/main: ${JSON.stringify(w)}`);
@@ -111,7 +111,7 @@ test('checkRuleset refuses each way a ruleset could run another workflow, from e
     ['no ref', (r) => { delete wfOf(r).ref; }, /reads the workflow at undefined, not refs\/heads\/main/],
     ['a second workflow beside it', (r) => { r.rules[0].parameters.workflows.push({ path: '.github/workflows/made-up.yml', ref: 'refs/heads/main', repository_id: ID }); }, /names 2 workflows, not machine-rule\.yml alone/],
     ['a repository condition naming some repositories', (r) => { r.conditions.repository_name.include = ['dazzer', 'dazzer-app']; }, /narrower than every repository/],
-    ['a repository condition excluding one', (r) => { r.conditions.repository_name.exclude = ['made-up-tools']; }, /narrower than every repository/],
+    ['a repository condition excluding one', (r) => { r.conditions.repository_name.exclude = ['made-up-tools']; }, /excludes \["made-up-tools"\], not exactly dev-cycle and dazzer-skills/],
     ['no repository condition', (r) => { delete r.conditions.repository_name; }, /narrower than every repository/],
     ['a property condition in its place', (r) => { delete r.conditions.repository_name; r.conditions.repository_property = { include: [], exclude: [] }; }, /holds the condition repository_property/],
     ['a ref condition beyond the default branch', (r) => { r.conditions.ref_name.include = ['~DEFAULT_BRANCH', 'refs/heads/made-up']; }, /not the default branch alone/],
@@ -130,9 +130,105 @@ test('checkRuleset refuses each way a ruleset could run another workflow, from e
     ['null conditions', (r) => { r.conditions = null; }, /narrower than every repository/],
   ];
   const misses = refusalsMissed('checkRuleset', base, cases);
-  const active = clone(base);
-  active.enforcement = 'active';
-  if (A.checkRuleset(active).length) misses.push(`Could not find the same ruleset made active passing: ${JSON.stringify(A.checkRuleset(active))}`);
+  // evaluate is the way back an organisation owner may take (r-3.37).
+  const evaluate = clone(base);
+  evaluate.enforcement = 'evaluate';
+  if (A.checkRuleset(evaluate).length) misses.push(`Could not find the same ruleset made evaluate passing: ${JSON.stringify(A.checkRuleset(evaluate))}`);
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+// ================================================================ machine-rule-required made active (r-3.37)
+// The rule blocks: ruleset.json is written active. It reaches every repository (~ALL) but the two
+// apply-ruleset.mjs's EXCLUDED_REPOSITORIES names, each with its reason, the one place that list is
+// held: dev-cycle, whose release door lands main as a fast-forward push after its own full check
+// (machine rules 9), and dazzer-skills, a mirror a sync job rewrites, with no workflows to judge.
+const EXCLUDED = ['dev-cycle', 'dazzer-skills'];
+const needExcluded = () => {
+  need();
+  assert.ok(Array.isArray(A.EXCLUDED_REPOSITORIES), `Could not find apply-ruleset.mjs's EXCLUDED_REPOSITORIES, the one list of repositories machine-rule-required leaves out, each with its reason (r-3.37): ${JSON.stringify(A.EXCLUDED_REPOSITORIES)}`);
+};
+// ruleset.json with its repository condition excluding the named list, as the file is written.
+const withNamed = (exclude = EXCLUDED) => {
+  const r = clone(fileRuleset());
+  r.conditions.repository_name.exclude = [...exclude];
+  return r;
+};
+
+test('ruleset.json is written active, so machine-rule-required blocks a merge the machine rule refuses (r-3.37)', () => {
+  need();
+  const r = fileRuleset();
+  assert.equal(r.enforcement, 'active', `Could not find machine-rule-required written as active: written ${JSON.stringify(r.enforcement)}, GitHub blocks nothing and only records each merge it would have refused (r-3.37)`);
+});
+
+test('checkRuleset refuses an exclude other than exactly the named list, each red alone', () => {
+  needExcluded();
+  const cases = [
+    ['another repository excluded', (r) => { r.conditions.repository_name.exclude = ['made-up-tools']; }],
+    ['dev-cycle alone', (r) => { r.conditions.repository_name.exclude = ['dev-cycle']; }],
+    ['dazzer-skills alone', (r) => { r.conditions.repository_name.exclude = ['dazzer-skills']; }],
+    ['a third beside the two', (r) => { r.conditions.repository_name.exclude.push('made-up-tools'); }],
+    ['one of the two named twice', (r) => { r.conditions.repository_name.exclude = ['dev-cycle', 'dev-cycle']; }],
+    ['a pattern', (r) => { r.conditions.repository_name.exclude = ['dev-*', 'dazzer-skills']; }],
+    ['a name in another letter case', (r) => { r.conditions.repository_name.exclude = ['Dev-Cycle', 'dazzer-skills']; }],
+    ['nothing excluded', (r) => { r.conditions.repository_name.exclude = []; }],
+    ['an exclude that is no list', (r) => { r.conditions.repository_name.exclude = 'dev-cycle'; }],
+  ].map(([name, change]) => [name, change, /^its repository condition excludes .+, not exactly dev-cycle and dazzer-skills/]);
+  const misses = refusalsMissed('checkRuleset', withNamed(), cases);
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+test('checkRuleset refuses a list of left-out repositories with an entry missing its reason or its name', () => {
+  needExcluded();
+  const misses = [];
+  const cases = [
+    ['dev-cycle with its reason deleted', (l) => { delete l.find((e) => e.name === 'dev-cycle').reason; }, /names dev-cycle with no reason/],
+    ['dazzer-skills with an empty reason', (l) => { l.find((e) => e.name === 'dazzer-skills').reason = ''; }, /names dazzer-skills with no reason/],
+    ['dev-cycle with a reason of spaces', (l) => { l.find((e) => e.name === 'dev-cycle').reason = '   '; }, /names dev-cycle with no reason/],
+    ['dazzer-skills with a null reason', (l) => { l.find((e) => e.name === 'dazzer-skills').reason = null; }, /names dazzer-skills with no reason/],
+    ['an entry naming no repository', (l) => { l.push({ reason: 'made-up reason' }); }, /naming no repository/],
+    ['a name held twice', (l) => { l.push({ ...l[0] }); }, /names dev-cycle twice/],
+  ];
+  for (const [name, change, says] of cases) {
+    const list = clone(A.EXCLUDED_REPOSITORIES);
+    change(list);
+    let problems;
+    try { problems = A.checkRuleset(withNamed(), { excluded: list }); } catch (e) { misses.push(`Could not find checkRuleset returning a problem for ${name}: it threw ${e?.constructor?.name} ${e?.message}`); continue; }
+    if (!problems.some((p) => says.test(p))) misses.push(`Could not find checkRuleset refusing ${name}: ${JSON.stringify(problems)}`);
+  }
+  for (const e of A.EXCLUDED_REPOSITORIES) if (typeof e?.reason !== 'string' || !e.reason.trim()) misses.push(`Could not find a reason for ${JSON.stringify(e?.name)} in apply-ruleset.mjs's EXCLUDED_REPOSITORIES: ${JSON.stringify(e)}`);
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+test('checkRuleset refuses an include narrower than ~ALL, with the named list excluded, each red alone', () => {
+  needExcluded();
+  const cases = [
+    ['some repositories by name', (r) => { r.conditions.repository_name.include = ['dazzer', 'dazzer-app']; }],
+    ['~ALL beside a name', (r) => { r.conditions.repository_name.include = ['~ALL', 'dazzer']; }],
+    ['a pattern', (r) => { r.conditions.repository_name.include = ['dazzer*']; }],
+    ['~ALL in another letter case', (r) => { r.conditions.repository_name.include = ['~all']; }],
+    ['nothing included', (r) => { r.conditions.repository_name.include = []; }],
+    ['no include', (r) => { delete r.conditions.repository_name.include; }],
+  ].map(([name, change]) => [name, change, /^its repository condition includes .+, narrower than every repository \(include ~ALL\)/]);
+  const misses = refusalsMissed('checkRuleset', withNamed(), cases);
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+test('checkRuleset admits exactly the named list, in either order, in active and in evaluate, the way back, and ruleset.json excludes it', () => {
+  needExcluded();
+  const misses = [];
+  const names = A.EXCLUDED_REPOSITORIES.map((e) => e?.name);
+  if (JSON.stringify([...names].sort()) !== JSON.stringify([...EXCLUDED].sort())) misses.push(`Could not find EXCLUDED_REPOSITORIES naming dev-cycle and dazzer-skills alone: ${JSON.stringify(names)}`);
+  for (const order of [EXCLUDED, [...EXCLUDED].reverse()]) {
+    for (const enforcement of ['active', 'evaluate']) {
+      const r = withNamed(order);
+      r.enforcement = enforcement;
+      const problems = A.checkRuleset(r);
+      if (problems.length) misses.push(`Could not find ~ALL excluding ${order.join(' and ')}, in ${enforcement}, passing checkRuleset: ${JSON.stringify(problems)}`);
+    }
+  }
+  const repo = fileRuleset().conditions?.repository_name;
+  if (JSON.stringify(repo?.exclude) !== JSON.stringify(names)) misses.push(`Could not find ruleset.json excluding exactly the named list, in its order: ${JSON.stringify(repo)}`);
+  if (JSON.stringify(repo?.include) !== JSON.stringify(['~ALL'])) misses.push(`Could not find ruleset.json including ~ALL: ${JSON.stringify(repo)}`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 
@@ -252,7 +348,7 @@ test('the read: exit 0 when every live ruleset is its file\'s, 1 naming each fie
   const misses = [];
   const same = fakeGitHub({ rulesets: [...allThree(), { id: 8, name: 'made-up-other', rules: [] }] });
   const s = await run([], same);
-  if (s.code !== 0 || !/machine-rule-required \(7\) on dazzer-io is the file's version, enforcement evaluate/.test(s.all)) misses.push(`Could not find the matching ruleset read as the file's version, exit 0: ${s.code} ${s.all}`);
+  if (s.code !== 0 || !/machine-rule-required \(7\) on dazzer-io is the file's version, enforcement active/.test(s.all)) misses.push(`Could not find the matching ruleset read as the file's version, exit 0: ${s.code} ${s.all}`);
   for (const [name, id, r] of [[SPELLING, 10, spellingFile()], [CODEQL, 11, codeqlFile()]]) if (!s.all.includes(`${name} (${id}) on dazzer-io is the file's version, enforcement ${r.enforcement}`)) misses.push(`Could not find ${name} read as its file's version: ${s.all}`);
   const drifted = clone(file);
   drifted.rules[0].parameters.workflows[0].ref = 'refs/heads/made-up-branch';
@@ -358,13 +454,13 @@ test('--readings runs the judge over every private, non-archived repository GitH
 // conditions cannot include `~ALL`", since ruleset.json named every repository as ~ALL with
 // protected: true. protected blocks renaming the repositories a list of names targets; with ~ALL a
 // renamed repository stays included, so the file leaves it out, and GitHub reads it back as false.
-test('ruleset.json names every repository in a shape GitHub accepts: ~ALL, nothing excluded, no protected: true', () => {
+test('ruleset.json names every repository in a shape GitHub accepts: ~ALL, the named two excluded, no protected: true', () => {
   need();
   const r = fileRuleset();
   const repo = r.conditions?.repository_name;
   assert.deepEqual(A.checkRuleset(r), [], `Could not find machine-rule/ruleset.json passing checkRuleset: ${JSON.stringify(A.checkRuleset(r))}`);
   assert.deepEqual(repo?.include, ['~ALL'], `Could not find the repository condition including ~ALL: ${JSON.stringify(repo)}`);
-  assert.deepEqual(repo?.exclude, [], `Could not find the repository condition excluding nothing: ${JSON.stringify(repo)}`);
+  assert.deepEqual(repo?.exclude, ['dev-cycle', 'dazzer-skills'], `Could not find the repository condition excluding dev-cycle and dazzer-skills alone: ${JSON.stringify(repo)}`);
   assert.notEqual(repo?.protected, true, `Could not find the repository condition free of protected: true, which GitHub refuses beside ~ALL with 422 (decision 187): ${JSON.stringify(repo)}`);
 });
 
@@ -372,12 +468,12 @@ test('checkRuleset refuses protected: true beside ~ALL in GitHub\'s own words, a
   need();
   const misses = [];
   const bad = clone(fileRuleset());
-  bad.conditions.repository_name = { include: ['~ALL'], exclude: [], protected: true };
+  bad.conditions.repository_name = { include: ['~ALL'], exclude: [...EXCLUDED], protected: true };
   const problems = A.checkRuleset(bad);
   if (!problems.some((p) => p.includes(GITHUB_REFUSAL) && /protected: true/.test(p) && /422/.test(p))) misses.push(`Could not find checkRuleset refusing protected: true beside ~ALL, quoting GitHub's 422 "${GITHUB_REFUSAL}": ${JSON.stringify(problems)}`);
   for (const [name, protectedIs] of [['protected: false', false], ['protected left out', undefined]]) {
     const ok = clone(fileRuleset());
-    ok.conditions.repository_name = { include: ['~ALL'], exclude: [] };
+    ok.conditions.repository_name = { include: ['~ALL'], exclude: [...EXCLUDED] };
     if (protectedIs !== undefined) ok.conditions.repository_name.protected = protectedIs;
     if (A.checkRuleset(ok).length) misses.push(`Could not find ~ALL with ${name} passing checkRuleset: ${JSON.stringify(A.checkRuleset(ok))}`);
   }
@@ -392,7 +488,7 @@ test('the read-back counts a repository condition GitHub reads as protected: fal
   const misses = [];
   const file = clone(fileRuleset());
   delete file.conditions.repository_name.protected;
-  const live = readBack({ ...clone(file), id: 7, enforcement: 'evaluate' });
+  const live = readBack({ ...clone(file), id: 7 });
   if (live.conditions.repository_name.protected !== false) misses.push('Could not find the fake GitHub reading protected back as false');
   const left = A.diffRuleset(live, file);
   if (left.length) misses.push(`Could not find a live protected: false matching a file that leaves protected out: ${JSON.stringify(left)}`);
@@ -408,9 +504,9 @@ test('the read-back counts a repository condition GitHub reads as protected: fal
   // reading it back in its own shape, then the no-argument read.
   const gh = fakeGitHub({ rulesets: [{ id: 8, name: 'made-up-other', target: 'branch', enforcement: 'active', rules: [{ type: 'deletion' }] }] });
   const apply = await run(['--apply'], gh);
-  if (apply.code !== 0 || !/machine-rule-required \(\d+\) on dazzer-io now is the file's version, enforcement evaluate/.test(apply.all)) misses.push(`Could not find --apply of the shipped file accepted by GitHub and read back as the file's version, exit 0: ${apply.code} ${apply.all}`);
+  if (apply.code !== 0 || !/machine-rule-required \(\d+\) on dazzer-io now is the file's version, enforcement active/.test(apply.all)) misses.push(`Could not find --apply of the shipped file accepted by GitHub and read back as the file's version, exit 0: ${apply.code} ${apply.all}`);
   const after = await run([], gh);
-  if (after.code !== 0 || !/machine-rule-required \(\d+\) on dazzer-io is the file's version, enforcement evaluate/.test(after.all)) misses.push(`Could not find the read after --apply saying it matches, exit 0: ${after.code} ${after.all}`);
+  if (after.code !== 0 || !/machine-rule-required \(\d+\) on dazzer-io is the file's version, enforcement active/.test(after.all)) misses.push(`Could not find the read after --apply saying it matches, exit 0: ${after.code} ${after.all}`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 
@@ -853,7 +949,7 @@ test('without --apply, each of the three is said as its file\'s version, differi
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'s command, that each ruleset stands alone and what each exit code means, where the locked shape is held to main, that machine-rule-required watches until r-3.37, that codeql-complete-required is required (blocking) and the way back, and the lint step\'s two ignores', () => {
+test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'s command, that each ruleset stands alone and what each exit code means, where the locked shape is held to main, that machine-rule-required is required (blocking), the two repositories it leaves out with their reasons and the way back, that codeql-complete-required is required (blocking) and the way back, and the lint step\'s two ignores', () => {
   const md = readFileSync(join(ROOT, 'machine-rule/README.md'), 'utf8');
   const plain = md.replace(/\s+/g, ' ');
   const misses = [];
@@ -864,7 +960,14 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
     "the locked shape below, the guarded `LOCKED_` setting, reaches dazzer and dazzer-app alone, and is held to main there only once `main-spelling-refused` is live and the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included",
     "runners' locked canary reads no `LOCKED_` setting: it names its sets literally, and the runner group admits it to them",
     'keeps every `LOCKED_` setting empty until then', "So runners' apply never writes a `google-locked` repository list naming a repository `main-spelling-refused` does not cover", 'this command reads no branch',
-    '`machine-rule-required` still watches: it is written `evaluate` until r-3.37',
+    // machine-rule-required is active, leaving out two repositories by name, each with its reason (r-3.37).
+    '`machine-rule-required` is required (blocking): it is written `active` since r-3.37',
+    'A pull request whose machine rule check fails cannot merge into the default branch until a commit that passes it is pushed to the pull request',
+    'It excludes exactly two repositories by name, each with its reason, held in one place, `EXCLUDED_REPOSITORIES` in `apply-ruleset.mjs`',
+    '`dev-cycle`: its release door lands main as a fast-forward push after its own full check (machine rules 9)',
+    '`dazzer-skills`: a mirror rewritten by a sync job, with no workflows to judge',
+    'Its check admits exactly that list as the exclude, and refuses any other exclude, an include narrower than `~ALL`, a bypass actor, and an enforcement other than `evaluate` or `active`; its test holds the file to `active`',
+    'The way back: an organisation owner writes `evaluate` in `ruleset.json` and runs `node machine-rule/apply-ruleset.mjs --apply`, or sets it in GitHub\'s organisation settings',
     '`codeql-complete-required` is required (blocking): it is written `active`',
     // The rule reaches direct pushes too, and its basis is a reading of pushes and check runs (review of a8bbdaa).
     'A direct push to the default branch of dazzer or dazzer-app is refused unless its commit already passed `codeql / CodeQL complete`, the same as their own rulesets already require',
@@ -894,9 +997,11 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
   // Every sentence saying main-spelling-refused is live bounds the claim to the two repositories and
   // to the locked switch-on finding no other spelling there, non-ASCII ones included (decision 210).
   for (const s of plain.split(/(?<=\.) /)) if (s.includes('`main-spelling-refused` is live') && !(s.includes('dazzer and dazzer-app') && s.includes("the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included"))) misses.push(`Could not find this sentence of machine-rule/README.md bounded to dazzer and dazzer-app, with the locked switch-on finding no other spelling of main there, non-ASCII ones included: ${s}`);
-  // codeql-complete-required no longer watches (r-3.27), and machine-rule-required is not called required
-  // while it is written evaluate (review of dazzer-io/.github 27, finding 1).
-  for (const words of ['watches, in `evaluate`, until it is made active', '`machine-rule-required` is required (blocking)', 'passed on all 21 pull requests', 'read reporting on dazzer 1421 and 1407', 'sets a ruleset to `evaluate`']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: codeql-complete-required is required (blocking), machine-rule-required watches until r-3.37`);
+  // Neither ruleset watches any more: codeql-complete-required since r-3.27, machine-rule-required
+  // since r-3.37 (review of dazzer-io/.github 27, finding 1).
+  for (const words of ['watches, in `evaluate`, until it is made active', 'still watches', 'until r-3.37', 'nothing excluded and no `protected: true`', 'passed on all 21 pull requests', 'read reporting on dazzer 1421 and 1407', 'sets a ruleset to `evaluate`']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: codeql-complete-required and machine-rule-required are both required (blocking)`);
+  // Each repository the one list leaves out is named in the README with the list's own reason.
+  for (const e of A?.EXCLUDED_REPOSITORIES ?? []) if (!plain.includes(`\`${e?.name}\`: ${e?.reason}`)) misses.push(`Could not find machine-rule/README.md naming ${JSON.stringify(e?.name)} with its reason from EXCLUDED_REPOSITORIES: ${JSON.stringify(e?.reason)}`);
   if (/Its one ignore/.test(plain)) misses.push('Could not find machine-rule/README.md rid of "Its one ignore": the lint step holds two (decision 201)');
   // The guard and the branch read are gone, and their account with them (decision 210).
   for (const words of ['default-branch head carries', 'one refusal and nothing is written', 'Any of these and nothing is written', 'the head of the newest pull request merged into', 'the newest merge-group commit', 'a branch spelled main in other letters already exists', 'its guard reads']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}, the guard or the branch read decision 210 removed`);

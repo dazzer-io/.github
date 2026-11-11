@@ -1,7 +1,7 @@
 {
   "name": "machine-rule-required",
   "target": "branch",
-  "enforcement": "evaluate",
+  "enforcement": "active",
   "bypass_actors": [],
   "conditions": {
     "ref_name": {
@@ -10,7 +10,7 @@
     },
     "repository_name": {
       "include": ["~ALL"],
-      "exclude": []
+      "exclude": ["dev-cycle", "dazzer-skills"]
     }
   },
   "rules": [

@@ -891,19 +891,6 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
     'its `switch-on --locked` reads the same before the locked settings are written (runners pull request 41)',
   ]) if (!plain.includes(words)) misses.push(`Could not find machine-rule/README.md saying ${JSON.stringify(words)}`);
   for (const words of ['so a dispatch from another branch runs nothing on the locked sets', 'It names the two by name', 'Holding it to main in any other repository is other work', 'does not admit is other work', "held to main by the runner group's admission", 'run from main alone', '`main-spelling-refused` covers runners too']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}: a dispatch runs its branch's own copy, main-spelling-refused names three repositories, and runners is held to main only within the existing-branch bound (r-3.45)`);
-  // Every sentence, in the README or a comment of apply-ruleset.mjs, that names a runner or the
-  // locked canary beside a claim that something runs, is admitted, stays or is held from, on or to
-  // main carries the bound (a creation rule never touches a branch that is already there) or
-  // points to it (within the existing-branch bound).
-  const code = readFileSync(join(ROOT, 'machine-rule/apply-ruleset.mjs'), 'utf8').split('\n').map((l) => /^\s*\/\/(.*)$/.exec(l)?.[1]).filter((l) => l !== undefined).join(' ').replace(/\s+/g, ' ');
-  for (const [where, text] of [['machine-rule/README.md', plain], ['a comment of machine-rule/apply-ruleset.mjs', code]]) {
-    for (const s of text.split(/(?<=\.) /)) {
-      const bare = s.replace(/`/g, '');
-      if (!/runner|locked canary|locked-canary/.test(bare)) continue;
-      if (!/\b(?:from|on|to) main(?![-\w])|\bmain alone\b|admit\w*\b[^.]*refs\/heads\/main/.test(bare)) continue;
-      if (!bare.includes('never touches a branch that is already there') && !bare.includes('within the existing-branch bound')) misses.push(`Could not find this sentence of ${where} bounded by a creation rule never touching a branch that is already there, or pointing within the existing-branch bound: ${s}`);
-    }
-  }
   // Every sentence saying main-spelling-refused is live bounds the claim to the two repositories and
   // to the locked switch-on finding no other spelling there, non-ASCII ones included (decision 210).
   for (const s of plain.split(/(?<=\.) /)) if (s.includes('`main-spelling-refused` is live') && !(s.includes('dazzer and dazzer-app') && s.includes("the locked machines' switch-on finds no other spelling of main there, non-ASCII ones included"))) misses.push(`Could not find this sentence of machine-rule/README.md bounded to dazzer and dazzer-app, with the locked switch-on finding no other spelling of main there, non-ASCII ones included: ${s}`);
@@ -913,6 +900,42 @@ test('machine-rule/README.md says what each ruleset holds, that --apply is Ben\'
   if (/Its one ignore/.test(plain)) misses.push('Could not find machine-rule/README.md rid of "Its one ignore": the lint step holds two (decision 201)');
   // The guard and the branch read are gone, and their account with them (decision 210).
   for (const words of ['default-branch head carries', 'one refusal and nothing is written', 'Any of these and nothing is written', 'the head of the newest pull request merged into', 'the newest merge-group commit', 'a branch spelled main in other letters already exists', 'its guard reads']) if (plain.includes(words)) misses.push(`Could not find machine-rule/README.md rid of ${JSON.stringify(words)}, the guard or the branch read decision 210 removed`);
+  assert.ok(!misses.length, misses.join('\n'));
+});
+
+test('no sentence of either README, a comment of apply-ruleset.mjs or judge.mjs, or a reason in kept.json says more than the rulesets and the runner group give', () => {
+  const plain = readFileSync(join(ROOT, 'machine-rule/README.md'), 'utf8').replace(/\s+/g, ' ');
+  const misses = [];
+  // Every sentence, in either README, a comment of apply-ruleset.mjs or judge.mjs, or a reason in
+  // kept.json, read without regard to case, that names a runner, google-locked or the locked canary
+  // beside a claim that something runs, is admitted, stays or is held from, on or to main carries
+  // the bound (a creation rule never touches a branch that is already there) or points to it
+  // (within the existing-branch bound). A LOCKED_RUNNER_<N> setting names no runner group, and the
+  // scan machines' runner group admits the shared workflows at refs/heads/main, where a call at
+  // @main reads this repository's own main, so neither is this claim. No sentence says
+  // main-spelling-refused reaches dazzer and dazzer-app without runners, but where it speaks of the
+  // LOCKED_ setting, which reaches those two alone; and none says codeql-complete-required is
+  // written, kept or left in evaluate, since it is active (r-3.27, r-3.46).
+  const comments = (rel) => readFileSync(join(ROOT, rel), 'utf8').split('\n').map((l) => /^\s*\/\/(.*)$/.exec(l)?.[1]).filter((l) => l !== undefined).join(' ').replace(/\s+/g, ' ');
+  const top = readFileSync(join(ROOT, 'README.md'), 'utf8').replace(/\s+/g, ' ');
+  const kept = readJson('machine-rule/kept.json');
+  const sources = [
+    ['machine-rule/README.md', plain],
+    ['README.md', top],
+    ['a comment of machine-rule/apply-ruleset.mjs', comments('machine-rule/apply-ruleset.mjs')],
+    ['a comment of machine-rule/judge.mjs', comments('machine-rule/judge.mjs')],
+    ...(Array.isArray(kept?.entries) ? kept.entries : []).map((e) => [`machine-rule/kept.json's reason for ${e?.repository} ${e?.workflow}`, String(e?.reason ?? '')]),
+  ];
+  for (const [where, text] of sources) {
+    for (const s of text.split(/(?<=\.) /)) {
+      const bare = s.replace(/`/g, '').toLowerCase();
+      if (/(?<!_)runner|google-locked|locked canary|locked-canary/.test(bare) && !/\bscan machines' runner group\b|\bscan runner group\b/.test(bare)
+        && /\b(?:from|on|to) main(?![-\w])|\bmain alone\b|admit\w*\b[^.]*refs\/heads\/main/.test(bare)
+        && !bare.includes('never touches a branch that is already there') && !bare.includes('within the existing-branch bound')) misses.push(`Could not find this sentence of ${where} bounded by a creation rule never touching a branch that is already there, or pointing within the existing-branch bound: ${s}`);
+      if (/main-spelling/.test(bare) && /\bdazzer and dazzer-app\b/.test(bare) && !/\brunners\b/.test(bare) && !bare.includes('locked_')) misses.push(`Could not find this sentence of ${where} naming runners beside dazzer and dazzer-app for main-spelling-refused, which covers all three (r-3.45): ${s}`);
+      if (/codeql-complete/.test(bare) && /\b(?:written|kept|stays|left|is) (?:in )?evaluate\b|\bevaluate,? as its file is written\b/.test(bare)) misses.push(`Could not find this sentence of ${where} saying codeql-complete-required is active, as its file is written (r-3.27): ${s}`);
+    }
+  }
   assert.ok(!misses.length, misses.join('\n'));
 });
 

@@ -284,7 +284,7 @@
         "locked"
       ],
       "effect": "canary",
-      "reason": "the locked canary, run by hand from main, proves each locked set before switch-on --locked lets any setting name it, so it names the locked sets literally, and those alone; its jobs are named per run from the matrix",
+      "reason": "the locked canary, run by hand and admitted by the runner group google-locked at refs/heads/main alone, held to main only within the existing-branch bound, since a creation rule never touches a branch that is already there, proves each locked set before switch-on --locked lets any setting name it, so it names the locked sets literally, and those alone; its jobs are named per run from the matrix",
       "decision": 223,
       "source": "runners .github/workflows/locked-canary.yml:34-50 at bb859e4 (r-2.3, decision 221)"
     },

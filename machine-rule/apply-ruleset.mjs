@@ -9,8 +9,8 @@
 //     (decisions 188, 192);
 //   codeql-complete-required (machine-rule/codeql-complete.json): in dazzer and dazzer-app alone, the
 //     shared scan's codeql / CodeQL complete from GitHub Actions (integration 15368) on the default
-//     branch, not on create, written in evaluate: GitHub then blocks no merge and records each one
-//     the rule would have refused, until r-3.27 makes it active (decisions 188, 192, 210).
+//     branch, not on create, written active since r-3.27: GitHub blocks a merge until that check
+//     has passed (decisions 188, 192, 210).
 //
 //   node machine-rule/apply-ruleset.mjs              reads each live ruleset with gh and says, for
 //                                                    each, how it differs from its file and exactly
@@ -229,9 +229,8 @@ export function checkMainSpelling(r) {
 }
 
 // Every way a ruleset differs from codeql-complete-required, each as a sentence: in dazzer and
-// dazzer-app exactly, runners never among them; evaluate, as its
-// file is written, or active, as r-3.27 makes it once its readings show no merge it would have
-// refused, and nothing else (decision 210); the default branch alone, one required check, codeql /
+// dazzer-app exactly, runners never among them; active, as its file is written since r-3.27, or
+// evaluate, the way back an organisation owner may take, and nothing else (decision 210); the default branch alone, one required check, codeql /
 // CodeQL complete from integration 15368, not enforced on create, strict policy off.
 export function checkCodeqlComplete(r) {
   const { problems, rule } = checkOnMain(r, CODEQL_COMPLETE_NAME, 'required_status_checks', ['evaluate', 'active'], CODEQL_REPOSITORIES);

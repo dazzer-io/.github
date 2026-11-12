@@ -64,18 +64,38 @@ export const WORKFLOW_DIR = '.github/workflows';
 
 // ================================================================ the facts the rule rests on
 // The settings the organisation declares, as runners' org/settings.json names them at 789b335
-// (CHECKS_RUNNER_2, 8 and 16, LOCKED_RUNNER_2 and 8, SCAN_RUNNER_2). They are written here
-// because a pull request's run of this rule cannot read the private runners repository; a
-// setting added there is added here in the same change.
-export const DECLARED_SETTINGS = Object.freeze(['CHECKS_RUNNER_2', 'CHECKS_RUNNER_8', 'CHECKS_RUNNER_16', 'LOCKED_RUNNER_2', 'LOCKED_RUNNER_8', 'SCAN_RUNNER_2']);
-// A setting's name, as runners' bin/apply-org-settings.mjs parses it.
-export const SETTING_NAME = /^(CHECKS|LOCKED|SCAN)_RUNNER_([1-9][0-9]*)$/;
+// (CHECKS_RUNNER_2, 8 and 16, LOCKED_RUNNER_2 and 8, SCAN_RUNNER_2), and the locked settings'
+// new names, LOCKED_MACHINE_2 and 8 (decision 253). They are written here because a pull
+// request's run of this rule cannot read the private runners repository; a setting added there
+// is added here in the same change.
+// THE LOCKED SETTINGS' TWO NAMES (decision 253). Every commit before the rename reads
+// LOCKED_RUNNER_2 and 8, so once those were written a re-run, a queued job or a deployment at any
+// such commit would take a locked machine. So the locked machines' switch writes LOCKED_MACHINE_2
+// and 8, names no commit held before the rename, and refuses while an old one exists. Both names
+// are judged alike, held to main the same way; the old ones stay declared, so a workflow not yet
+// renamed is judged as it was, and a refusal naming one says it is old.
+export const DECLARED_SETTINGS = Object.freeze(['CHECKS_RUNNER_2', 'CHECKS_RUNNER_8', 'CHECKS_RUNNER_16', 'LOCKED_RUNNER_2', 'LOCKED_RUNNER_8', 'LOCKED_MACHINE_2', 'LOCKED_MACHINE_8', 'SCAN_RUNNER_2']);
+// A setting's name, as runners' bin/apply-org-settings.mjs parses it, and the locked family's
+// new stem: <FAMILY>_RUNNER_<N>, or LOCKED_MACHINE_<N> (the lookbehind admits MACHINE after
+// LOCKED_ alone, so no CHECKS_ or SCAN_ name gains a second stem).
+const STEM = '(CHECKS|LOCKED|SCAN)_(?:RUNNER|(?<=LOCKED_)MACHINE)_';
+export const SETTING_NAME = new RegExp(`^${STEM}([1-9][0-9]*)$`);
+// The locked settings' old names, which every commit before the rename reads (decision 253).
+export const OLD_LOCKED = /^LOCKED_RUNNER_/i;
+const newLocked = (name) => String(name).toUpperCase().replace(OLD_LOCKED, 'LOCKED_MACHINE_');
+// The words a refusal adds where it names an old locked setting among the names it reads.
+const oldLockedWords = (names) => {
+  const old = unique([...names].map(String).filter((n) => OLD_LOCKED.test(n)).map((n) => n.toUpperCase()));
+  if (!old.length) return '';
+  return ` It reads an old locked setting, ${old.join(', ')}, a name every commit before the rename reads; the locked machines' switch writes ${old.map(newLocked).join(', ')} in its place (decision 253).`;
+};
 const settingOf = (name) => {
   const m = SETTING_NAME.exec(String(name));
   return m ? { kind: m[1], cores: Number(m[2]) } : null;
 };
 // Any name of a setting family, declared or not (vars.CHECKS_RUNNER_4 reads empty for ever).
-const familyOf = (name) => /^(CHECKS|LOCKED|SCAN)_RUNNER_/i.exec(String(name))?.[1].toUpperCase() ?? null;
+const FAMILY = new RegExp(`^${STEM}`, 'i');
+const familyOf = (name) => FAMILY.exec(String(name))?.[1].toUpperCase() ?? null;
 // GitHub's standard Linux machines and their cores (dazzer's GITHUB_STANDARD_CORES).
 export const GITHUB_STANDARD_CORES = Object.freeze({ 'ubuntu-latest': 2, 'ubuntu-24.04': 2, 'ubuntu-22.04': 2 });
 const STANDARD = Object.keys(GITHUB_STANDARD_CORES).join(', ');
@@ -103,9 +123,10 @@ const MAIN_REF = "github.ref == 'refs/heads/main'";
 // A job's if: that is the main guard exactly: MAIN_REF bare, as the judge reads an if: holding no
 // ${{ (expressionsUnder, bodiesIn), or MAIN_REF alone in one ${{ }} wrapping the whole value.
 const isMainGuard = (cond) => typeof cond === 'string' && (cond.trim() === MAIN_REF || /^\$\{\{\s*(.*?)\s*\}\}$/.exec(cond.trim())?.[1] === MAIN_REF);
-const LOCKED_SHAPE = /^\$\{\{\s*github\.ref\s*==\s*'refs\/heads\/main'\s*&&\s*vars\.(LOCKED_RUNNER_(\d+))\s*\|\|\s*'([^']+)'\s*\}\}$/;
+const LOCKED_SHAPE = /^\$\{\{\s*github\.ref\s*==\s*'refs\/heads\/main'\s*&&\s*vars\.(LOCKED_(?:RUNNER|MACHINE)_(\d+))\s*\|\|\s*'([^']+)'\s*\}\}$/;
 // The one shape dazzer-app's stricter class exempts beside the literal ubuntu-latest (decision
-// 190, as r-3.8 teaches the app's own holdsMoreThanTheCode): LOCKED_SHAPE, any LOCKED_RUNNER_<N>,
+// 190, as r-3.8 teaches the app's own holdsMoreThanTheCode): LOCKED_SHAPE, any LOCKED_MACHINE_<N>
+// or LOCKED_RUNNER_<N>,
 // with the literal ubuntu-latest as its fallback, on a workflow no pull-request event starts
 // (PULL_REQUEST_EVENTS, below), so a pull request's code never takes the exemption.
 const lockedHeldToMain = (machine, prStarted) => typeof machine === 'string' && !prStarted && LOCKED_SHAPE.exec(machine.trim())?.[3] === 'ubuntu-latest';
@@ -786,7 +807,7 @@ export function settingReadsIn(x) {
     } catch (e) {
       if (!(e instanceof ExpressionError)) throw e;
       for (const m of String(raw).matchAll(SETTING_TEXT)) families[m[1].toUpperCase()].add(m[0].toUpperCase());
-      for (const m of String(raw).matchAll(/(?:CHECKS|LOCKED|SCAN)_RUNNER_\w*/gi)) families[familyOf(m[0])].add(m[0].toUpperCase());
+      for (const m of String(raw).matchAll(new RegExp(`${STEM}\\w*`, 'gi'))) families[familyOf(m[0])].add(m[0].toUpperCase());
       if (VARS_WHOLE_TEXT.test(String(raw))) whole = true;
       continue;
     }
@@ -906,7 +927,7 @@ class Routes {
       else { problems.push(r.why); scan ||= r.scan === true; }
     }
     if (problems.length) return { ok: false, why: unique(problems).join('; '), ...(scan ? { scan } : {}) };
-    if (!routes.length) return { ok: false, why: `runs-on \${{${body}}} is an expression that reads no CHECKS_RUNNER_<N>, LOCKED_RUNNER_<N> or SCAN_RUNNER_<N> setting` };
+    if (!routes.length) return { ok: false, why: `runs-on \${{${body}}} is an expression that reads no CHECKS_RUNNER_<N>, LOCKED_MACHINE_<N>, LOCKED_RUNNER_<N> or SCAN_RUNNER_<N> setting` };
     if (fallback !== null) routes.push(`falls back to ${show(fallback)} after it`);
     return { ok: true, how: unique(routes).join('; '), reached };
   }
@@ -950,14 +971,14 @@ class Routes {
       if (!src) return { kind: 'problem', why: `reads needs.${second}.outputs, and the workflow has no job ${second}` };
       const reads = settingReadsIn(src);
       const scans = shared ? [] : reads.scans;
-      if (scans.length) return { kind: 'problem', scan: true, why: `reads needs.${second}.outputs, and job ${second} reads no CHECKS_RUNNER_<N>, LOCKED_RUNNER_<N> or SCAN_RUNNER_<N> setting that gives it a machine: it reads ${this.scanWords(scans)}` };
+      if (scans.length) return { kind: 'problem', scan: true, why: `reads needs.${second}.outputs, and job ${second} reads no CHECKS_RUNNER_<N>, LOCKED_MACHINE_<N>, LOCKED_RUNNER_<N> or SCAN_RUNNER_<N> setting that gives it a machine: it reads ${this.scanWords(scans)}` };
       const declared = reads.settings.filter((n) => DECLARED_SETTINGS.includes(n));
       if (declared.length) return { kind: 'setting', how: `reads job ${second}'s outputs, and ${second} reads a machine setting`, reached: declared.map((n) => ({ name: n, kind: settingOf(n).kind })) };
-      return { kind: 'problem', why: `reads needs.${second}.outputs, and job ${second} reads no CHECKS_RUNNER_<N>, LOCKED_RUNNER_<N> or SCAN_RUNNER_<N> setting` };
+      return { kind: 'problem', why: `reads needs.${second}.outputs, and job ${second} reads no CHECKS_RUNNER_<N>, LOCKED_MACHINE_<N>, LOCKED_RUNNER_<N> or SCAN_RUNNER_<N> setting` };
     }
     if (head === 'matrix' && second) return judged(this.matrix(second, ctx, depth));
     if (head === 'inputs' && second) return judged(this.input(second, ctx, depth));
-    return { kind: 'problem', why: `its expression gives ${text}, which is no CHECKS_RUNNER_<N>, LOCKED_RUNNER_<N> or SCAN_RUNNER_<N> setting` };
+    return { kind: 'problem', why: `its expression gives ${text}, which is no CHECKS_RUNNER_<N>, LOCKED_MACHINE_<N>, LOCKED_RUNNER_<N> or SCAN_RUNNER_<N> setting` };
   }
 
   // Every value a matrix gives <key>: its own list and each include row; one written as an
@@ -1448,26 +1469,26 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
             if (!m) {
               const label = literal ?? (/\|\|\s*'([^']+)'\s*\}\}$/.exec(machine)?.[1] ?? null);
               const cores = label && isGitHubMachine(label) ? coresFromLabel(label) : null;
-              const shape = `\${{ ${MAIN_REF} && vars.LOCKED_RUNNER_${cores ?? '<cores>'} || '${cores ? label : "<GitHub's machine>"}' }}`;
+              const shape = `\${{ ${MAIN_REF} && vars.LOCKED_MACHINE_${cores ?? '<cores>'} || '${cores ? label : "<GitHub's machine>"}' }}`;
               if (literal !== null) noAt(`is a job of a workflow that signs in and names its machine literally, '${literal}', so it cannot move to the locked set; kept.json names no stay entry for it. Write runs-on: ${shape}, or keep it by an entry with its decision.`);
-              else if (reads.families.LOCKED.size) noAt(`is a job of a workflow that signs in and reads ${[...reads.families.LOCKED].join(', ')} without the ref condition held to main, '${machine}', so a run from any other branch or tag would take the locked machine. Write runs-on: ${shape}.`);
+              else if (reads.families.LOCKED.size) noAt(`is a job of a workflow that signs in and reads ${[...reads.families.LOCKED].join(', ')} without the ref condition held to main, '${machine}', so a run from any other branch or tag would take the locked machine. Write runs-on: ${shape}.${oldLockedWords(reads.families.LOCKED)}`);
               else if (!families(['CHECKS']).length && !scanNames.length) noAt(`is a job of a workflow that signs in whose runs-on, '${machine}', is not the locked setting held to main with GitHub's machine as its fallback. Write runs-on: ${shape}.`);
             } else {
               const [, name, n, label] = m;
               if (!DECLARED_SETTINGS.includes(name)) noAt(`reads ${name}, which the organisation does not declare (${DECLARED_SETTINGS.join(', ')}), so it is empty for ever.`);
-              if (!isGitHubMachine(label)) noAt(`is a job of a workflow that signs in that reads ${name} with the fallback '${label}', which is not GitHub's machine (${GITHUB_MACHINE}). Write runs-on: \${{ ${MAIN_REF} && vars.${name} || '${Number(n) === 2 ? 'ubuntu-latest' : `ubuntu-${n}-core`}' }}.`);
-              else if (coresFromLabel(label) !== Number(n)) noAt(`reads ${name}, a ${n}-core machine, but its fallback '${label}' has ${coresFromLabel(label)} cores, so the job would run on a different width depending on the setting. Read LOCKED_RUNNER_${coresFromLabel(label)}.`);
+              if (!isGitHubMachine(label)) noAt(`is a job of a workflow that signs in that reads ${name} with the fallback '${label}', which is not GitHub's machine (${GITHUB_MACHINE}). Write runs-on: \${{ ${MAIN_REF} && vars.${newLocked(name)} || '${Number(n) === 2 ? 'ubuntu-latest' : `ubuntu-${n}-core`}' }}.${oldLockedWords([name])}`);
+              else if (coresFromLabel(label) !== Number(n)) noAt(`reads ${name}, a ${n}-core machine, but its fallback '${label}' has ${coresFromLabel(label)} cores, so the job would run on a different width depending on the setting. Read LOCKED_MACHINE_${coresFromLabel(label)}.${oldLockedWords([name])}`);
             }
           }
         }
         const checks = families(['CHECKS']);
         if (checks.length) no(`is a job of a workflow that signs in (id-token: write, write-all or an environment), and it reads ${checks.join(', ')}. The CHECKS_ settings move the change checks to machines of our own; a job of a workflow that signs in reads none of them (decisions 9, 23).`);
         const lockedElsewhere = [...beside.families.LOCKED];
-        if (lockedElsewhere.length) no(`is a job of a workflow that signs in and reads ${lockedElsewhere.join(', ')} outside its runs-on, where no ref condition holds it to main. A job of such a workflow reads the locked setting in its runs-on alone, as ${MAIN_REF} && vars.LOCKED_RUNNER_<N> || '<GitHub's machine>'.`);
+        if (lockedElsewhere.length) no(`is a job of a workflow that signs in and reads ${lockedElsewhere.join(', ')} outside its runs-on, where no ref condition holds it to main. A job of such a workflow reads the locked setting in its runs-on alone, as ${MAIN_REF} && vars.LOCKED_MACHINE_<N> || '<GitHub's machine>'.${oldLockedWords(lockedElsewhere)}`);
       } else {
         // ---------------------------------------------------------- a workflow that does not sign in
         const locked = families(['LOCKED']);
-        if (locked.length) no(`is a job of a workflow that does not sign in, and it reads ${locked.join(', ')}. The LOCKED_ settings move the jobs of workflows that sign in to the set locked to main-line code; a change check asking for it would wait for a machine its group never gives (decision 9), and no kept.json effect admits it.`);
+        if (locked.length) no(`is a job of a workflow that does not sign in, and it reads ${locked.join(', ')}. The LOCKED_ settings move the jobs of workflows that sign in to the set locked to main-line code; a change check asking for it would wait for a machine its group never gives (decision 9), and no kept.json effect admits it.${oldLockedWords(locked)}`);
       }
 
       // The shared scans' jobs (decisions 93, 98, 135): every job that is not a write-token job

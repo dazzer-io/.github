@@ -53,8 +53,10 @@ async function everyCase(body) {
   assert.ok(!misses.length, misses.join('\n'));
 }
 // Every refusal case seen passing, so the last test can run each one again in the other shapes a
-// job takes (decision 184).
+// job takes (decision 184), and every clean case, so the locked settings' new names can be read
+// through each case holding an old one (decision 253).
 const RECORDED = [];
+const PASSED = [];
 // A refusal of <file> (and <job>) whose words match says, on the line holding at when given.
 async function mustRefuse(name, files, ctx, { file, job, says, at }) {
   const r = await judgeOf(files, ctx);
@@ -69,6 +71,7 @@ async function mustPass(name, files, ctx = {}, { file, job } = {}) {
   const r = await judgeOf(files, ctx);
   const hits = r.lines.filter((l) => (!file || l.startsWith(`.github/workflows/${file}:`)) && (!job || l.includes(` jobs.${job}: `)));
   assert.ok(!hits.length, `Could not find a clean reading of ${name}: the rule said\n${hits.join('\n')}`);
+  PASSED.push({ name, files, ctx: ctx ?? {}, file, job });
   return r;
 }
 
@@ -284,7 +287,7 @@ test('a workflow that signs in reads no CHECKS_ or SCAN_ setting, and each job r
     ['a CHECKS_ read in the env of a workflow granting id-token: write at its top', signing(PUSH, ID, job('deploy', LOCKED2, '    env:\n      K: @{{ vars.CHECKS_RUNNER_2 }}\n')), /signs in .*reads CHECKS_RUNNER_2/],
     ['a job naming an environment reading CHECKS_', signing(PUSH, READ, job('deploy', CHECKS2, '    environment: production\n')), /signs in .*reads CHECKS_RUNNER_2/],
     ['every job of a pull-request workflow one job of which signs in', signing('pull_request', READ, job('deploy', LOCKED2, '    environment: production\n'), job('check', CHECKS2)), /signs in .*reads CHECKS_RUNNER_2/],
-    ['a literal label, saying what to write', signing(PUSH, ID, job('deploy', 'ubuntu-latest')), /names its machine literally, 'ubuntu-latest'.*vars\.LOCKED_RUNNER_2 \|\| 'ubuntu-latest'/],
+    ['a literal label, saying what to write', signing(PUSH, ID, job('deploy', 'ubuntu-latest')), /names its machine literally, 'ubuntu-latest'.*vars\.LOCKED_MACHINE_2 \|\| 'ubuntu-latest'/],
     ['the locked setting read without the main ref condition', signing(PUSH, ID, job('deploy', "@{{ vars.LOCKED_RUNNER_2 || 'ubuntu-latest' }}")), /without the ref condition held to main/],
     ['the locked setting held to a ref that is not main', signing(PUSH, ID, job('deploy', "@{{ github.ref == 'refs/heads/dev' && vars.LOCKED_RUNNER_2 || 'ubuntu-latest' }}")), /without the ref condition held to main/],
     ['the locked setting held to a version tag', signing(PUSH, ID, job('deploy', "@{{ startsWith(github.ref, 'refs/tags/v') && vars.LOCKED_RUNNER_2 || 'ubuntu-latest' }}")), /without the ref condition held to main/],
@@ -928,7 +931,7 @@ test('secrets.json and strict.json pass their own checks and carry what the copi
   assert.deepEqual(strict.repositories.map((e) => e.repository), ['dazzer-io/dazzer-app'], 'Could not find strict.json naming dazzer-app alone');
   const bad = J.checkSecrets({ about: 'x', repositories: { 'dazzer-io/dazzer': { names: ['GITHUB_TOKEN', 'lower'], reason: '', decision: 0, source: '' } } });
   for (const words of ['GITHUB_TOKEN', 'capitals', 'no reason', 'no whole-number decision']) assert.ok(bad.some((p) => p.includes(words)), `Could not find secrets.json's check refusing ${words}: ${JSON.stringify(bad)}`);
-  assert.deepEqual([...J.DECLARED_SETTINGS], ['CHECKS_RUNNER_2', 'CHECKS_RUNNER_8', 'CHECKS_RUNNER_16', 'LOCKED_RUNNER_2', 'LOCKED_RUNNER_8', 'SCAN_RUNNER_2'], 'Could not find the declared settings as runners\' org/settings.json names them at 789b335');
+  assert.deepEqual([...J.DECLARED_SETTINGS], ['CHECKS_RUNNER_2', 'CHECKS_RUNNER_8', 'CHECKS_RUNNER_16', 'LOCKED_RUNNER_2', 'LOCKED_RUNNER_8', 'LOCKED_MACHINE_2', 'LOCKED_MACHINE_8', 'SCAN_RUNNER_2'], 'Could not find the declared settings as runners\' org/settings.json names them at 789b335, and the locked settings\' new names, LOCKED_MACHINE_2 and LOCKED_MACHINE_8 (decision 253)');
 });
 
 // ================================================================ this repository's own folder
@@ -1968,4 +1971,83 @@ test('Left out names no spelling or refusal that no case cites (decisions 181, 1
   assert.ok(all.length >= 20, `Could not find machine-rule/README.md's Left out lines, one spelling or refusal a line: ${all.length} found`);
   const loose = all.filter((x) => !CITED.has(x));
   assert.ok(!loose.length, `Could not find a case citing each line of machine-rule/README.md's Left out:\n${loose.map((x) => x.split('\n')[1]).join('\n')}`);
+});
+
+// ================================================================ the locked settings' new names (decision 253)
+// Every commit before the rename reads vars.LOCKED_RUNNER_2 and _8, so once those were written a
+// re-run, a queued job or a deployment at any such commit would take a locked machine. The switch
+// writes LOCKED_MACHINE_2 and _8 instead, and the rule holds them exactly as it holds the old
+// names, which it still judges as it did, saying in a refusal that the name is old.
+const MACHINE2 = "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_2 || 'ubuntu-latest' }}";
+test('LOCKED_MACHINE_2 and LOCKED_MACHINE_8 are read only held to main, as the locked settings are, and an unheld read of either is refused (decision 253)', async () => {
+  need();
+  const ID = 'permissions:\n  contents: read\n  id-token: write\n';
+  const signing = (...jobs) => workflow(PUSH, ID, ...jobs);
+  for (const [name, is] of [['LOCKED_MACHINE_2', true], ['LOCKED_MACHINE_8', true], ['LOCKED_RUNNER_2', true], ['CHECKS_MACHINE_2', false], ['SCAN_MACHINE_2', false], ['LOCKED_MACHINES_2', false]]) {
+    assert.equal(J.SETTING_NAME.test(name), is, `Could not find SETTING_NAME ${is ? 'reading' : 'leaving out'} ${name}: MACHINE is a stem of the locked family alone`);
+  }
+  await everyCase(async (c) => {
+    await c(() => mustPass('LOCKED_MACHINE_2 held to main, falling back to ubuntu-latest', { 'deploy.yml': signing(job('deploy', MACHINE2)) }, DAZZER));
+    await c(() => mustPass('LOCKED_MACHINE_8 held to main, falling back to ubuntu-8-core', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_8 || 'ubuntu-8-core' }}")) }, DAZZER));
+    await c(() => mustPass('every job of a workflow that signs in on LOCKED_MACHINE_2, one naming an environment', { 'deploy.yml': signing(job('deploy', MACHINE2, '    environment: production\n'), job('notify', MACHINE2)) }, DAZZER));
+    await c(() => mustRefuse('LOCKED_MACHINE_2 read without the main guard', { 'deploy.yml': signing(job('deploy', "@{{ vars.LOCKED_MACHINE_2 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: /reads LOCKED_MACHINE_2 without the ref condition held to main/ }));
+    await c(() => mustRefuse('LOCKED_MACHINE_8 held to a ref that is not main', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/dev' && vars.LOCKED_MACHINE_8 || 'ubuntu-8-core' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: /reads LOCKED_MACHINE_8 without the ref condition held to main/ }));
+    await c(() => mustRefuse('LOCKED_MACHINE_2 held to a version tag', { 'deploy.yml': signing(job('deploy', "@{{ startsWith(github.ref, 'refs/tags/v') && vars.LOCKED_MACHINE_2 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: /without the ref condition held to main/ }));
+    await c(() => mustRefuse('LOCKED_MACHINE_8 read in the env of a job held to main', { 'deploy.yml': signing(job('deploy', MACHINE2, '    env:\n      K: @{{ vars.LOCKED_MACHINE_8 }}\n')) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: /reads LOCKED_MACHINE_8 outside its runs-on/ }));
+    await c(() => mustRefuse('LOCKED_MACHINE_8 falling back to a machine of 2 cores', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_8 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: /reads LOCKED_MACHINE_8, a 8-core machine, but its fallback 'ubuntu-latest' has 2 cores/ }));
+    await c(() => mustRefuse('LOCKED_MACHINE_4, which the organisation does not declare', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_4 || 'ubuntu-4-core' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: /reads LOCKED_MACHINE_4, which the organisation does not declare/ }));
+    await c(() => mustRefuse('a change check reading LOCKED_MACHINE_2 in its env', { 'ci.yml': check('    env:\n      K: @{{ vars.LOCKED_MACHINE_2 }}\n') }, DAZZER, { file: 'ci.yml', job: 'check', says: /does not sign in, and it reads LOCKED_MACHINE_2/ }));
+    await c(() => mustRefuse('a change check reading locked_machine_8 in the bracket spelling, in lower case', { 'ci.yml': check("    env:\n      K: @{{ vars['locked_machine_8'] }}\n") }, DAZZER, { file: 'ci.yml', job: 'check', says: /does not sign in, and it reads LOCKED_MACHINE_8/ }));
+    await c(() => mustRefuse('a change check naming LOCKED_MACHINE_X in an expression the grammar cannot read', { 'ci.yml': check('    env:\n      K: @{{ vars.LOCKED_MACHINE_X == }}\n') }, DAZZER, { file: 'ci.yml', job: 'check', says: /does not sign in, and it reads LOCKED_MACHINE_X/ }));
+    await c(() => mustRefuse('a change check whose runs-on reads LOCKED_MACHINE_2 held to main', { 'ci.yml': workflow('pull_request', READ, job('check', MACHINE2)) }, DAZZER, { file: 'ci.yml', job: 'check', says: /does not sign in, and it reads LOCKED_MACHINE_2/ }));
+    await c(() => mustRefuse('a job of a public repository reading LOCKED_MACHINE_2', { 'ci.yml': workflow('pull_request', READ, job('check', 'ubuntu-latest', '    env:\n      K: @{{ vars.LOCKED_MACHINE_2 }}\n')) }, PUBLIC, { file: 'ci.yml', job: 'check', says: /a public repository, and reads LOCKED_MACHINE_2/ }));
+    // dazzer-app's stricter class exempts the new name held to main as it exempts the old (decision 190).
+    const TOP = 'permissions:\n  contents: read\n';
+    const ACT = '    environment: release\n    permissions:\n      contents: read\n      issues: write\n    env:\n      K: @{{ secrets.MADE_UP_TOKEN }}\n';
+    const release = (runsOn) => ({ 'made-up-release.yml': workflow("\n  schedule:\n    - cron: '23 */2 * * *'\n  workflow_dispatch:", TOP, job('act', runsOn, ACT)) });
+    await c(() => mustPass('LOCKED_MACHINE_2 held to main in dazzer-app, exempt from the stricter class', release(MACHINE2), APP));
+    await c(() => mustRefuse('LOCKED_MACHINE_2 read without the main guard in dazzer-app', release("@{{ vars.LOCKED_MACHINE_2 || 'ubuntu-latest' }}"), APP, { file: 'made-up-release.yml', job: 'act', says: /in a repository strict\.json names, and names a secret/ }));
+  });
+});
+
+test('a refusal naming LOCKED_RUNNER_2 or _8 calls that name old and names the new one in its place, while the old name is still judged as it was (decision 253)', async () => {
+  need();
+  const ID = 'permissions:\n  contents: read\n  id-token: write\n';
+  const signing = (...jobs) => workflow(PUSH, ID, ...jobs);
+  const OLD = (n) => new RegExp(`It reads an old locked setting, LOCKED_RUNNER_${n}, a name every commit before the rename reads; the locked machines' switch writes LOCKED_MACHINE_${n} in its place \\(decision 253\\)`);
+  await everyCase(async (c) => {
+    await c(() => mustPass('LOCKED_RUNNER_2 held to main, judged as it was', { 'deploy.yml': signing(job('deploy', LOCKED2)) }, DAZZER));
+    await c(() => mustRefuse('LOCKED_RUNNER_2 read without the main guard', { 'deploy.yml': signing(job('deploy', "@{{ vars.LOCKED_RUNNER_2 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: OLD(2) }));
+    await c(() => mustRefuse('LOCKED_RUNNER_8 read outside its runs-on', { 'deploy.yml': signing(job('deploy', LOCKED2, '    env:\n      K: @{{ vars.LOCKED_RUNNER_8 }}\n')) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: OLD(8) }));
+    await c(() => mustRefuse('LOCKED_RUNNER_8 falling back to a machine of 2 cores', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_8 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: OLD(8) }));
+    await c(() => mustRefuse('LOCKED_RUNNER_8 falling back to a label of ours', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_8 || 'dazzer-locked-8-core' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: /vars\.LOCKED_MACHINE_8 \|\| 'ubuntu-8-core'.*It reads an old locked setting, LOCKED_RUNNER_8/ }));
+    await c(() => mustRefuse('a change check reading LOCKED_RUNNER_2', { 'ci.yml': check('    env:\n      K: @{{ vars.LOCKED_RUNNER_2 }}\n') }, DAZZER, { file: 'ci.yml', job: 'check', says: OLD(2) }));
+    // The new name's refusal names no old setting.
+    await c(async () => {
+      const r = await judgeOf({ 'deploy.yml': signing(job('deploy', "@{{ vars.LOCKED_MACHINE_2 || 'ubuntu-latest' }}")) });
+      assert.ok(r.lines.length && !r.lines.some((l) => /old locked setting/.test(l)), `Could not find the refusal of an unheld LOCKED_MACHINE_2 read naming no old setting: the rule said\n${said(r)}`);
+    });
+  });
+});
+
+// The swap of every old locked name a case reads for its new one, each in the case it was written in.
+const toMachine = (text) => String(text).replace(/locked_runner_/gi, (m) => (m[7] === 'R' ? 'LOCKED_MACHINE_' : 'locked_machine_'));
+// A refusal line with both names read as one, and the old name's own words taken out.
+const asOneName = (line) => line.replace(/ It reads an old locked setting, [^;]*; the locked machines' switch writes [^.]* in its place \(decision 253\)\./g, '').replace(/locked_(?:runner|machine)_/gi, 'LOCKED_<NAME>_');
+test('every case above reading LOCKED_RUNNER_2 or _8 reads the same with LOCKED_MACHINE_2 or _8 in its place: the same refusals, or none, line for line (decision 253)', async (t) => {
+  need();
+  const cases = [...RECORDED.map((rc) => ({ ...rc, refused: true })), ...PASSED.map((pc) => ({ ...pc, refused: false }))]
+    .filter((x) => Object.values(x.files).some((t) => /locked_runner_/i.test(String(t ?? ''))));
+  const misses = [];
+  let refused = 0;
+  for (const x of cases) {
+    const files = Object.fromEntries(Object.entries(x.files).map(([k, t]) => [k, t === null || t === undefined ? t : toMachine(t)]));
+    const before = (await judgeOf(x.files, x.ctx)).lines.map(asOneName);
+    const after = (await judgeOf(files, x.ctx)).lines.map(asOneName);
+    if (before.length) refused += 1;
+    if (JSON.stringify(before) !== JSON.stringify(after)) misses.push(`Could not find ${x.name} read the same with LOCKED_MACHINE_ in place of LOCKED_RUNNER_:\n  with the old name: ${before.join('\n    ') || '(nothing refused)'}\n  with the new name: ${after.join('\n    ') || '(nothing refused)'}`);
+  }
+  t.diagnostic(`${cases.length} cases reading LOCKED_RUNNER_ read again with LOCKED_MACHINE_, ${refused} of them refused`);
+  assert.ok(cases.length >= 60 && refused >= 40, `Could not find the cases above reading LOCKED_RUNNER_ to read again with the new name: ${cases.length} found, ${refused} of them refused`);
+  assert.ok(!misses.length, `${misses.join('\n')}\n(${misses.length} of ${cases.length} cases)`);
 });

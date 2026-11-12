@@ -187,8 +187,24 @@ by name, by index, whole or by a computed name.
 ## The settings
 
 The organisation declares `CHECKS_RUNNER_2`, `CHECKS_RUNNER_8`, `CHECKS_RUNNER_16`,
-`LOCKED_RUNNER_2`, `LOCKED_RUNNER_8` and `SCAN_RUNNER_2` (runners' `org/settings.json`). A setting
-it does not declare is empty for ever, so reading one is refused.
+`LOCKED_RUNNER_2`, `LOCKED_RUNNER_8` and `SCAN_RUNNER_2` (runners' `org/settings.json`), and the
+rule declares beside them the locked settings' new names, `LOCKED_MACHINE_2` and
+`LOCKED_MACHINE_8` (decision 253, below). A setting it does not declare is empty for ever, so
+reading one is refused.
+
+- **The locked settings have two names** (decision 253).
+  - `LOCKED_RUNNER_2` and `LOCKED_RUNNER_8` are the old names. Every commit before the rename
+    reads them, so once they were written, a re-run, a queued job or a deployment at any such
+    commit would take a locked machine with a file no reviewer read for the switch.
+  - `LOCKED_MACHINE_2` and `LOCKED_MACHINE_8` are the new names, which no commit held before
+    the rename. A run at an older commit reads names the switch never sets, so it stays on
+    GitHub's machines, whatever its age. From runners' rename on (r-2.20), the locked machines'
+    switch writes the new names alone, and refuses while an old one exists.
+  - The rule holds the new names exactly as the old: read in a job's `runs-on` alone, behind
+    `github.ref == 'refs/heads/main'`, declared, and as wide as the fallback (the classes,
+    below). It still judges the old names as it did, so a workflow not yet renamed reads as
+    before. A refusal naming an old name says the job reads an old locked setting, and names the
+    new one to read in its place.
 
 - **A setting read as a job's machine carries GitHub's machine of the same width as its
   fallback** (decision 15): `${{ vars.CHECKS_RUNNER_8 || 'ubuntu-8-core' }}`. A setting with no
@@ -211,10 +227,11 @@ public one.
 
 - **A workflow that signs in** (`id-token: write`, `write-all` or an `environment`) reads no
   `CHECKS_` or `SCAN_` setting. Each of its jobs reads the locked setting in its `runs-on`,
-  held to main: `${{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_<N> || '<GitHub's
-  machine>' }}`, and nowhere else (decisions 9, 23, 40); in dazzer and dazzer-app, the guard
-  holds it to main alone once `main-spelling-refused` is live and the locked machines' switch-on
-  finds no other spelling of main there, non-ASCII ones included (decisions 195, 210, above).
+  held to main: `${{ github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_<N> || '<GitHub's
+  machine>' }}`, or the old `LOCKED_RUNNER_<N>` the same way, and nowhere else (decisions 9, 23,
+  40); in dazzer and dazzer-app, the guard holds it to main alone once `main-spelling-refused` is
+  live and the locked machines' switch-on finds no other spelling of main there, non-ASCII ones
+  included (decisions 195, 210, above).
   In runners, where the locked canary runs on the locked machines, `main-spelling-refused` refuses
   the same creations, and since a creation rule never touches a branch that is already there, the
   canary is held to main only once runners' own reads find no other spelling of main there, ASCII
@@ -281,14 +298,15 @@ public one.
   One shape is exempt beside the literal `ubuntu-latest` (decision 190), the one r-3.8 teaches
   the app's own `holdsMoreThanTheCode`: the locked setting held to main, falling back to the
   literal `ubuntu-latest`,
-  `${{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_<N> || 'ubuntu-latest' }}`, as a
-  job's whole `runs-on`, on a workflow no pull-request event starts (`pull_request`,
-  `pull_request_target`, `pull_request_review`, `pull_request_review_comment`, `merge_group`).
+  `${{ github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_<N> || 'ubuntu-latest' }}`, or the
+  old `LOCKED_RUNNER_<N>` the same way, as a job's whole `runs-on`, on a workflow no
+  pull-request event starts (`pull_request`, `pull_request_target`, `pull_request_review`,
+  `pull_request_review_comment`, `merge_group`).
   On `pull_request_target`, `github.ref` is the default branch whatever started the run, so the
   main guard would hand a fork's change the locked set. Such a job still meets every class rule
   above: its workflow signs in, or decision 9's `LOCKED_` class refuses it; it is started by no
-  tag or deployment; and its `LOCKED_RUNNER_<N>` is declared and as wide as its fallback. Still
-  held to no more than the code, in a repository strict.json names:
+  tag or deployment; and its `LOCKED_MACHINE_<N>` or `LOCKED_RUNNER_<N>` is declared and as
+  wide as its fallback. Still held to no more than the code, in a repository strict.json names:
   - the same shape on a workflow a pull-request event starts;
   - a `LOCKED_` setting read without the main guard;
   - a `CHECKS_` setting, held to main or not;

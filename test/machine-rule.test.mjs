@@ -487,7 +487,7 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
     ['scheduler', 'tick.yml', 'tick', 22], ['scheduler', 'tick.yml', 'runner-watcher', 22], ['scheduler', 'soc2-readiness.yml', 'reading', 26],
   ];
   const others = [
-    ['dazzer', 'release.yml', 'publish', 'stay', 40], ['dazzer', 'pr-automation.yml', 'label', 'stay', 36],
+    ['dazzer', 'release.yml', 'publish', 'stay', 40], ['dazzer', 'pr-automation.yml', 'label', 'stay', 36], ['dazzer', 'harness-pin-sync.yml', 'sync', 'stay', 253],
     ...['contract-watch.yml:watch', 'promote-production.yml:start', 'promote-production.yml:promote', 'sweep.yml:sweep'].map((s) => ['dazzer-app', ...s.split(':'), 'stay', 190]),
     ['brain-builder', 'release.yml', 'tag', 'checks', 47], ['scheduler', 'tick.yml', 'runner-readings', 'stay', 22],
     ['runners', 'apply.yml', 'apply', 'stay', 9], ['runners', 'image.yml', 'build', 'stay', 9], ['runners', 'image.yml', 'push', 'stay', 9],
@@ -519,6 +519,28 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
     if (reasons.length !== 1 || !says.every((s) => s.test(reasons[0])) || /until the locked machines take it/.test(reasons[0])) misses.push(`Could not find dazzer-app's ${file} kept once, its reason saying why it stays (${says.join(', ')}) rather than waiting on the locked machines (decision 190): ${JSON.stringify(reasons)}`);
   }
   assert.ok(!misses.length, misses.join('\n'));
+});
+
+// dazzer's harness-pin-sync.yml signs in and copies dazzer-agent's records, which no review of ours
+// reads, so its job sync names GitHub's machine literally for good and is kept by a stay entry
+// (decision 253, dazzer pull request 1482). The fixture is made up in that shape; the entry is kept.json's own.
+test('a made-up workflow shaped as dazzer\'s harness-pin-sync.yml, signed in with its job sync on ubuntu-latest, is refused with no entry and admitted by kept.json\'s stay entry (decision 253)', async () => {
+  need();
+  const { kept } = lists();
+  const sync = 'name: made up\non:\n  schedule:\n    - cron: "1 2 * * *"\n  workflow_dispatch: {}\npermissions:\n  contents: read\n  id-token: write\njobs:\n'
+    + '  sync:\n    name: Sync harness pin + mirror\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    environment: made-up-env\n' + STEPS;
+  const files = { 'harness-pin-sync.yml': sync, 'ci.yml': check() };
+  const ours = kept.entries.filter((e) => e.repository === 'dazzer-io/dazzer' && e.workflow === 'harness-pin-sync.yml');
+  const without = { ...DAZZER, kept: { ...kept, entries: kept.entries.filter((e) => !ours.includes(e)) } };
+  await everyCase(async (c) => {
+    await c(() => mustRefuse('the harness-pin-sync shape with its entry taken out', files, without, { file: 'harness-pin-sync.yml', job: 'sync', at: 'runs-on: ubuntu-latest', says: /signs in and names its machine literally, 'ubuntu-latest', so it cannot move to the locked set; kept\.json names no stay entry for it/ }));
+    const r = await judgeOf(files, DAZZER);
+    const hits = r.lines.filter((l) => l.startsWith('.github/workflows/harness-pin-sync.yml:'));
+    await c(() => assert.ok(!hits.length, `Could not find the harness-pin-sync shape admitted by kept.json: kept.json names no stay entry it takes for dazzer's harness-pin-sync.yml job sync, and the rule said\n${hits.join('\n')}`));
+    const e = ours[0];
+    await c(() => assert.ok(ours.length === 1 && e.job === 'sync' && e.name === 'Sync harness pin + mirror' && e.effect === 'stay' && e.decision === 253 && /dazzer-agent/.test(e.reason ?? '') && /harness-pin-sync\.yml:\d+-\d+, read 2026-11-12 at dazzer pull request 1482 head bcb9d7042/.test(e.source ?? ''),
+      `Could not find kept.json's one stay entry for dazzer's harness-pin-sync.yml job sync, named as GitHub shows it, on decision 253, its reason naming dazzer-agent's records and its source line read at dazzer pull request 1482 head bcb9d7042: kept.json names no stay entry so: ${JSON.stringify(ours)}`));
+  });
 });
 
 test('the canary effect: runners\' canary.yml and locked-canary.yml alone, by hand, reading only the code, on our own sets named literally, the locked sets in locked-canary.yml alone', async () => {

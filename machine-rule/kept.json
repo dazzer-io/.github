@@ -83,6 +83,16 @@
       "source": "dazzer .github/workflows/pr-automation.yml:22-27 at main, read 2026-11-08; dazzer check-runner-setting.mjs write-token kind (kindOf) at 58797b699"
     },
     {
+      "repository": "dazzer-io/dazzer",
+      "workflow": "harness-pin-sync.yml",
+      "job": "sync",
+      "name": "Sync harness pin + mirror",
+      "effect": "stay",
+      "reason": "it signs in (id-token: write) and copies dazzer-agent's records, which no review of ours reads, so it stays on GitHub's machine for good and never runs on the locked machines; it holds no release secret",
+      "decision": 253,
+      "source": "dazzer .github/workflows/harness-pin-sync.yml:29-33, read 2026-11-12 at dazzer pull request 1482 head bcb9d7042"
+    },
+    {
       "repository": "dazzer-io/dazzer-app",
       "workflow": "dependabot-auto-merge.yml",
       "jobs": [

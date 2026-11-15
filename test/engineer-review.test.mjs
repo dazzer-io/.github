@@ -226,8 +226,9 @@ test('the caller file pins its reusable workflow to a commit and names nothing o
   assert.match(caller, /issue_comment:\n\s+types: \[created\]/);
   assert.match(caller, /pull_request_review:\n\s+types: \[submitted\]/);
   // The calling job holds uses and permissions alone, the shape the machine rule admits
-  // (machine-rule/README.md, "Calls"): its own grant, statuses: write and pull-requests: read, is
-  // what it hands the called workflow, under a top that reads the code alone (decision 178).
+  // (machine-rule/README.md, "Calls"): its own grant, contents: read, statuses: write and
+  // pull-requests: read, is what it hands the called workflow, under a top that reads the code
+  // alone (decision 178).
   assert.match(caller, /\npermissions:\n  contents: read\n\njobs:\n/, 'Could not find the caller\'s top granting contents: read alone');
   assert.match(caller, /\n {2}engineer-review:\n {4}uses: <owner>\/<repo>\/\.github\/workflows\/engineer-review\.yml@<commit>\n {4}permissions:\n {6}contents: read\n {6}statuses: write\n {6}pull-requests: read\n$/, `Could not find the calling job holding uses and its own grant alone: ${PRIVATE}`);
   assert.deepEqual(parse(caller).jobs['engineer-review'].permissions, GRANTS, PRIVATE);
@@ -246,6 +247,22 @@ test('the caller file pins its reusable workflow to a commit and names nothing o
     assert.throws(() => renderCaller(caller, { owner: 'harbor-lane', repo: '.github', commit: ref }), /commit/);
   }
   assert.throws(() => renderCaller(caller, { owner: 'harbor-lane/x', repo: '.github', commit }), /owner/);
+});
+
+const readmePath = fileURLToPath(new URL('../engineer-review/README.md', import.meta.url));
+// Said only when a check goes red on a README that would let a version bump edit a caller's commit
+// alone: the called job may then ask a grant the old caller does not hand, GitHub refuses to start
+// it, and no status is ever set.
+const REBUILD = 'the README\'s advice on moving to a newer version no longer says a caller is rebuilt with decide.mjs caller rather than its commit edited by hand, with its grants checked against caller.yml';
+
+test('the README moves a caller to a newer version by making it again, never by editing its commit alone', () => {
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const start = readme.indexOf('To move a repository to a newer version');
+  assert.ok(start >= 0, `Could not find the paragraph on moving to a newer version: ${REBUILD}`);
+  const section = readme.slice(start).split(/\n[ \t]*\n/)[0].replace(/\s+/g, ' ');
+  assert.match(section, /rebuilt with `decide\.mjs caller`/, REBUILD);
+  assert.match(section, /never by editing only the commit/, REBUILD);
+  assert.match(section, /checks the called job's `permissions`[^.]* against `engineer-review\/caller\.yml`/, REBUILD);
 });
 
 test('the reusable workflow answers to calls and to this repository\'s own events, pinned and with its least rights', () => {

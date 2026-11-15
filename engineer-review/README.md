@@ -72,10 +72,15 @@ The shared workflow repository needs no caller: the workflow's own `pull_request
 `issue_comment` and `pull_request_review` triggers serve its pull requests.
 
 To move a repository to a newer version, make the caller again with the newer commit id and change
-it through a reviewed pull request. **Whoever reviews a caller bump does the same check by hand**:
-compare `main...<the new commit>` in the shared workflow repository (on GitHub, or
+it through a reviewed pull request. A caller is rebuilt with `decide.mjs caller` at the new commit,
+never by editing only the commit in its `uses:` line: the called job may ask a grant the old caller
+does not hand (as `contents: read` did from d55b0f3 on), and GitHub then refuses to start it, so no
+status is set and, once the ruleset requires it, every merge is blocked. **Whoever reviews a caller
+bump does the same check by hand**: compare `main...<the new commit>` in the shared workflow
+repository (on GitHub, or
 `gh api repos/<organisation>/<shared workflow repository>/compare/main...<commit> --jq .status`)
-and accept only `behind` or `identical`.
+and accept only `behind` or `identical`. The reviewer also checks the called job's `permissions` at
+the new commit against `engineer-review/caller.yml`, whose grants the new caller must hand.
 
 The workflow fetches `decide.mjs` with `actions/checkout` (pinned to a commit) from its own
 repository at its own commit, read from the `job.workflow_repository` and `job.workflow_sha`

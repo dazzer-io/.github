@@ -1997,9 +1997,12 @@ test('Left out names no spelling or refusal that no case cites (decisions 181, 1
 
 // ================================================================ the locked settings' new names (decision 253)
 // Every commit before the rename reads vars.LOCKED_RUNNER_2 and _8, so once those were written a
-// re-run, a queued job or a deployment at any such commit would take a locked machine. The switch
-// writes LOCKED_MACHINE_2 and _8 instead, and the rule holds them exactly as it holds the old
-// names, which it still judges as it did, saying in a refusal that the name is old.
+// re-run, a queued job or a deployment at any such commit would take a locked machine.
+// LOCKED_MACHINE_2 and _8 are names no commit held before the rename, which runners' switch is to
+// write from its rename (r-2.20) on. The rule holds them exactly as it holds the old names, which
+// it still judges as it did; the five refusals of how a job reads the locked setting (read unheld,
+// outside its runs-on, with a fallback not GitHub's or of another width, or by a workflow that does
+// not sign in) say where a name it reads is old and give its new name, and no other refusal does.
 const MACHINE2 = "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_2 || 'ubuntu-latest' }}";
 test('LOCKED_MACHINE_2 and LOCKED_MACHINE_8 are read only held to main, as the locked settings are, and an unheld read of either is refused (decision 253)', async () => {
   need();
@@ -2032,16 +2035,16 @@ test('LOCKED_MACHINE_2 and LOCKED_MACHINE_8 are read only held to main, as the l
   });
 });
 
-test('a refusal naming LOCKED_RUNNER_2 or _8 calls that name old and names the new one in its place, while the old name is still judged as it was (decision 253)', async () => {
+test('LOCKED_RUNNER_2 or _8 read unheld, outside its runs-on, with a fallback of another width or of ours, or by a change check is refused saying the name is old and giving its new name of the same width, the fix before those words standing; held to main it is judged as it was, and a refusal of the new name names no old setting (decision 253)', async () => {
   need();
   const ID = 'permissions:\n  contents: read\n  id-token: write\n';
   const signing = (...jobs) => workflow(PUSH, ID, ...jobs);
-  const OLD = (n) => new RegExp(`It reads an old locked setting, LOCKED_RUNNER_${n}, a name every commit before the rename reads; read LOCKED_MACHINE_${n} in its place, a name no commit before the rename reads \\(decision 253\\)`);
+  const OLD = (n) => new RegExp(`It reads an old locked setting, LOCKED_RUNNER_${n}, a name every commit before the rename reads; its new name, of the same width, is LOCKED_MACHINE_${n}, which no commit before the rename reads \\(decision 253\\)`);
   await everyCase(async (c) => {
     await c(() => mustPass('LOCKED_RUNNER_2 held to main, judged as it was', { 'deploy.yml': signing(job('deploy', LOCKED2)) }, DAZZER));
     await c(() => mustRefuse('LOCKED_RUNNER_2 read without the main guard', { 'deploy.yml': signing(job('deploy', "@{{ vars.LOCKED_RUNNER_2 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: OLD(2) }));
     await c(() => mustRefuse('LOCKED_RUNNER_8 read outside its runs-on', { 'deploy.yml': signing(job('deploy', LOCKED2, '    env:\n      K: @{{ vars.LOCKED_RUNNER_8 }}\n')) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: OLD(8) }));
-    await c(() => mustRefuse('LOCKED_RUNNER_8 falling back to a machine of 2 cores', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_8 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: OLD(8) }));
+    await c(() => mustRefuse('LOCKED_RUNNER_8 falling back to a machine of 2 cores', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_8 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: new RegExp(`has 2 cores, so the job would run on a different width depending on the setting\\. Read LOCKED_MACHINE_2\\. ${OLD(8).source}`) }));
     await c(() => mustRefuse('LOCKED_RUNNER_8 falling back to a label of ours', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_8 || 'dazzer-locked-8-core' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: /vars\.LOCKED_MACHINE_8 \|\| 'ubuntu-8-core'.*It reads an old locked setting, LOCKED_RUNNER_8/ }));
     await c(() => mustRefuse('a change check reading LOCKED_RUNNER_2', { 'ci.yml': check('    env:\n      K: @{{ vars.LOCKED_RUNNER_2 }}\n') }, DAZZER, { file: 'ci.yml', job: 'check', says: OLD(2) }));
     // The new name's refusal names no old setting.
@@ -2055,7 +2058,7 @@ test('a refusal naming LOCKED_RUNNER_2 or _8 calls that name old and names the n
 // The swap of every old locked name a case reads for its new one, each in the case it was written in.
 const toMachine = (text) => String(text).replace(/locked_runner_/gi, (m) => (m[7] === 'R' ? 'LOCKED_MACHINE_' : 'locked_machine_'));
 // A refusal line with both names read as one, and the old name's own words taken out.
-const asOneName = (line) => line.replace(/ It reads an old locked setting, [^;]*; read [^;]*? in its place, a name no commit before the rename reads \(decision 253\)\./g, '').replace(/locked_(?:runner|machine)_/gi, 'LOCKED_<NAME>_');
+const asOneName = (line) => line.replace(/ It reads an old locked setting, [^;]*; its new name, of the same width, is [^;]*?, which no commit before the rename reads \(decision 253\)\./g, '').replace(/locked_(?:runner|machine)_/gi, 'LOCKED_<NAME>_');
 // A case's files in one of the shapes a job takes (decision 184): as written, or its job id of
 // file made a call of the shared scan, or kept by a kept.json checks entry, each built as the
 // shapes above build it. Null where the job is not one the shapes above rewrite.
@@ -2071,7 +2074,7 @@ function inShape(files, ctx, shape, file, id) {
   return { files: shaped, ctx: keptFor(ctx, file, read, j, shape === 'checks') };
 }
 const SHAPE_WORDS = { direct: 'as written', call: 'made a call of the shared scan', checks: 'kept by a kept.json checks entry' };
-test('every case above reading LOCKED_RUNNER_2 or _8 reads the same with LOCKED_MACHINE_2 or _8 in its place, as written and in the two other shapes a job takes, a call and a job a checks entry keeps: the same refusals, or none, line for line (decisions 184, 253)', async (t) => {
+test('every case above reading LOCKED_RUNNER_2 or _8 reads the same with LOCKED_MACHINE_2 or _8 in its place, as written and in the two other shapes a job takes, a call and a job a checks entry keeps: the same refusals, or none, line for line but for the words calling a name old (decisions 184, 253)', async (t) => {
   need();
   const cases = [...RECORDED.map((rc) => ({ ...rc, refused: true })), ...PASSED.map((pc) => ({ ...pc, refused: false }))]
     .filter((x) => Object.values(x.files).some((t) => /locked_runner_/i.test(String(t ?? ''))));

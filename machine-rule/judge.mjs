@@ -84,11 +84,12 @@ export const SETTING_NAME = new RegExp(`^${STEM}([1-9][0-9]*)$`);
 // The locked settings' old names, which every commit before the rename reads (decision 253).
 export const OLD_LOCKED = /^LOCKED_RUNNER_/i;
 const newLocked = (name) => String(name).toUpperCase().replace(OLD_LOCKED, 'LOCKED_MACHINE_');
-// The words a refusal adds where it names an old locked setting among the names it reads.
+// The words the five refusals of how a job reads the locked setting add where a name it reads is
+// old: the name, and its new name of the same width, never a fix, which the refusal gives before them.
 const oldLockedWords = (names) => {
   const old = unique([...names].map(String).filter((n) => OLD_LOCKED.test(n)).map((n) => n.toUpperCase()));
   if (!old.length) return '';
-  return ` It reads an old locked setting, ${old.join(', ')}, a name every commit before the rename reads; read ${old.map(newLocked).join(', ')} in its place, a name no commit before the rename reads (decision 253).`;
+  return ` It reads an old locked setting, ${old.join(', ')}, a name every commit before the rename reads; its new name, of the same width, is ${old.map(newLocked).join(', ')}, which no commit before the rename reads (decision 253).`;
 };
 const settingOf = (name) => {
   const m = SETTING_NAME.exec(String(name));

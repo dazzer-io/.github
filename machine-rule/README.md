@@ -197,14 +197,20 @@ reading one is refused.
     reads them, so once they were written, a re-run, a queued job or a deployment at any such
     commit would take a locked machine with a file no reviewer read for the switch.
   - `LOCKED_MACHINE_2` and `LOCKED_MACHINE_8` are the new names, which no commit held before
-    the rename. A run at an older commit reads names the switch never sets, so it stays on
-    GitHub's machines, whatever its age. From runners' rename on (r-2.20), the locked machines'
-    switch writes the new names alone, and refuses while an old one exists.
+    the rename. From runners' rename on (r-2.20), the locked machines' switch writes the new
+    names alone, and refuses while an old one exists; from then, a run at an older commit reads
+    names the switch never sets, so it stays on GitHub's machines, whatever its age. This
+    repository does not see that switch; it holds the names a workflow reads.
   - The rule holds the new names exactly as the old: read in a job's `runs-on` alone, behind
     `github.ref == 'refs/heads/main'`, declared, and as wide as the fallback (the classes,
     below). It still judges the old names as it did, so a workflow not yet renamed reads as
-    before. A refusal naming an old name says the job reads an old locked setting, and names the
-    new one to read in its place.
+    before. The refusals of how a job reads the locked setting say where a name it reads is old,
+    and give its new name, of the same width, after the fix each refusal gives: a job of a
+    workflow that signs in reading it without the main guard, outside its `runs-on`, or with a
+    fallback that is not GitHub's machine or of another width, and a job of a workflow that does
+    not sign in reading it. Any other
+    refusal naming an old name, a public repository's among them, names it as it names any
+    setting, with no word that it is old.
 
 - **A setting read as a job's machine carries GitHub's machine of the same width as its
   fallback** (decision 15): `${{ vars.CHECKS_RUNNER_8 || 'ubuntu-8-core' }}`. A setting with no

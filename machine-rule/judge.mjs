@@ -70,10 +70,11 @@ export const WORKFLOW_DIR = '.github/workflows';
 // is added here in the same change.
 // THE LOCKED SETTINGS' TWO NAMES (decision 253). Every commit before the rename reads
 // LOCKED_RUNNER_2 and 8, so once those were written a re-run, a queued job or a deployment at any
-// such commit would take a locked machine. So the locked machines' switch writes LOCKED_MACHINE_2
-// and 8, names no commit held before the rename, and refuses while an old one exists. Both names
-// are judged alike, held to main the same way; the old ones stay declared, so a workflow not yet
-// renamed is judged as it was, and a refusal naming one says it is old.
+// such commit would take a locked machine. LOCKED_MACHINE_2 and 8 are names no commit held before
+// the rename; from runners' rename on (r-2.20), the locked machines' switch is to write them alone
+// and refuse while an old one exists, which this file does not see. Both names are judged alike,
+// held to main the same way; the old ones stay declared, so a workflow not yet renamed is judged
+// as it was, and a refusal of how a job reads the locked setting says where a name it reads is old.
 export const DECLARED_SETTINGS = Object.freeze(['CHECKS_RUNNER_2', 'CHECKS_RUNNER_8', 'CHECKS_RUNNER_16', 'LOCKED_RUNNER_2', 'LOCKED_RUNNER_8', 'LOCKED_MACHINE_2', 'LOCKED_MACHINE_8', 'SCAN_RUNNER_2']);
 // A setting's name, as runners' bin/apply-org-settings.mjs parses it, and the locked family's
 // new stem: <FAMILY>_RUNNER_<N>, or LOCKED_MACHINE_<N> (the lookbehind admits MACHINE after
@@ -83,11 +84,12 @@ export const SETTING_NAME = new RegExp(`^${STEM}([1-9][0-9]*)$`);
 // The locked settings' old names, which every commit before the rename reads (decision 253).
 export const OLD_LOCKED = /^LOCKED_RUNNER_/i;
 const newLocked = (name) => String(name).toUpperCase().replace(OLD_LOCKED, 'LOCKED_MACHINE_');
-// The words a refusal adds where it names an old locked setting among the names it reads.
+// The words the five refusals of how a job reads the locked setting add where a name it reads is
+// old: the name, and its new name of the same width, never a fix, which the refusal gives before them.
 const oldLockedWords = (names) => {
   const old = unique([...names].map(String).filter((n) => OLD_LOCKED.test(n)).map((n) => n.toUpperCase()));
   if (!old.length) return '';
-  return ` It reads an old locked setting, ${old.join(', ')}, a name every commit before the rename reads; the locked machines' switch writes ${old.map(newLocked).join(', ')} in its place (decision 253).`;
+  return ` It reads an old locked setting, ${old.join(', ')}, a name every commit before the rename reads; its new name, of the same width, is ${old.map(newLocked).join(', ')}, which no commit before the rename reads (decision 253).`;
 };
 const settingOf = (name) => {
   const m = SETTING_NAME.exec(String(name));
@@ -1488,7 +1490,7 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
       } else {
         // ---------------------------------------------------------- a workflow that does not sign in
         const locked = families(['LOCKED']);
-        if (locked.length) no(`is a job of a workflow that does not sign in, and it reads ${locked.join(', ')}. The LOCKED_ settings move the jobs of workflows that sign in to the set locked to main-line code; a change check asking for it would wait for a machine its group never gives (decision 9), and no kept.json effect admits it.${oldLockedWords(locked)}`);
+        if (locked.length) no(`is a job of a workflow that does not sign in, and it reads ${locked.join(', ')}. The LOCKED_ settings move the jobs of workflows that sign in to the set locked to main-line code; a change check asking for it would wait for a machine its group never gives (decision 9), and no kept.json effect admits it. Read no LOCKED_ setting in it.${oldLockedWords(locked)}`);
       }
 
       // The shared scans' jobs (decisions 93, 98, 135): every job that is not a write-token job

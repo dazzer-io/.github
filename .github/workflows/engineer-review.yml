@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # contents: read because GitHub answers a private repository's activity, where the decision
-    # reads the last push, only with it; a caller hands at most these three (engineer-review/README.md).
+    # reads the last push, only with it; a caller hands at most these three (machine-rule/README.md, "Calls").
     permissions:
       contents: read
       statuses: write

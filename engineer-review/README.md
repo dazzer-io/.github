@@ -60,8 +60,10 @@ Actions set it from an Engineer review run (decision D89).
 2. Add the result to the gated repository as `.github/workflows/engineer-review.yml` through a
    reviewed pull request. It runs on `pull_request` (opened, synchronize, reopened),
    `issue_comment` (created, on pull requests only) and `pull_request_review` (submitted), with
-   `statuses: write` and `pull-requests: read`, and calls `.github/workflows/engineer-review.yml`
-   in the shared workflow repository.
+   `contents: read`, `statuses: write` and `pull-requests: read`, and calls
+   `.github/workflows/engineer-review.yml` in the shared workflow repository. `contents: read` is
+   there because GitHub reads a private repository's activity only with it, and the decision reads
+   the activity to find the last push.
 3. The organisation ruleset requires the status check `Engineer review` on the repository's
    default branch, from the GitHub Actions app only (set by the ruleset files, not here). Before
    the ruleset requires it, one live run from a real caller proves the workflow end to end (D89).

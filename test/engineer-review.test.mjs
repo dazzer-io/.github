@@ -204,6 +204,12 @@ test('a long reason is cut to the 140 characters a status keeps', () => {
 });
 
 const callerPath = fileURLToPath(new URL('../engineer-review/caller.yml', import.meta.url));
+// The three grants the run needs: statuses: write to set the status, pull-requests: read to read
+// the pull request and its reviews, and contents: read, without which GitHub answers 403 to a
+// private repository's activity, the record of the last push (compliance run 43770855381).
+const GRANTS = { contents: 'read', statuses: 'write', 'pull-requests': 'read' };
+// Said only when a check goes red on a run that could not read a private repository's activity.
+const PRIVATE = "the Engineer review job is not granted exactly contents: read, statuses: write and pull-requests: read, so in a private repository GitHub answers 403 to the activity it reads the last push from";
 const workflowPath = fileURLToPath(new URL('../.github/workflows/engineer-review.yml', import.meta.url));
 
 test('the caller file pins its reusable workflow to a commit and names nothing of the install', () => {
@@ -223,7 +229,8 @@ test('the caller file pins its reusable workflow to a commit and names nothing o
   // (machine-rule/README.md, "Calls"): its own grant, statuses: write and pull-requests: read, is
   // what it hands the called workflow, under a top that reads the code alone (decision 178).
   assert.match(caller, /\npermissions:\n  contents: read\n\njobs:\n/, 'Could not find the caller\'s top granting contents: read alone');
-  assert.match(caller, /\n {2}engineer-review:\n {4}uses: <owner>\/<repo>\/\.github\/workflows\/engineer-review\.yml@<commit>\n {4}permissions:\n {6}statuses: write\n {6}pull-requests: read\n$/, 'Could not find the calling job holding uses and its own grant, statuses: write and pull-requests: read, alone');
+  assert.match(caller, /\n {2}engineer-review:\n {4}uses: <owner>\/<repo>\/\.github\/workflows\/engineer-review\.yml@<commit>\n {4}permissions:\n {6}contents: read\n {6}statuses: write\n {6}pull-requests: read\n$/, `Could not find the calling job holding uses and its own grant alone: ${PRIVATE}`);
+  assert.deepEqual(parse(caller).jobs['engineer-review'].permissions, GRANTS, PRIVATE);
   // A comment on an issue that is no pull request is skipped by the called workflow's own job,
   // which reads the caller's event: "When a reusable workflow is triggered by a caller workflow,
   // the github context is always associated with the caller workflow." (GitHub's docs, Reusing
@@ -244,8 +251,11 @@ test('the caller file pins its reusable workflow to a commit and names nothing o
 test('the reusable workflow answers to calls and to this repository\'s own events, pinned and with its least rights', () => {
   const wf = parse(fs.readFileSync(workflowPath, 'utf8'));
   for (const trigger of ['workflow_call', 'pull_request', 'issue_comment', 'pull_request_review']) assert.ok(trigger in wf.on, trigger);
-  assert.deepEqual(wf.permissions, { statuses: 'write', 'pull-requests': 'read' });
-  assert.ok(Object.values(wf.jobs).every((job) => !job.permissions), 'a job widens the token');
+  // The top reads the code alone; the one job holds the three grants it uses, the most a caller
+  // may hand it (machine-rule/README.md, "Calls").
+  assert.deepEqual(wf.permissions, { contents: 'read' }, `the workflow's top grants more than contents: read: ${JSON.stringify(wf.permissions)}`);
+  assert.deepEqual(Object.keys(wf.jobs), ['engineer-review']);
+  assert.deepEqual(wf.jobs['engineer-review'].permissions, GRANTS, `${PRIVATE}: the job grants ${JSON.stringify(wf.jobs['engineer-review'].permissions)}`);
   for (const u of Object.values(wf.jobs).flatMap((job) => (job.steps ?? []).map((s) => s.uses)).filter(Boolean)) assert.match(u, /@[0-9a-f]{40}$/, `every uses: is pinned to a commit: ${u}`);
 });
 
@@ -376,6 +386,10 @@ test('a caller pin is refused unless its commit is on the shared workflow reposi
   for (const commit of pins.accepted) {
     const copy = await callerFor(client, caller, { owner: pins.owner, repo: pins.repo, commit });
     assert.ok(copy.includes(`@${commit}\n`));
+    // What decide.mjs caller prints is what a gated repository runs: its job carries the three grants.
+    const printed = parse(copy);
+    assert.deepEqual(printed.permissions, { contents: 'read' });
+    assert.deepEqual(printed.jobs['engineer-review'].permissions, GRANTS, `${PRIVATE}: the printed caller grants ${JSON.stringify(printed.jobs['engineer-review'].permissions)}`);
   }
   for (const [commit, why] of Object.entries(pins.refused)) {
     await assert.rejects(callerFor(client, caller, { owner: pins.owner, repo: pins.repo, commit }),

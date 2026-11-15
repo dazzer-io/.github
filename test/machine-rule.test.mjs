@@ -2036,7 +2036,7 @@ test('a refusal naming LOCKED_RUNNER_2 or _8 calls that name old and names the n
   need();
   const ID = 'permissions:\n  contents: read\n  id-token: write\n';
   const signing = (...jobs) => workflow(PUSH, ID, ...jobs);
-  const OLD = (n) => new RegExp(`It reads an old locked setting, LOCKED_RUNNER_${n}, a name every commit before the rename reads; the locked machines' switch writes LOCKED_MACHINE_${n} in its place \\(decision 253\\)`);
+  const OLD = (n) => new RegExp(`It reads an old locked setting, LOCKED_RUNNER_${n}, a name every commit before the rename reads; read LOCKED_MACHINE_${n} in its place, a name no commit before the rename reads \\(decision 253\\)`);
   await everyCase(async (c) => {
     await c(() => mustPass('LOCKED_RUNNER_2 held to main, judged as it was', { 'deploy.yml': signing(job('deploy', LOCKED2)) }, DAZZER));
     await c(() => mustRefuse('LOCKED_RUNNER_2 read without the main guard', { 'deploy.yml': signing(job('deploy', "@{{ vars.LOCKED_RUNNER_2 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: OLD(2) }));
@@ -2055,21 +2055,59 @@ test('a refusal naming LOCKED_RUNNER_2 or _8 calls that name old and names the n
 // The swap of every old locked name a case reads for its new one, each in the case it was written in.
 const toMachine = (text) => String(text).replace(/locked_runner_/gi, (m) => (m[7] === 'R' ? 'LOCKED_MACHINE_' : 'locked_machine_'));
 // A refusal line with both names read as one, and the old name's own words taken out.
-const asOneName = (line) => line.replace(/ It reads an old locked setting, [^;]*; the locked machines' switch writes [^.]* in its place \(decision 253\)\./g, '').replace(/locked_(?:runner|machine)_/gi, 'LOCKED_<NAME>_');
-test('every case above reading LOCKED_RUNNER_2 or _8 reads the same with LOCKED_MACHINE_2 or _8 in its place: the same refusals, or none, line for line (decision 253)', async (t) => {
+const asOneName = (line) => line.replace(/ It reads an old locked setting, [^;]*; read [^;]*? in its place, a name no commit before the rename reads \(decision 253\)\./g, '').replace(/locked_(?:runner|machine)_/gi, 'LOCKED_<NAME>_');
+// A case's files in one of the shapes a job takes (decision 184): as written, or its job id of
+// file made a call of the shared scan, or kept by a kept.json checks entry, each built as the
+// shapes above build it. Null where the job is not one the shapes above rewrite.
+function inShape(files, ctx, shape, file, id) {
+  if (shape === 'direct') return { files, ctx };
+  const text = wf(files[file]);
+  let read;
+  try { read = J.readWorkflow(text); } catch { return null; }
+  const j = (read?.jobs ?? []).find((x) => x.id === id);
+  if (!j || !isMap(j.js) || 'uses' in j.js) return null;
+  const shaped = shape === 'call' ? { ...files, [file]: asCall(text, j) } : files;
+  if (shaped[file] === null) return null;
+  return { files: shaped, ctx: keptFor(ctx, file, read, j, shape === 'checks') };
+}
+const SHAPE_WORDS = { direct: 'as written', call: 'made a call of the shared scan', checks: 'kept by a kept.json checks entry' };
+test('every case above reading LOCKED_RUNNER_2 or _8 reads the same with LOCKED_MACHINE_2 or _8 in its place, as written and in the two other shapes a job takes, a call and a job a checks entry keeps: the same refusals, or none, line for line (decisions 184, 253)', async (t) => {
   need();
   const cases = [...RECORDED.map((rc) => ({ ...rc, refused: true })), ...PASSED.map((pc) => ({ ...pc, refused: false }))]
     .filter((x) => Object.values(x.files).some((t) => /locked_runner_/i.test(String(t ?? ''))));
   const misses = [];
-  let refused = 0;
+  const ran = { direct: 0, call: 0, checks: 0 };
+  const refused = { direct: 0, call: 0, checks: 0 };
+  const seen = new Set();
   for (const x of cases) {
-    const files = Object.fromEntries(Object.entries(x.files).map(([k, t]) => [k, t === null || t === undefined ? t : toMachine(t)]));
-    const before = (await judgeOf(x.files, x.ctx)).lines.map(asOneName);
-    const after = (await judgeOf(files, x.ctx)).lines.map(asOneName);
-    if (before.length) refused += 1;
-    if (JSON.stringify(before) !== JSON.stringify(after)) misses.push(`Could not find ${x.name} read the same with LOCKED_MACHINE_ in place of LOCKED_RUNNER_:\n  with the old name: ${before.join('\n    ') || '(nothing refused)'}\n  with the new name: ${after.join('\n    ') || '(nothing refused)'}`);
+    const renamed = Object.fromEntries(Object.entries(x.files).map(([k, t]) => [k, t === null || t === undefined ? t : toMachine(t)]));
+    // Every job of every file of the case that reads an old name, or the case's own job of its file.
+    const jobs = [];
+    for (const [file, text] of Object.entries(x.files)) {
+      if (typeof text !== 'string' || !/locked_runner_/i.test(text) || (x.file && file !== x.file)) continue;
+      let read;
+      try { read = J.readWorkflow(wf(text)); } catch { continue; }
+      for (const j of read?.jobs ?? []) if (isMap(j.js) && !('uses' in j.js) && (x.job === undefined || j.id === x.job)) jobs.push([file, j.id]);
+    }
+    for (const [shape, file, id] of [['direct'], ...jobs.flatMap(([f, i]) => [['call', f, i], ['checks', f, i]])]) {
+      const key = JSON.stringify([shape, file, id, x.files, x.ctx.repository, x.ctx.visibility, x.ctx.shared, x.ctx.moving, x.ctx.kept ?? null]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const old = inShape(x.files, x.ctx, shape, file, id);
+      const neu = inShape(renamed, x.ctx, shape, file, id);
+      if (!old || !neu) {
+        if (old || neu) misses.push(`Could not find ${x.name}, its job ${id} ${SHAPE_WORDS[shape]}, built alike with either name: it is not judged with the new name as with the old`);
+        continue;
+      }
+      ran[shape] += 1;
+      const before = (await judgeOf(old.files, old.ctx)).lines.map(asOneName);
+      const after = (await judgeOf(neu.files, neu.ctx)).lines.map(asOneName);
+      if (before.length) refused[shape] += 1;
+      if (JSON.stringify(before) !== JSON.stringify(after)) misses.push(`Could not find ${x.name}${shape === 'direct' ? '' : `, its job ${id} ${SHAPE_WORDS[shape]},`} read the same with LOCKED_MACHINE_ in place of LOCKED_RUNNER_, so it is not judged with the new name as with the old:\n  with the old name: ${before.join('\n    ') || '(nothing refused)'}\n  with the new name: ${after.join('\n    ') || '(nothing refused)'}`);
+    }
   }
-  t.diagnostic(`${cases.length} cases reading LOCKED_RUNNER_ read again with LOCKED_MACHINE_, ${refused} of them refused`);
-  assert.ok(cases.length >= 60 && refused >= 40, `Could not find the cases above reading LOCKED_RUNNER_ to read again with the new name: ${cases.length} found, ${refused} of them refused`);
-  assert.ok(!misses.length, `${misses.join('\n')}\n(${misses.length} of ${cases.length} cases)`);
+  t.diagnostic(`${cases.length} cases reading LOCKED_RUNNER_ read again with LOCKED_MACHINE_: as written ${ran.direct} times (${refused.direct} refused), as a call ${ran.call} times (${refused.call} refused), kept by a checks entry ${ran.checks} times (${refused.checks} refused)`);
+  assert.ok(cases.length >= 60 && refused.direct >= 40, `Could not find the cases above reading LOCKED_RUNNER_ to read again with the new name: ${cases.length} found, ${refused.direct} of them refused`);
+  assert.ok(ran.call >= 40 && ran.checks >= 40 && refused.call >= 30 && refused.checks >= 30, `Could not find the cases above reading LOCKED_RUNNER_ run again with the new name in the two other shapes a job takes: as a call ${ran.call} times (${refused.call} refused), kept by a checks entry ${ran.checks} times (${refused.checks} refused)`);
+  assert.ok(!misses.length, `${misses.join('\n')}\n(${misses.length} of ${ran.direct + ran.call + ran.checks} readings, of ${cases.length} cases)`);
 });

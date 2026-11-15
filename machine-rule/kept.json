@@ -88,9 +88,9 @@
       "job": "sync",
       "name": "Sync harness pin + mirror",
       "effect": "stay",
-      "reason": "it signs in (id-token: write) and copies dazzer-agent's records, which no review of ours reads, so it stays on GitHub's machine for good and never runs on the locked machines; it holds no release secret",
+      "reason": "it copies dazzer-agent's records, which no review of ours reads, so it stays on GitHub's machine for good and never runs on the locked machines; there it signs in through WIF as the release's identity (id-token: write) and holds the pin bot's App key, which mints a token writing contents and pull requests on dazzer",
       "decision": 253,
-      "source": "dazzer .github/workflows/harness-pin-sync.yml:29-33, read 2026-11-12 at dazzer pull request 1482 head bcb9d7042"
+      "source": "dazzer .github/workflows/harness-pin-sync.yml:29-33, read 2026-11-12 at dazzer pull request 1482 head bcb9d7042; its sign-in and the pin bot's key at :26, :52-65, :209 and :231-234, read 2026-11-15 at dazzer main b7382d1d0"
     },
     {
       "repository": "dazzer-io/dazzer-app",

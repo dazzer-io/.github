@@ -70,10 +70,11 @@ export const WORKFLOW_DIR = '.github/workflows';
 // is added here in the same change.
 // THE LOCKED SETTINGS' TWO NAMES (decision 253). Every commit before the rename reads
 // LOCKED_RUNNER_2 and 8, so once those were written a re-run, a queued job or a deployment at any
-// such commit would take a locked machine. So the locked machines' switch writes LOCKED_MACHINE_2
-// and 8, names no commit held before the rename, and refuses while an old one exists. Both names
-// are judged alike, held to main the same way; the old ones stay declared, so a workflow not yet
-// renamed is judged as it was, and a refusal naming one says it is old.
+// such commit would take a locked machine. LOCKED_MACHINE_2 and 8 are names no commit held before
+// the rename; from runners' rename on (r-2.20), the locked machines' switch is to write them alone
+// and refuse while an old one exists, which this file does not see. Both names are judged alike,
+// held to main the same way; the old ones stay declared, so a workflow not yet renamed is judged
+// as it was, and a refusal of how a job reads the locked setting says where a name it reads is old.
 export const DECLARED_SETTINGS = Object.freeze(['CHECKS_RUNNER_2', 'CHECKS_RUNNER_8', 'CHECKS_RUNNER_16', 'LOCKED_RUNNER_2', 'LOCKED_RUNNER_8', 'LOCKED_MACHINE_2', 'LOCKED_MACHINE_8', 'SCAN_RUNNER_2']);
 // A setting's name, as runners' bin/apply-org-settings.mjs parses it, and the locked family's
 // new stem: <FAMILY>_RUNNER_<N>, or LOCKED_MACHINE_<N> (the lookbehind admits MACHINE after
@@ -87,7 +88,7 @@ const newLocked = (name) => String(name).toUpperCase().replace(OLD_LOCKED, 'LOCK
 const oldLockedWords = (names) => {
   const old = unique([...names].map(String).filter((n) => OLD_LOCKED.test(n)).map((n) => n.toUpperCase()));
   if (!old.length) return '';
-  return ` It reads an old locked setting, ${old.join(', ')}, a name every commit before the rename reads; the locked machines' switch writes ${old.map(newLocked).join(', ')} in its place (decision 253).`;
+  return ` It reads an old locked setting, ${old.join(', ')}, a name every commit before the rename reads; read ${old.map(newLocked).join(', ')} in its place, a name no commit before the rename reads (decision 253).`;
 };
 const settingOf = (name) => {
   const m = SETTING_NAME.exec(String(name));

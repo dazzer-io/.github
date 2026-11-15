@@ -203,8 +203,12 @@ reading one is refused.
   - The rule holds the new names exactly as the old: read in a job's `runs-on` alone, behind
     `github.ref == 'refs/heads/main'`, declared, and as wide as the fallback (the classes,
     below). It still judges the old names as it did, so a workflow not yet renamed reads as
-    before. A refusal naming an old name says the job reads an old locked setting, and names the
-    new one to read in its place.
+    before. The refusals of how a job reads the locked setting say where a name it reads is old,
+    and name the new one to read in its place: a job of a workflow that signs in reading it
+    without the main guard, outside its `runs-on`, or with a fallback that is not GitHub's machine
+    or of another width, and a job of a workflow that does not sign in reading it. Any other
+    refusal naming an old name, a public repository's among them, names it as it names any
+    setting, with no word that it is old.
 
 - **A setting read as a job's machine carries GitHub's machine of the same width as its
   fallback** (decision 15): `${{ vars.CHECKS_RUNNER_8 || 'ubuntu-8-core' }}`. A setting with no

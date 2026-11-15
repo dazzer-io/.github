@@ -205,9 +205,10 @@ reading one is refused.
     `github.ref == 'refs/heads/main'`, declared, and as wide as the fallback (the classes,
     below). It still judges the old names as it did, so a workflow not yet renamed reads as
     before. The refusals of how a job reads the locked setting say where a name it reads is old,
-    and give its new name, of the same width, after the fix each refusal gives: a job of a workflow that signs in reading it
-    without the main guard, outside its `runs-on`, or with a fallback that is not GitHub's machine
-    or of another width, and a job of a workflow that does not sign in reading it. Any other
+    and give its new name, of the same width, after the fix each refusal gives: a job of a
+    workflow that signs in reading it without the main guard, outside its `runs-on`, or with a
+    fallback that is not GitHub's machine or of another width, and a job of a workflow that does
+    not sign in reading it. Any other
     refusal naming an old name, a public repository's among them, names it as it names any
     setting, with no word that it is old.
 

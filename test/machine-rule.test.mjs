@@ -2035,18 +2035,21 @@ test('LOCKED_MACHINE_2 and LOCKED_MACHINE_8 are read only held to main, as the l
   });
 });
 
-test('LOCKED_RUNNER_2 or _8 read unheld, outside its runs-on, with a fallback of another width or of ours, or by a change check is refused saying the name is old and giving its new name of the same width, the fix before those words standing; held to main it is judged as it was, and a refusal of the new name names no old setting (decision 253)', async () => {
+test('LOCKED_RUNNER_2 or _8 read unheld, outside its runs-on, with a fallback of another width or of ours, or by a change check is refused saying the name is old and giving its new name of the same width after its own fix, which each case pins; held to main it is judged as it was, and a refusal of the new name names no old setting (decision 253)', async () => {
   need();
   const ID = 'permissions:\n  contents: read\n  id-token: write\n';
   const signing = (...jobs) => workflow(PUSH, ID, ...jobs);
   const OLD = (n) => new RegExp(`It reads an old locked setting, LOCKED_RUNNER_${n}, a name every commit before the rename reads; its new name, of the same width, is LOCKED_MACHINE_${n}, which no commit before the rename reads \\(decision 253\\)`);
+  // Each refusal's own fix, then the old-name words, at the end of its line.
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const FIX = (fix, n) => new RegExp(`${esc(fix)} ${OLD(n).source}\\.$`);
   await everyCase(async (c) => {
     await c(() => mustPass('LOCKED_RUNNER_2 held to main, judged as it was', { 'deploy.yml': signing(job('deploy', LOCKED2)) }, DAZZER));
-    await c(() => mustRefuse('LOCKED_RUNNER_2 read without the main guard', { 'deploy.yml': signing(job('deploy', "@{{ vars.LOCKED_RUNNER_2 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: OLD(2) }));
-    await c(() => mustRefuse('LOCKED_RUNNER_8 read outside its runs-on', { 'deploy.yml': signing(job('deploy', LOCKED2, '    env:\n      K: @{{ vars.LOCKED_RUNNER_8 }}\n')) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: OLD(8) }));
-    await c(() => mustRefuse('LOCKED_RUNNER_8 falling back to a machine of 2 cores', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_8 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: new RegExp(`has 2 cores, so the job would run on a different width depending on the setting\\. Read LOCKED_MACHINE_2\\. ${OLD(8).source}`) }));
-    await c(() => mustRefuse('LOCKED_RUNNER_8 falling back to a label of ours', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_8 || 'dazzer-locked-8-core' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: /vars\.LOCKED_MACHINE_8 \|\| 'ubuntu-8-core'.*It reads an old locked setting, LOCKED_RUNNER_8/ }));
-    await c(() => mustRefuse('a change check reading LOCKED_RUNNER_2', { 'ci.yml': check('    env:\n      K: @{{ vars.LOCKED_RUNNER_2 }}\n') }, DAZZER, { file: 'ci.yml', job: 'check', says: OLD(2) }));
+    await c(() => mustRefuse('LOCKED_RUNNER_2 read without the main guard', { 'deploy.yml': signing(job('deploy', "@{{ vars.LOCKED_RUNNER_2 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: FIX("so a run from any other branch or tag would take the locked machine. Write runs-on: ${{ github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_2 || 'ubuntu-latest' }}.", 2) }));
+    await c(() => mustRefuse('LOCKED_RUNNER_8 read outside its runs-on', { 'deploy.yml': signing(job('deploy', LOCKED2, '    env:\n      K: @{{ vars.LOCKED_RUNNER_8 }}\n')) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: FIX("A job of such a workflow reads the locked setting in its runs-on alone, as github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_<N> || '<GitHub's machine>'.", 8) }));
+    await c(() => mustRefuse('LOCKED_RUNNER_8 falling back to a machine of 2 cores', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_8 || 'ubuntu-latest' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: FIX('has 2 cores, so the job would run on a different width depending on the setting. Read LOCKED_MACHINE_2.', 8) }));
+    await c(() => mustRefuse('LOCKED_RUNNER_8 falling back to a label of ours', { 'deploy.yml': signing(job('deploy', "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_8 || 'dazzer-locked-8-core' }}")) }, DAZZER, { file: 'deploy.yml', job: 'deploy', says: FIX(`which is not GitHub's machine (${J.GITHUB_MACHINE}). Write runs-on: \${{ github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_8 || 'ubuntu-8-core' }}.`, 8) }));
+    await c(() => mustRefuse('a change check reading LOCKED_RUNNER_2', { 'ci.yml': check('    env:\n      K: @{{ vars.LOCKED_RUNNER_2 }}\n') }, DAZZER, { file: 'ci.yml', job: 'check', says: FIX('and no kept.json effect admits it. Read no LOCKED_ setting in it.', 2) }));
     // The new name's refusal names no old setting.
     await c(async () => {
       const r = await judgeOf({ 'deploy.yml': signing(job('deploy', "@{{ vars.LOCKED_MACHINE_2 || 'ubuntu-latest' }}")) });

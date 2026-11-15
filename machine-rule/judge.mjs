@@ -1490,7 +1490,7 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
       } else {
         // ---------------------------------------------------------- a workflow that does not sign in
         const locked = families(['LOCKED']);
-        if (locked.length) no(`is a job of a workflow that does not sign in, and it reads ${locked.join(', ')}. The LOCKED_ settings move the jobs of workflows that sign in to the set locked to main-line code; a change check asking for it would wait for a machine its group never gives (decision 9), and no kept.json effect admits it.${oldLockedWords(locked)}`);
+        if (locked.length) no(`is a job of a workflow that does not sign in, and it reads ${locked.join(', ')}. The LOCKED_ settings move the jobs of workflows that sign in to the set locked to main-line code; a change check asking for it would wait for a machine its group never gives (decision 9), and no kept.json effect admits it. Read no LOCKED_ setting in it.${oldLockedWords(locked)}`);
       }
 
       // The shared scans' jobs (decisions 93, 98, 135): every job that is not a write-token job

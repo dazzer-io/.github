@@ -788,9 +788,10 @@ test('engineer-review.yml alone may be called at a commit, and only one GitHub\'
 // that may copy it (decision 178). It is filled as `node engineer-review/decide.mjs caller` fills
 // it, by renderCaller, at a commit GitHub's compare reads as on main, as callerFor confirms. In a
 // repository strict.json names, a call asks a grant only as codeql.yml's job codeql (dazzer-app's
-// verdict test, verdict.test.ts:1248, 1258), so there the caller's own grant is refused (decision
-// 184): this case passed it there until then, the one fault it pinned.
-test('engineer-review/caller.yml, filled as decide.mjs caller fills it, passes the rule in every class of repository that copies it but the strict one, which refuses its grant (decisions 178, 184)', async () => {
+// verdict test, verdict.test.ts:1248, 1258) or as this caller, exactly (soc2-remediation D154): its
+// file, its job, its target and its three grants, with no secrets: and no with:. Each near miss of
+// that admission is refused there, as every call but codeql.yml's was before (decision 184).
+test('engineer-review/caller.yml, filled as decide.mjs caller fills it, passes the rule in every class of repository that copies it, the strict one included, and every near miss of it stays refused there (decision 178, soc2-remediation D154)', async () => {
   need();
   const { renderCaller, CALLER_USES } = await import('../engineer-review/decide.mjs');
   const template = readFileSync(join(ROOT, 'engineer-review/caller.yml'), 'utf8');
@@ -809,7 +810,30 @@ test('engineer-review/caller.yml, filled as decide.mjs caller fills it, passes t
       const r = await c(() => mustPass(`caller.yml copied into ${name}`, { 'engineer-review.yml': caller, ...beside }, { ...ctx, compare }));
       if (r) await c(() => assert.ok(asked.some((q) => q.base === 'main' && q.head === SHA), `Could not find the caller's pin asked of GitHub's compare as main...${SHA} in ${name}: ${JSON.stringify(asked)}`));
     }
-    await c(() => mustRefuse('caller.yml copied into dazzer-app, the repository strict.json names', { 'engineer-review.yml': caller, 'ci.yml': check() }, { ...APP, compare: async () => 'behind' }, { file: 'engineer-review.yml', job: 'engineer-review', says: /is a call in a repository strict\.json names, and asks for a permission of its own/ }));
+    const asked = [];
+    const app = { ...APP, compare: async (q) => { asked.push(q); return 'behind'; } };
+    const r = await c(() => mustPass('caller.yml copied into dazzer-app, the repository strict.json names', { 'engineer-review.yml': caller, 'ci.yml': check() }, app));
+    if (r) await c(() => assert.ok(asked.some((q) => q.base === 'main' && q.head === SHA), `Could not find the caller's pin asked of GitHub's compare as main...${SHA} in dazzer-app: ${JSON.stringify(asked)}`));
+    // Each near miss of the one admitted call, in dazzer-app: refused for its grant, as any other call there is.
+    const GRANT = /is a call in a repository strict\.json names, and asks for a permission of its own: a call there asks a grant only as codeql\.yml's job codeql, calling the shared scan, or as engineer-review\.yml's job engineer-review/;
+    const swap = (from, to) => { assert.ok(caller.includes(from), `Could not find ${JSON.stringify(from)} in the filled caller to change`); return caller.replace(from, to); };
+    const GRANTS = '    permissions:\n      contents: read\n      statuses: write\n      pull-requests: read\n';
+    const nearMisses = [
+      ['the same call under another file name', 'review.yml', 'engineer-review', () => caller, GRANT],
+      ['the same call as another job id', 'engineer-review.yml', 'review', () => swap('  engineer-review:\n', '  review:\n'), GRANT],
+      ['the same job calling another target file, the shared scan', 'engineer-review.yml', 'engineer-review', () => swap('/.github/workflows/engineer-review.yml@', '/.github/workflows/codeql.yml@'), GRANT],
+      ['the same job calling engineer-review.yml of another owner', 'engineer-review.yml', 'engineer-review', () => swap('dazzer-io/.github/.github/workflows/', 'made-up-owner/.github/.github/workflows/'), GRANT],
+      ['the same call asking a fourth grant, actions: read', 'engineer-review.yml', 'engineer-review', () => swap(GRANTS, `${GRANTS}      actions: read\n`), GRANT],
+      ['the same call granting pull-requests: write', 'engineer-review.yml', 'engineer-review', () => swap('      pull-requests: read\n', '      pull-requests: write\n'), GRANT],
+      ['the same call granting two of its three grants', 'engineer-review.yml', 'engineer-review', () => swap('      contents: read\n      statuses', '      statuses'), GRANT],
+      ['the same call at main, not at a commit', 'engineer-review.yml', 'engineer-review', () => swap(`engineer-review.yml@${SHA}`, 'engineer-review.yml@main'), GRANT],
+      ['the same call at refs/heads/main, not at a commit', 'engineer-review.yml', 'engineer-review', () => swap(`engineer-review.yml@${SHA}`, 'engineer-review.yml@refs/heads/main'), GRANT],
+      ['the same call handing on secrets: inherit', 'engineer-review.yml', 'engineer-review', () => swap(GRANTS, `${GRANTS}    secrets: inherit\n`), GRANT],
+      ['the same call handing an input under with:', 'engineer-review.yml', 'engineer-review', () => swap(GRANTS, `${GRANTS}    with:\n      made-up: x\n`), GRANT],
+      ['the same call naming a secret on a comment line', 'engineer-review.yml', 'engineer-review', () => swap(GRANTS, `${GRANTS}    # @{{ secrets.MADE_UP }}\n`), /is a call in a repository strict\.json names, and names a secret/],
+      ['the same call naming the token on a comment line', 'engineer-review.yml', 'engineer-review', () => swap(GRANTS, `${GRANTS}    # @{{ github.token }}\n`), /is a call in a repository strict\.json names, and hands on the workflow's token/],
+    ];
+    for (const [name, file, id, text, says] of nearMisses) await c(() => mustRefuse(`${name}, caller.yml copied into dazzer-app`, { [file]: text(), 'ci.yml': check() }, { ...APP, compare: async () => 'behind' }, { file, job: id, says }));
   });
 });
 
@@ -1591,6 +1615,7 @@ test('parity: every refusal of dazzer-app\'s verdict test is carried, or named i
     ['1248, 1258, 1673', 'the call of the shared scan from another file', { 'scan.yml': `name: Scan\non: [pull_request, push]\n${READ}jobs:\n${codeqlCall()}`, 'ci.yml': ci() }, R(/is a call in a repository strict\.json names, and asks for a permission of its own/, 'codeql', 'scan.yml'), app],
     ['1251, 1661', 'a call of security-scan.yml at main', { 'codeql.yml': `name: CodeQL\non: [pull_request, push]\n${READ}jobs:\n  codeql:\n    uses: dazzer-io/.github/.github/workflows/security-scan.yml@main\n`, 'ci.yml': ci() }, R(/which declares no workflow_call/, 'codeql', 'codeql.yml'), app],
     ['1248, 1258', 'a call of engineer-review.yml asking for its own grant, outside codeql.yml\'s job codeql', { 'review.yml': reviewCall, 'ci.yml': ci() }, R(/asks for a permission of its own/, 'engineer-review', 'review.yml'), { ...app, compare: behind }],
+    ['1248, 1258', 'engineer-review.yml\'s job engineer-review calling engineer-review.yml with exactly its three grants', { 'engineer-review.yml': reviewCall.replace('    permissions:\n      statuses', '    permissions:\n      contents: read\n      statuses'), 'ci.yml': ci() }, L('narrower call admissions', 'soc2-remediation D154', 'a call of `engineer-review.yml` from `engineer-review.yml`\'s job `engineer-review` in a repository strict.json names, at a commit with exactly its three grants, which dazzer-app\'s verdict test refused'), { ...app, compare: behind }],
     [1267, 'a job checking out with its credential kept', ci('', '    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n'), R(/keeps a git credential/), app],
     [1278, 'a workflow holding such a job with no top-level permissions', ci('', undefined, ''), R(/no top-level permissions written/), app],
     [1278, 'a workflow holding such a job under read-all', ci('', undefined, 'permissions: read-all\n'), R(/grants its token more than reading the code/), app],

@@ -72,7 +72,10 @@ request, is the evidence (see "The evidence" and "Known gap").
    `contents: read`, `statuses: write` and `pull-requests: read`, and calls
    `.github/workflows/engineer-review.yml` in the shared workflow repository. `contents: read` is
    there because GitHub reads a private repository's activity only with it, and the decision reads
-   the activity to find the last push.
+   the activity to find the last push. The organisation's machine rule admits the caller in every
+   repository, the stricter class of `machine-rule/strict.json` (dazzer-app) included, where it is
+   admitted only as made: this file, its job `engineer-review`, the shared workflow at a commit,
+   exactly these three grants and no `secrets:` or `with:` (soc2-remediation D154).
 3. The organisation ruleset requires the status check `Engineer review` on the repository's
    default branch, from the GitHub Actions app only (set by the ruleset files, not here). Before
    the ruleset requires it, one live run from a real caller proves the workflow end to end (D89).

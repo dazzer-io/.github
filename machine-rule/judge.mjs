@@ -120,12 +120,14 @@ export const CALLABLE = Object.freeze([...SHARED_SCANS, '.github/workflows/engin
 export const SHARED_HOLDING = Object.freeze([...CALLABLE, '.github/workflows/machine-rule.yml']);
 const PIN_ADMITTED = '.github/workflows/engineer-review.yml';
 // The one call beside the shared scan a repository strict.json names admits (soc2-remediation
-// D154): engineer-review.yml's job engineer-review calling dazzer-io/.github's engineer-review.yml,
-// its keys uses and permissions alone (so no secrets: and no with:), its grant exactly these three.
-// Its ref is judgeCall's: main or a commit GitHub's compare reads on main.
+// D154): engineer-review.yml's job engineer-review calling dazzer-io/.github's engineer-review.yml
+// at a commit (40 lowercase hex characters, never main), its keys uses and permissions alone (so no
+// secrets: and no with:), its grant exactly these three. judgeCall's compare judges that the commit
+// is on main.
 const REVIEW_GRANT = Object.freeze({ contents: 'read', statuses: 'write', 'pull-requests': 'read' });
 const isTheReviewCall = (file, id, job) => file === basename(PIN_ADMITTED) && id === 'engineer-review'
   && typeof job.uses === 'string' && job.uses.split('@')[0] === `${SHARED}/${PIN_ADMITTED}`
+  && /^[0-9a-f]{40}$/.test(job.uses.slice(job.uses.indexOf('@') + 1))
   && Object.keys(job).sort().join(',') === 'permissions,uses' && isObj(job.permissions)
   && Object.keys(job.permissions).length === Object.keys(REVIEW_GRANT).length
   && Object.entries(REVIEW_GRANT).every(([scope, level]) => job.permissions[scope] === level);
@@ -1432,8 +1434,8 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
       // held to main falling back to it (lockedHeldToMain, decision 190). It holds every other job,
       // whatever its class, a call among them, to no more than the code; a call asks a grant only
       // as codeql.yml's job codeql (1248, 1258) or as engineer-review.yml's job engineer-review
-      // calling the shared review with exactly its three grants (isTheReviewCall, soc2-remediation
-      // D154). An exempt job still meets every class rule below, decision 9's LOCKED_ class and
+      // calling the shared review at a commit with exactly its three grants (isTheReviewCall,
+      // soc2-remediation D154). An exempt job still meets every class rule below, decision 9's LOCKED_ class and
       // the signs-in class's main guard among them.
       if (strictRepo && literal !== 'ubuntu-latest' && !lockedHeldToMain(machine, prStarted)) {
         strictWorkflow = true;
@@ -1631,12 +1633,12 @@ const STRICT_HELD = 'runs on neither the literal ubuntu-latest nor the locked se
 // names no machine, so holdsMoreThanTheCode held it so too, reading its every line, comments
 // included; it asks a grant only as codeql.yml's job codeql calling the shared scan (theCall,
 // verdict.test.ts:1248, 1258) or as engineer-review.yml's job engineer-review calling the shared
-// review with exactly its three grants (soc2-remediation D154).
+// review at a commit with exactly its three grants (soc2-remediation D154).
 function judgeStrict({ job, text, no, call, theCall }) {
   const who = call ? 'is a call in a repository strict.json names' : `${STRICT_HELD} in a repository strict.json names`;
   if (namesIn('secret', text)) no(`${who}, and names a secret: such a job may run on machines of ours, which hold no more than the code.`);
   if (namesIn('token', text)) no(`${who}, and hands on the workflow's token (github.token, github[...], toJSON(github), a github.* filter or the github context whole inside \${{ }}).`);
-  if (!theCall && Object.keys(job).some((k) => k.toLowerCase() === 'permissions')) no(`${who}, and asks for a permission of its own${call ? ': a call there asks a grant only as codeql.yml\'s job codeql, calling the shared scan, or as engineer-review.yml\'s job engineer-review, calling the shared review with exactly contents: read, statuses: write and pull-requests: read and no secrets: or with: (soc2-remediation D154)' : ''}.`);
+  if (!theCall && Object.keys(job).some((k) => k.toLowerCase() === 'permissions')) no(`${who}, and asks for a permission of its own${call ? ': a call there asks a grant only as codeql.yml\'s job codeql, calling the shared scan, or as engineer-review.yml\'s job engineer-review, calling the shared review at a commit with exactly contents: read, statuses: write and pull-requests: read and no secrets: or with: (soc2-remediation D154)' : ''}.`);
   if (checkouts(job).some((c) => !keepsNone(c))) no(`${who}, and checks out without persist-credentials: false, so it keeps a git credential.`);
 }
 

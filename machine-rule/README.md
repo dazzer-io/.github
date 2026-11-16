@@ -300,7 +300,7 @@ public one.
   and it asks a grant only as `codeql.yml`'s job `codeql` calling the shared scan, file and job
   both (`holdsMoreThanTheCode`, verdict.test.ts:1248, 1258; decision 184), or as
   `engineer-review.yml`'s job `engineer-review` calling dazzer-io/.github's `engineer-review.yml`
-  with exactly its three grants, `contents: read`, `statuses: write` and `pull-requests: read`,
+  at a commit with exactly its three grants, `contents: read`, `statuses: write` and `pull-requests: read`,
   and no `secrets:` or `with:` (soc2-remediation D154). Its workflow's top grants exactly
   `contents: read` and names no secret or token.
 
@@ -449,8 +449,8 @@ has a case of its own there, citing the old file and line (decision 181).
     test refused
   - a call from a repository outside runners' five, which runners' reader refused
   - a call of `engineer-review.yml` from `engineer-review.yml`'s job `engineer-review` in a
-    repository strict.json names, with exactly its three grants, which dazzer-app's verdict test
-    refused
+    repository strict.json names, at a commit with exactly its three grants, which dazzer-app's
+    verdict test refused
 - **dazzer-app's line-for-line pin of its call of the shared scan** (decision 153). Its
   languages and its exact grant belong to that repository's caller, not to the machine rule, and
   r-3.26 keeps them in dazzer-app:

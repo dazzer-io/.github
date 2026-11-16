@@ -298,8 +298,11 @@ public one.
   secret, no hand-on of the workflow's token, no permission of its own and no checkout keeping a
   git credential. A call is held the same way: it names no secret or token on any of its lines,
   and it asks a grant only as `codeql.yml`'s job `codeql` calling the shared scan, file and job
-  both (`holdsMoreThanTheCode`, verdict.test.ts:1248, 1258; decision 184). Its workflow's top
-  grants exactly `contents: read` and names no secret or token.
+  both (`holdsMoreThanTheCode`, verdict.test.ts:1248, 1258; decision 184), or as
+  `engineer-review.yml`'s job `engineer-review` calling dazzer-io/.github's `engineer-review.yml`
+  with exactly its three grants, `contents: read`, `statuses: write` and `pull-requests: read`,
+  and no `secrets:` or `with:` (soc2-remediation D154). Its workflow's top grants exactly
+  `contents: read` and names no secret or token.
 
   One shape is exempt beside the literal `ubuntu-latest` (decision 190), the one r-3.8 teaches
   the app's own `holdsMoreThanTheCode`: the locked setting held to main, falling back to the
@@ -436,15 +439,18 @@ has a case of its own there, citing the old file and line (decision 181).
   - a closing `...`
   - a quoted `ubuntu-latest`
   - `permissions:` written as a list, which they counted as a write
-- **The older copies' narrower call admissions** (decision 171, and decision 178 for
-  `engineer-review/caller.yml`). The shared admission takes these calls, which an older copy
-  refused:
+- **The older copies' narrower call admissions** (decision 171, decision 178 for
+  `engineer-review/caller.yml`, and decision soc2-remediation D154 for that caller in a repository
+  strict.json names). The shared admission takes these calls, which an older copy refused:
   - a call at `refs/heads/main`, which dazzer's gate and dazzer-app's verdict test refused
   - a call of `engineer-review.yml` outside a repository strict.json names, which dazzer's gate
     read as a change check calling a workflow
   - a call of `engineer-review.yml` from another workflow of dazzer-io/.github, which the runs-on
     test refused
   - a call from a repository outside runners' five, which runners' reader refused
+  - a call of `engineer-review.yml` from `engineer-review.yml`'s job `engineer-review` in a
+    repository strict.json names, with exactly its three grants, which dazzer-app's verdict test
+    refused
 - **dazzer-app's line-for-line pin of its call of the shared scan** (decision 153). Its
   languages and its exact grant belong to that repository's caller, not to the machine rule, and
   r-3.26 keeps them in dazzer-app:

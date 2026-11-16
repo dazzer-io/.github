@@ -52,9 +52,11 @@ request, is the evidence (see "The evidence" and "Known gap").
    shared workflow repository's `main` branch that holds the version you want. Run the command
    from a checkout of the shared workflow repository, `dazzer-io/.github`, at the commit being
    pinned: it fills the `caller.yml` beside the script it runs, so a checkout at another commit (a
-   stale clone, say) prints that commit's grants pinned to yours, GitHub refuses to start the
-   called job, no status is set and, once the ruleset requires it, every merge is blocked:
+   stale clone, say) prints that commit's grants pinned to yours. Where the grants at the two
+   commits differ, GitHub refuses to start the called job, no status is set and, once the ruleset
+   requires it, every merge is blocked:
 
+       git -C <checkout> fetch
        git -C <checkout> checkout <40-character commit id>
        node <checkout>/engineer-review/decide.mjs caller --owner dazzer-io --repo .github --commit <40-character commit id> > engineer-review.yml
 
@@ -83,13 +85,12 @@ it through a reviewed pull request. A caller is rebuilt with `decide.mjs caller`
 never by editing only the commit in its `uses:` line: the called job may ask a grant the old caller
 does not hand (as `contents: read` did from d55b0f3 on), and GitHub then refuses to start it, so no
 status is set and, once the ruleset requires it, every merge is blocked. Run it from a checkout of
-the shared workflow repository, `dazzer-io/.github`, at the new commit (`git -C <checkout> checkout
-<new commit>`, then `node <checkout>/engineer-review/decide.mjs caller --owner dazzer-io --repo .github
---commit <new commit>`): the command fills the `caller.yml` beside the script it runs, so a checkout
+the shared workflow repository, `dazzer-io/.github`, at the new commit (`git -C <checkout> fetch`,
+`git -C <checkout> checkout <new commit>`, then `node <checkout>/engineer-review/decide.mjs caller
+--owner dazzer-io --repo .github --commit <new commit>`): the command fills the `caller.yml` beside the script it runs, so a checkout
 at an older commit prints the old grants pinned to the new commit. **Whoever reviews a caller bump
 does the same check by hand**: compare `main...<the new commit>` in the shared workflow repository
-(on GitHub, or
-`gh api repos/<organisation>/<shared workflow repository>/compare/main...<commit> --jq .status`)
+(on GitHub, or `gh api repos/dazzer-io/.github/compare/main...<new commit> --jq .status`)
 and accept only `behind` or `identical`. The reviewer also compares the called job's `permissions`
 at the new commit with the job-level `permissions` in the new caller file itself, which must hand
 every grant the called job asks.

@@ -334,6 +334,12 @@ test('the README makes a first caller from a checkout of the shared workflow rep
   assert.match(step, /git -C <checkout> checkout <40-character commit id>/, ADOPT);
   assert.match(step, /node <checkout>\/engineer-review\/decide\.mjs caller .*--commit <40-character commit id>/, ADOPT);
   assert.doesNotMatch(step, /(^|\s)node engineer-review\/decide\.mjs caller/, ADOPT);
+  // caller.yml's own comment, printed into every caller, gives the same command the same way.
+  const comment = fs.readFileSync(callerPath, 'utf8').split('\n').filter((l) => /^#/.test(l)).map((l) => l.replace(/^#\s?/, '')).join(' ').replace(/\s+/g, ' ');
+  const CALLER_ADOPT = 'caller.yml\'s comment no longer says decide.mjs caller is run from a checkout of the shared workflow repository at the commit being pinned';
+  assert.match(comment, /decide\.mjs caller/, CALLER_ADOPT);
+  assert.match(comment, /from a checkout of the shared workflow repository[^.]*at the commit being pinned/, CALLER_ADOPT);
+  assert.doesNotMatch(comment, /(^|\s)node engineer-review\/decide\.mjs caller/, CALLER_ADOPT);
 });
 
 test('the reusable workflow answers to calls and to this repository\'s own events, pinned and with its least rights', () => {

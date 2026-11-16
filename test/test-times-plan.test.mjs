@@ -152,8 +152,8 @@ const held = (setup) => count({ history: { ...HISTORY, files: SERIAL_300,
 // D15: where no count holds the slowest part under the figure, the count is the smallest whose
 // slowest part's own tests, the part less the lane's recorded set-up, are under it. Six parts of
 // fifty 1 s files hold the tests to 50 s, so 1 ms of set-up either side of the figure, or ten
-// seconds over it, gives the same count.
-test('where the set-up keeps a lane over, the count holds its slowest part\'s own tests under, and 1 ms of set-up never swings it', () => {
+// seconds over it, gives the same count. Further below the figure it can still jump (next test).
+test('where the set-up keeps a lane over, the count holds its slowest part\'s own tests under, and 1 ms of set-up either side of the figure never swings it', () => {
   const at = held(50000);
   const below = held(49999);
   assert.equal(below.count, at.count, `a set-up of 49 999 ms gives ${below.count} parts and one of 50 000 ms ${at.count}: 1 ms of set-up swings the count`);
@@ -161,6 +161,19 @@ test('where the set-up keeps a lane over, the count holds its slowest part\'s ow
     assert.deepEqual([c.count, c.tests_ms, c.slowest_ms, c.setup_over, c.alone, c.capped], [6, 50000, 50000 + setup, true, null, false],
       `with ${setup} ms of set-up, six parts of fifty 1 s files hold the tests to docs-site's 50 s, and the set-up keeps the lane over`);
   }
+});
+
+// D15 moves the jump rather than removing it (README.md, "Where no count gets under its
+// figure"): it sits where the figure stops being reachable at any count up to 256, at a set-up
+// of the figure less the lowest slowest part's own tests, here 50 s less two 1 s files.
+test('where the figure stops being reachable, 1 ms of set-up still takes the count from 150 parts to 6, as the notes say', () => {
+  const reach = held(48000);
+  const past = held(48001);
+  assert.deepEqual([reach.count, reach.slowest_ms, reach.tests_ms, reach.setup_over], [150, 50000, 2000, false],
+    'with 48 000 ms of set-up, 150 parts of two 1 s files are 50 s, no longer than docs-site\'s 50 s');
+  assert.deepEqual([past.count, past.slowest_ms, past.tests_ms, past.setup_over], [6, 98001, 50000, true],
+    'with 48 001 ms no count up to 256 gets under 50 s, so the tests rule gives six parts at 98 001 ms');
+  assert.deepEqual([held(47000).count, held(47001).count], [100, 150], 'before that edge the first rule steps on its own, 100 parts to 150');
 });
 
 test('a lane whose set-up is well under its figure still takes the first rule', () => {

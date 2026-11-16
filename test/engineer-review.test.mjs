@@ -254,6 +254,10 @@ const readmePath = fileURLToPath(new URL('../engineer-review/README.md', import.
 // alone: the called job may then ask a grant the old caller does not hand, GitHub refuses to start
 // it, and no status is ever set.
 const REBUILD = 'the README\'s advice on moving to a newer version no longer says a caller is rebuilt with decide.mjs caller rather than its commit edited by hand, with its grants checked against caller.yml';
+// Said only when a check goes red on a README that lets a caller be made, or a bump reviewed,
+// from a checkout at an older commit: decide.mjs fills the caller.yml beside itself, so an older
+// checkout prints the old grants pinned to the new commit and GitHub refuses the call.
+const CHECKOUT = 'the README\'s advice on moving to a newer version no longer says decide.mjs caller is run from a checkout at the new commit, with the called job\'s permissions at that commit compared with the new caller file\'s own';
 
 test('the README moves a caller to a newer version by making it again, never by editing its commit alone', () => {
   const readme = fs.readFileSync(readmePath, 'utf8');
@@ -262,7 +266,35 @@ test('the README moves a caller to a newer version by making it again, never by 
   const section = readme.slice(start).split(/\n[ \t]*\n/)[0].replace(/\s+/g, ' ');
   assert.match(section, /rebuilt with `decide\.mjs caller`/, REBUILD);
   assert.match(section, /never by editing only the commit/, REBUILD);
-  assert.match(section, /checks the called job's `permissions`[^.]* against `engineer-review\/caller\.yml`/, REBUILD);
+  // decide.mjs fills the caller.yml beside itself, so the command and the reviewer's check are
+  // both read at the new commit, never at whatever commit a checkout happens to hold.
+  assert.match(section, /from a checkout of the shared workflow repository, `dazzer-io\/\.github`, at the new commit/, CHECKOUT);
+  assert.match(section, /`git -C <checkout> checkout <new commit>`/, CHECKOUT);
+  assert.match(section, /`node <checkout>\/engineer-review\/decide\.mjs caller [^`]*--commit <new commit>`/, CHECKOUT);
+  assert.match(section, /compares the called job's `permissions` at the new commit with the job-level `permissions` in the new caller file itself/, CHECKOUT);
+  assert.doesNotMatch(section, /against `engineer-review\/caller\.yml`/, CHECKOUT);
+});
+
+// Said only when a check goes red on a README whose account of DZ-33 parts from compliance's
+// policy (policies/change-management.md: "the status is the gate only, not the evidence") and
+// from scheduler's DZ-33 line, which reads no status, its creator or its link.
+const DZ33 = 'the README takes the Engineer review status, its creator or its link as DZ-33\'s evidence, where compliance\'s policy makes the status the merge gate only and DZ-33 reads the review itself';
+
+test('the README gives DZ-33 the review itself as evidence and the status as the merge gate only', () => {
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const flat = readme.replace(/\s+/g, ' ');
+  // Each sentence naming DZ-33: the ruleset's own words around it (from the GitHub Actions app
+  // alone) describe the gate, not DZ-33.
+  const sentences = flat.split(/(?<=\.)\s+/).filter((b) => /DZ-33/.test(b));
+  assert.ok(sentences.length > 0, `Could not find DZ-33 named in the README: ${DZ33}`);
+  for (const b of sentences) {
+    // compliance test/controls.test.mjs refuses these words in DZ-33's own text.
+    assert.doesNotMatch(b, /created by GitHub Actions|from the GitHub Actions app|link(s|ing)? to an Engineer review run/, DZ33);
+    assert.doesNotMatch(b, /checks each status's creator|link opens an Engineer review run/, DZ33);
+    assert.match(b, /merge gate only, never the evidence/, DZ33);
+    assert.match(b, /reads no status, its creator or its link/, DZ33);
+  }
+  assert.doesNotMatch(flat, /The status itself carries the evidence/, DZ33);
 });
 
 test('the reusable workflow answers to calls and to this repository\'s own events, pinned and with its least rights', () => {

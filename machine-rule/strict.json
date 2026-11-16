@@ -1,0 +1,11 @@
+{
+  "about": "The repositories held to dazzer-app's stricter class: on every job off a literal GitHub standard label (a job that only calls a shared workflow aside), no secret named in any case, no hand-on of the workflow's token, no permissions key of its own and every checkout with persist-credentials: false; in a workflow holding such a job (or a call), top permissions exactly contents: read and no secret or token named outside its jobs. It stays the class of the repositories named here and is not laid on dazzer, scheduler and brain-builder, whose change checks check out without persist-credentials: false today. machine-rule/judge.mjs reads this file from dazzer-io/.github, never from the repository it judges.",
+  "repositories": [
+    {
+      "repository": "dazzer-io/dazzer-app",
+      "reason": "the class its verdict test's holdsMoreThanTheCode holds today: a job that may run elsewhere holds no more than the code",
+      "decision": 54,
+      "source": "dazzer-app test/verdict.test.ts holdsMoreThanTheCode (1238-1306) and namesIn (1167-1200) at 4b236f2e"
+    }
+  ]
+}

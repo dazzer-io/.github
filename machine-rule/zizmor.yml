@@ -1,0 +1,8 @@
+# zizmor's policy for machine-rule.yml: every action pinned by commit, but the organisation's own
+# reusable workflows, which a repository calls on main.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "dazzer-io/*": ref-pin
+        "*": hash-pin

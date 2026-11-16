@@ -1,0 +1,8 @@
+{
+  "name": "dazzer-io-shared-workflows",
+  "private": true,
+  "description": "The organisation's shared workflows and the one machine rule. Its one package is the YAML reader the machine rule reads workflows with (machine-rule/judge.mjs).",
+  "dependencies": {
+    "yaml": "2.9.1"
+  }
+}

@@ -41,15 +41,24 @@ audit window holds the evidence; it costs one act per change (decision D83).
 
 It is a commit status set by a reusable workflow, not a workflow the ruleset runs, because GitHub
 runs a ruleset-required workflow only on `pull_request`, `pull_request_target` and `merge_group`,
-so a review comment could never start it (decision D86). The status counts only when GitHub
-Actions set it from an Engineer review run (decision D89).
+so a review comment could never start it (decision D86). The status is the merge gate, which the
+ruleset requires from the GitHub Actions app alone (decision D89); a workflow of the repository
+itself could also set it, so the status is never the evidence: the review itself, kept on the pull
+request, is the evidence (see "The evidence" and "Known gap").
 
 ## Adopting it in a repository
 
 1. Make the repository's caller file from `engineer-review/caller.yml`, pinned to a commit on the
-   shared workflow repository's `main` branch that holds the version you want:
+   shared workflow repository's `main` branch that holds the version you want. Run the command
+   from a checkout of the shared workflow repository, `dazzer-io/.github`, at the commit being
+   pinned: it fills the `caller.yml` beside the script it runs, so a checkout at another commit (a
+   stale clone, say) prints that commit's grants pinned to yours. Where the grants at the two
+   commits differ, GitHub refuses to start the called job, no status is set and, once the ruleset
+   requires it, every merge is blocked:
 
-       node engineer-review/decide.mjs caller --owner <organisation> --repo <the shared workflow repository's name> --commit <40-character commit id> > engineer-review.yml
+       git -C <checkout> fetch
+       git -C <checkout> checkout <40-character commit id>
+       node <checkout>/engineer-review/decide.mjs caller --owner dazzer-io --repo .github --commit <40-character commit id> > engineer-review.yml
 
    The template names no organisation, repository or commit; the command fills its one `uses:`
    line, refuses a branch or tag name in place of a commit id, and asks GitHub to compare
@@ -60,8 +69,13 @@ Actions set it from an Engineer review run (decision D89).
 2. Add the result to the gated repository as `.github/workflows/engineer-review.yml` through a
    reviewed pull request. It runs on `pull_request` (opened, synchronize, reopened),
    `issue_comment` (created, on pull requests only) and `pull_request_review` (submitted), with
-   `statuses: write` and `pull-requests: read`, and calls `.github/workflows/engineer-review.yml`
-   in the shared workflow repository.
+   `contents: read`, `statuses: write` and `pull-requests: read`, and calls
+   `.github/workflows/engineer-review.yml` in the shared workflow repository. `contents: read` is
+   there because GitHub reads a private repository's activity only with it, and the decision reads
+   the activity to find the last push. The organisation's machine rule admits the caller in every
+   repository, the stricter class of `machine-rule/strict.json` (dazzer-app) included, where it is
+   admitted only as made: this file, its job `engineer-review`, the shared workflow at a commit,
+   exactly these three grants and no `secrets:` or `with:` (soc2-remediation D154).
 3. The organisation ruleset requires the status check `Engineer review` on the repository's
    default branch, from the GitHub Actions app only (set by the ruleset files, not here). Before
    the ruleset requires it, one live run from a real caller proves the workflow end to end (D89).
@@ -70,10 +84,19 @@ The shared workflow repository needs no caller: the workflow's own `pull_request
 `issue_comment` and `pull_request_review` triggers serve its pull requests.
 
 To move a repository to a newer version, make the caller again with the newer commit id and change
-it through a reviewed pull request. **Whoever reviews a caller bump does the same check by hand**:
-compare `main...<the new commit>` in the shared workflow repository (on GitHub, or
-`gh api repos/<organisation>/<shared workflow repository>/compare/main...<commit> --jq .status`)
-and accept only `behind` or `identical`.
+it through a reviewed pull request. A caller is rebuilt with `decide.mjs caller` at the new commit,
+never by editing only the commit in its `uses:` line: the called job may ask a grant the old caller
+does not hand (as `contents: read` did from d55b0f3 on), and GitHub then refuses to start it, so no
+status is set and, once the ruleset requires it, every merge is blocked. Run it from a checkout of
+the shared workflow repository, `dazzer-io/.github`, at the new commit (`git -C <checkout> fetch`,
+`git -C <checkout> checkout <new commit>`, then `node <checkout>/engineer-review/decide.mjs caller
+--owner dazzer-io --repo .github --commit <new commit>`): the command fills the `caller.yml` beside the script it runs, so a checkout
+at an older commit prints the old grants pinned to the new commit. **Whoever reviews a caller bump
+does the same check by hand**: compare `main...<the new commit>` in the shared workflow repository
+(on GitHub, or `gh api repos/dazzer-io/.github/compare/main...<new commit> --jq .status`)
+and accept only `behind` or `identical`. The reviewer also compares the called job's `permissions`
+at the new commit with the job-level `permissions` in the new caller file itself, which must hand
+every grant the called job asks.
 
 The workflow fetches `decide.mjs` with `actions/checkout` (pinned to a commit) from its own
 repository at its own commit, read from the `job.workflow_repository` and `job.workflow_sha`
@@ -89,7 +112,8 @@ carries and sets the status on the queue's commit.
 
 ## The evidence
 
-The status itself carries the evidence on the commit: its description reads
+The evidence is the review itself, kept on the pull request: the `reviewed` comment or the
+approving review. The status is the gate and points to it: its description reads
 `Reviewed by <login> at <time> (<comment | approving review>) on <commit>`, and its link opens the
 run whose summary adds the review's own link, the head commit, when that commit was pushed, and the
 reviews it did not count and why. The run also prints one `Engineer review` notice line with the
@@ -120,9 +144,12 @@ comment again.
 - **The status can be forged by anyone who may write statuses.** A commit status is set through
   the API by any holder of `statuses: write` on the repository: another workflow, an App, or a
   person with write access using `gh api`, all with no review. The ruleset therefore requires the
-  status from the GitHub Actions app alone, which shuts out Apps and people; a workflow of the
-  repository itself still runs as GitHub Actions, so DZ-33 also checks each status's creator and
-  that its link opens an Engineer review run of the shared workflow repository's workflow (D89).
+  status from the GitHub Actions app alone, which shuts out Apps and people. A workflow of the
+  repository itself still runs as GitHub Actions and can set the status with a link of its choosing,
+  so for DZ-33 the status is the merge gate only, never the evidence: its daily line reads no status,
+  its creator or its link, and judges each merged change by the review itself, a `reviewed` comment
+  or an approving review of the head commit by a person with write or admin permission, after the
+  last push and at or before the merge, by the rule `decide.mjs` applies (D89, D91, D96).
 - **Withdrawing a review does not withdraw the status.** Deleting the `reviewed` comment or
   dismissing the approval leaves the success standing until the next push; dismissals are not among
   the caller's triggers.

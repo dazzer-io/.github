@@ -7,10 +7,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import {
   decide, summary, annotations, readMode, readNative, readAccepted, allowGhsas,
   requiredOutputs, fromCvss, fromWord, blocks, OPEN_SOURCE_OUTPUTS,
   readRemovedLockfiles, isLockfile, EVERY_DEPENDENCY_FILE_REMOVED, DEPENDENCY_FILES_REMOVED, cell,
+  escapeProperty,
 } from '../security-scan/decide.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -119,8 +121,8 @@ test('an accepted entry with no risk-acceptance record accepts nothing', () => {
 
 test('on a native repository no open-source job is required', () => {
   const d = check('native: no dependency changes and no open-source output, blocking');
-  assert.deepEqual(d.required, ['dependency-review']);
-  assert.deepEqual(requiredOutputs(true), ['dependency-review']);
+  assert.deepEqual(d.required, ['dependency-review', 'person-tokens']);
+  assert.deepEqual(requiredOutputs(true), ['dependency-review', 'person-tokens']);
   for (const name of OPEN_SOURCE_OUTPUTS) assert.ok(!d.required.includes(name), name);
   assert.equal(d.branch, 'native');
 });
@@ -135,9 +137,9 @@ test('a missing dependency review output blocks', () => {
 
 // ---------- the open-source scanners ----------
 
-test('elsewhere, clean scanners pass, and all five outputs are required', () => {
+test('elsewhere, clean scanners pass, and all six outputs are required', () => {
   const d = check('open source: everything clean, blocking');
-  assert.deepEqual(d.required, ['osv-head', 'osv-base', 'osv-removed', 'gitleaks', 'semgrep']);
+  assert.deepEqual(d.required, ['osv-head', 'osv-base', 'osv-removed', 'gitleaks', 'semgrep', 'person-tokens']);
   assert.equal(d.branch, 'open source');
 });
 
@@ -380,11 +382,60 @@ test('in advisory mode a scanner job that failed counts as one would-block item 
   assert.equal(annotations(d).at(-1), '::warning title=security-scan::security-scan would block: 3');
 });
 
+// ---------- the person-token check, on every branch ----------
+
+const PERSON_TOKEN_ID = 'person-token:.github/workflows/release.yml:HARBOR_LANE_PAT';
+
+test('a person token the change adds blocks in blocking mode, and points at its line', () => {
+  const d = check('native: a person token the change adds, blocking');
+  const lines = annotations(d);
+  assert.equal(lines.at(-1), '::error title=security-scan::security-scan blocks: 1');
+  const at = lines.find((l) => l.includes('file=.github/workflows/release.yml'));
+  assert.ok(at, `${MISSED}: no annotation points at the workflow: ${JSON.stringify(lines)}`);
+  assert.match(at, /^::error file=\.github\/workflows\/release\.yml,line=14,title=security-scan::\.github\/workflows\/release\.yml line 14 uses the repository secret HARBOR_LANE_PAT/);
+  const text = summary(d);
+  assert.ok(text.includes(PERSON_TOKEN_ID), text);
+  assert.match(text, /github\.token/, 'the summary does not say what to use instead');
+  assert.match(text, /actions\/create-github-app-token/, 'the summary does not say what to use instead');
+  const said = text.split('\n').find((l) => l.startsWith('- .github/workflows/release.yml line 14'));
+  assert.ok(said && said.endsWith('(${{ steps.<id>.outputs.token }}).'), `${MISSED}: the summary cuts the refusal short: ${said}`);
+});
+
+test('a person token the change adds is counted, and passes, in advisory mode', () => {
+  const d = check('open source: a person token the change adds, advisory');
+  assert.ok(annotations(d).some((l) => /^::warning file=\.github\/workflows\/release\.yml,line=14,/.test(l)),
+    `${MISSED}: the advisory run does not point at the line`);
+});
+
+test('a person token its exception allows is recorded and does not block', () => {
+  const d = check('native: a person token its exception allows, blocking');
+  assert.equal(d.findings[0].id, PERSON_TOKEN_ID);
+  assert.ok(d.notes.includes('person tokens: read the 1 workflow file(s) the change touches'), JSON.stringify(d.notes));
+  assert.ok(!annotations(d).some((l) => l.includes('file=')), `${WRONGLY_BLOCKED}: an allowed use is annotated as refused`);
+});
+
+test('the accepted list never accepts a person token: only the exceptions file does, with its end date', () => {
+  const d = check('native: a person token named in the accepted list, blocking');
+  assert.equal(d.findings[0].accepted, null, `${MISSED}: the accepted list let a person token in`);
+});
+
+test('a person-token check that did not run, crashed or wrote what cannot be read blocks', () => {
+  check('native: the person-token check did not run, blocking');
+  check('open source: the person-token check crashed, blocking');
+  check('native: the person-token output is not JSON, blocking');
+  const d = check('native: the exceptions file the change writes cannot be read, blocking');
+  assert.ok(d.errors.some((e) => /person-token-exceptions\.json/.test(e)), JSON.stringify(d.errors));
+});
+
+test('an annotation\'s file name cannot break out of its property', () => {
+  assert.equal(escapeProperty('a,b:c%d\ne'), 'a%2Cb%3Ac%25d%0Ae');
+});
+
 // ---------- the workflow, as GitHub runs it ----------
 
 const WORKFLOW = path.join(here, '..', '.github', 'workflows', 'security-scan.yml');
 const workflowLines = fs.readFileSync(WORKFLOW, 'utf8').split('\n');
-const SCANNER_JOBS = ['dependency-review', 'osv-scanner', 'gitleaks', 'semgrep'];
+const SCANNER_JOBS = ['dependency-review', 'osv-scanner', 'gitleaks', 'semgrep', 'person-tokens'];
 const OPEN_SOURCE_JOBS = ['osv-scanner', 'gitleaks', 'semgrep'];
 const QUIETING_FILES = ['.semgrepignore', '.gitleaksignore', '.gitleaks.toml', 'osv-scanner.toml'];
 const STRIP_STEP = 'Remove the files a change could quiet the scan with';
@@ -662,6 +713,83 @@ test('in advisory mode only the security-scan job decides the workflow\'s result
   }
 });
 
+// ---------- which runs a newer one cancels ----------
+// GitHub's expression grammar as far as concurrency here needs it: quoted text, true, false,
+// null and numbers, a context read by name, ==, !=, !, && and || (each giving back an operand),
+// parentheses and format(). A shape outside it throws, so the test goes red rather than guessing.
+function evaluateExpression(body, ctx) {
+  const toks = body.match(/'(?:[^']|'')*'|\|\||&&|==|!=|[!(),.]|[A-Za-z_][A-Za-z0-9_-]*|-?\d+|\S/g) ?? [];
+  let i = 0;
+  const peek = (v) => toks[i] === v;
+  const take = (v) => { if (toks[i] !== v) throw new Error(`expected ${v} in ${body}`); i++; };
+  const loose = (v) => (typeof v === 'string' ? v.toLowerCase() : v);
+  const or = () => { let v = and(); while (peek('||')) { i++; const r = and(); v = v || r; } return v; };
+  const and = () => { let v = cmp(); while (peek('&&')) { i++; const r = cmp(); v = v && r; } return v; };
+  const cmp = () => {
+    let v = unary();
+    while (peek('==') || peek('!=')) { const op = toks[i++]; const r = unary(); v = op === '==' ? loose(v) === loose(r) : loose(v) !== loose(r); }
+    return v;
+  };
+  const unary = () => (peek('!') ? (i++, !unary()) : primary());
+  const primary = () => {
+    const t = toks[i++];
+    if (t === undefined) throw new Error(`${body} ends where a value should be`);
+    if (t === '(') { const v = or(); take(')'); return v; }
+    if (t.startsWith("'")) return t.slice(1, -1).replaceAll("''", "'");
+    if (/^-?\d+$/.test(t)) return Number(t);
+    if (t === 'true' || t === 'false') return t === 'true';
+    if (t === 'null') return null;
+    if (t === 'format' && peek('(')) {
+      i++;
+      const args = [or()];
+      while (peek(',')) { i++; args.push(or()); }
+      take(')');
+      return String(args[0]).replace(/\{(\d+)\}/g, (_, n) => String(args[Number(n) + 1] ?? ''));
+    }
+    if (!/^[A-Za-z_]/.test(t) || !Object.hasOwn(ctx, t)) throw new Error(`${body} reads ${t}, which this test does not evaluate`);
+    let v = ctx[t];
+    while (peek('.')) { i++; const k = toks[i++]; v = v === null || v === undefined ? null : v[k] ?? null; }
+    return v;
+  };
+  const v = or();
+  if (i < toks.length) throw new Error(`${body} reads past its end at ${toks[i]}`);
+  return v;
+}
+// A value as GitHub gives it: one whole ${{ }} keeps its type; text around one is joined. A body
+// ends at its first }}, so a {0} inside it is read as text.
+function evaluateValue(value, ctx) {
+  if (typeof value !== 'string') return value;
+  const whole = value.match(/^\$\{\{((?:(?!\}\}).)*)\}\}$/);
+  if (whole) return evaluateExpression(whole[1], ctx);
+  return value.replace(/\$\{\{((?:(?!\}\}).)*)\}\}/g, (_, b) => String(evaluateExpression(b, ctx) ?? ''));
+}
+
+const SUPERSEDED = 'a superseded pull-request scan is left running';
+const CUT_SHORT = 'a scan that is no pull request\'s can be cancelled';
+test('a newer push to a pull request cancels its older scan, and nothing else is ever cancelled', () => {
+  const wf = parseYaml(fs.readFileSync(WORKFLOW, 'utf8'));
+  const c = wf.concurrency;
+  assert.ok(c && typeof c === 'object' && c.group !== undefined, `${SUPERSEDED}: the workflow's top holds no concurrency with a group, so every run of a pull request runs to its end: ${JSON.stringify(c)}`);
+  const withConcurrency = Object.entries(wf.jobs ?? {}).filter(([, j]) => j && Object.hasOwn(j, 'concurrency')).map(([id]) => id);
+  assert.deepEqual(withConcurrency, [], `${CUT_SHORT}: a job's own concurrency group can cancel or queue that job on any event`);
+  const runs = [
+    ['pull_request', 101, 7], ['pull_request', 102, 7], ['pull_request', 103, 8],
+    ['merge_group', 104], ['merge_group', 105], ['push', 106], ['schedule', 107], ['workflow_dispatch', 108],
+  ].map(([event, id, number]) => {
+    const ctx = { github: { workflow: 'Security scan', event_name: event, run_id: String(id), event: event === 'pull_request' ? { pull_request: { number } } : event === 'merge_group' ? { merge_group: { head_sha: 'f'.repeat(40) } } : {} } };
+    return { event, id, number, group: evaluateValue(c.group, ctx), cancel: evaluateValue(c['cancel-in-progress'], ctx) };
+  });
+  const [older, newer, other] = runs;
+  assert.ok(older.group && older.group === newer.group, `${SUPERSEDED}: two runs of pull request 7 fall in the groups ${older.group} and ${newer.group}`);
+  assert.ok(older.cancel === true && newer.cancel === true, `${SUPERSEDED}: cancel-in-progress reads ${JSON.stringify(newer.cancel)} on a pull request`);
+  assert.notEqual(other.group, older.group, `${CUT_SHORT}: pull requests 7 and 8 share the group ${older.group}, so one cancels the other's scan`);
+  for (const r of runs.slice(3)) {
+    assert.equal(r.cancel, false, `${CUT_SHORT}: cancel-in-progress reads ${JSON.stringify(r.cancel)} on a ${r.event} run`);
+    const sharing = runs.filter((x) => x !== r && x.group === r.group).map((x) => `${x.event} run ${x.id}`);
+    assert.deepEqual(sharing, [], `${CUT_SHORT}: the ${r.event} run ${r.id} shares its group ${r.group}, so a newer run there cancels it while it waits`);
+  }
+});
+
 // ---------- the command, as the workflow runs it ----------
 
 function settle(mode, files) {
@@ -684,10 +812,10 @@ function settle(mode, files) {
 }
 
 test('the settle command fails the job on a critical in blocking mode and passes it in advisory', () => {
-  const blocking = settle('blocking', { 'dependency-review': 'dr-runtime-critical' });
+  const blocking = settle('blocking', { 'dependency-review': 'dr-runtime-critical', 'person-tokens': 'pt-clean' });
   assert.equal(blocking.status, 1, `${CRITICAL_PASSED}: ${blocking.stdout}`);
   assert.match(blocking.summary, /okafor-template/);
-  const advisory = settle('advisory', { 'dependency-review': 'dr-runtime-critical' });
+  const advisory = settle('advisory', { 'dependency-review': 'dr-runtime-critical', 'person-tokens': 'pt-clean' });
   assert.equal(advisory.status, 0, `${WRONGLY_BLOCKED}: ${advisory.stdout}`);
   assert.equal(advisory.stdout.trim().split('\n').at(-1), '::warning title=security-scan::security-scan would block: 1');
 });

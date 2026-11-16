@@ -10,6 +10,9 @@ The organisation ruleset requires `.github/workflows/security-scan.yml` from thi
 on every gated repository (its workflows rule), so no gated repository carries a copy or a
 caller file, and nobody can skip it.
 
+On both branches the same check also refuses a change to a workflow that signs in to GitHub
+with a person's token kept as a repository secret (below, "Person tokens").
+
 ## The two branches
 
 The calling repository's variable `SECURITY_SCAN_NATIVE` chooses.
@@ -67,6 +70,80 @@ confirms that it works under Code Security. If it refuses there, the job ends wi
 the summary says the dependency review wrote no output, and the repository's
 `SECURITY_SCAN_NATIVE` is set back to `false` so the open-source branch runs there.
 
+## Person tokens
+
+GitHub automation never signs in to GitHub as a person. A GitHub token kept as a repository
+secret is a person's own (a personal access token, a bot account's or anyone's), so a workflow
+handing one to GitHub acts as that person, with all their access. The job **Person tokens in
+workflows** (`security-scan/person-tokens.mjs`) runs on both branches and needs no secret and no
+permission beyond `contents: read`.
+
+**What it reads.** Only the workflow files (`.github/workflows/*.yml` or `.yaml`, at the top of
+that folder, where GitHub runs them) and composite actions (`.github/actions/**/action.yml` or
+`.yaml`) the change itself changes: `git diff` from the merge base of the pull request's base and
+its head commit to that head commit, renames read as a new file. Each is read at the head commit.
+A workflow the change does not touch is never read, so nothing already on the default branch is
+flagged until someone changes its file.
+
+**What counts as a use.** A repository secret, other than the workflow's own `GITHUB_TOKEN`,
+named inside `${{ }}` (`secrets.NAME` or `secrets['NAME']`) where:
+
+| The secret is | For example |
+|---|---|
+| set as `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` or `GITHUB_ENTERPRISE_TOKEN`, at the workflow, job or step | `GH_TOKEN: ${{ secrets.SOME_TOKEN }}` |
+| an action input that is a GitHub token by its name (`github-token`, `github_token`, `gh-token`, `gh_token`, `repo-token`, `repo_token`) | `github-token: ${{ secrets.SOME_TOKEN }}` on `actions/github-script` |
+| the plain `token` input of an action that talks only to GitHub: GitHub's own (`actions/*`, `github/*`), `octokit/*`, `peter-evans/*`, `dependabot/*` and a short list in `person-tokens.mjs` | `token: ${{ secrets.SOME_TOKEN }}` on `actions/checkout` |
+| the `password` of `docker/login-action` signing in to `ghcr.io` | |
+| on a script line that signs in to GitHub: a `github.com`, `githubusercontent.com` or `ghcr.io` address, `x-access-token`, `gh auth login`, or `GH_TOKEN=` | `git push https://x-access-token:${{ secrets.SOME_TOKEN }}@github.com/...` |
+| named as a GitHub token, wherever it is passed: `GH` or `GITHUB` with `TOKEN`, or `PAT` (`GH_*_TOKEN`, `*GITHUB*TOKEN*`, `*_PAT`) | `READER: ${{ secrets.GH_READ_ONLY_TOKEN }}` handed to a script |
+
+A YAML comment is not a use; a comment inside a `run:` script is, because GitHub fills in
+`${{ }}` there before the shell reads it.
+
+**What is allowed.** The workflow's own token (`${{ github.token }}`, `${{ secrets.GITHUB_TOKEN }}`)
+and a GitHub App token minted in the job by `actions/create-github-app-token`
+(`${{ steps.<id>.outputs.token }}`), which is no secret at all; the App's id and private key are
+secrets, and are not a person's token (no `TOKEN` or `PAT` in their names). Tokens for other
+services (Vercel, Sentry, Turbo, LangSmith, Anthropic and the like) are never read as GitHub's.
+
+**The ratchet.** In a file the change touches, every use is refused unless the calling
+repository's `.github/person-token-exceptions.json` allows it. That file is read from the base
+commit, never from the change, so a change cannot let itself in:
+
+```json
+[
+  {
+    "file": ".github/workflows/release.yml",
+    "secret": "SOME_TOKEN",
+    "reason": "reads the shared library until the App is installed there",
+    "until": "2027-01-31"
+  }
+]
+```
+
+- An entry allows every use of that secret in that file. Secret names are read without case, as
+  GitHub reads them; file paths exactly.
+- It counts through its `until` day (UTC) and stops the day after. After that, the next change
+  to the file is refused until the use moves off the person's token, so no exception lives on
+  by being forgotten.
+- An entry with no file, no secret, no one-line `reason` or no `until` as `YYYY-MM-DD` counts for
+  nothing, and the summary says so. A repository with no such file has no exceptions.
+- A change that writes the file is read against the base's version; its own entries count from
+  the next change once it merges. Its version must still read as a JSON list: one that does not
+  blocks, like a malformed accepted list.
+- A use already in a file the change touches is refused like a new one when nothing allows it:
+  that is what makes the end date hold. The summary says which: "this change adds it", "already
+  in this file, with no exception", or "its exception ended on".
+
+**How it settles.** Each use not allowed is one high finding, id `person-token:<file>:<secret>`,
+counted as the change's own because the change touches its file: it fails the check in blocking
+mode and is one would-block item in advisory, like any finding. The accepted list never accepts
+one; only the exceptions file does, with its end date. An allowed use is recorded in the summary
+with its end date and reason, and does not block. Each refused use gets an annotation on its line
+of the pull request saying what was found (file, line, secret), why it is refused, and what to use
+instead; the summary says the same. A job that wrote nothing, crashed (the base or head commit
+cannot be read), or wrote output that cannot be read blocks like a scanner's.
+
 ## The mode
 
 The organisation variable `SECURITY_SCAN_MODE` is read on every run.
@@ -82,7 +159,7 @@ crash, a missing job, malformed JSON, a malformed accepted list), counts like a 
 finding: it fails the check in blocking mode and is counted in `would block: N` in advisory,
 one item per scanner. So a scanner job that fails in advisory mode (the dependency review
 refusing, a download that fails) leaves the run green and shows as one would-block item in
-the summary. The first job, which reads the switches, and the four scanner jobs run
+the summary. The first job, which reads the switches, the four scanner jobs and the person-token job run
 `continue-on-error` only when `SECURITY_SCAN_MODE` reads `advisory` exactly (GitHub compares
 without case); any other value keeps them strict, the safe direction. The scanner jobs read the
 variable itself rather than the first job's output, so a first job that failed in advisory mode
@@ -169,12 +246,31 @@ that accepts a finding is not blocked by it:
   change that moves a lockfile to another folder needs a risk record for the old path under
   `lockfile-removed:<old path>`, even though the dependencies are still scanned at the new one.
 
+- **The person-token check reads lines, not YAML.** It reads a workflow the way GitHub fills it in,
+  line by line, so it does not see a secret reaching GitHub by a longer road: through another
+  variable (`GH_TOKEN: ${{ env.SOME }}` where `SOME` holds the secret), an expression split over
+  lines, a key and its value on different lines, or the plain `token` input of a local composite
+  action or of an action not on its list, when the secret's name does not say GitHub. A secret
+  named as a GitHub token is caught wherever it is passed, so naming secrets for what they are is
+  the strongest backstop. A secret reaches a composite action only as an input, so the use is
+  found in the workflow that hands it over.
+- **A moved workflow is a new file.** Renames read as new files, so moving a workflow that holds
+  an allowed use is refused until the exception names the new path on the base branch.
+- **End dates are not capped.** An entry can name any date; how long an exception may last is
+  decided in the review of the change that writes it.
+
 ## Files
 
 - `.github/workflows/security-scan.yml`: the workflow. Its first job reads the switches through
   `decide.mjs plan`; the scanner jobs only record what their scanners printed and the exit
   code; the final job `security-scan` runs `decide.mjs settle` over those outputs.
 - `security-scan/decide.mjs`: the decision. Pure functions, exported for the tests.
+- `security-scan/person-tokens.mjs`: the person-token check the job `person-tokens` runs
+  (`scan --target <checkout> --base <commit> --head <commit>`); it writes the uses it found, with
+  whether each is allowed, as JSON for the final job. Pure functions, exported for the tests.
+- `test/security-scan-person-tokens.test.mjs`: the check over workflow texts written in the test,
+  and the job's own step run in a temporary git repository whose base branch moves on after the
+  change is cut.
 - `test/security-scan-decide.test.mjs` over `test/fixtures/scan-outputs.json`: recorded
   outputs, no network. It also runs the workflow's own removal, commit and osv-scanner steps
   in a temporary git repository, with a stand-in osv-scanner that records how it was called,

@@ -11,6 +11,11 @@
 #     the lockfiles the change deletes or renames listed beside it, gitleaks over the pull
 #     request's commits, and Semgrep's open-source engine against the base commit, each
 #     installed by pinned version and checksum.
+# On both branches the job person-tokens reads the workflow files and composite actions the change
+# changes (the merge base of the base and the change's head, against that head) and lists every
+# use of a person's GitHub token kept as a repository secret, with whether the calling
+# repository's .github/person-token-exceptions.json, read from the base commit, still allows it
+# (security-scan/person-tokens.mjs). It needs no secret and no permission beyond contents: read.
 #
 # The mode is the variable SECURITY_SCAN_MODE, read on every run: advisory records every
 # finding and passes with "security-scan would block: N"; blocking fails on a new critical
@@ -26,6 +31,34 @@
 # checkout before scanning, osv-scanner reads an empty config the workflow writes and
 # scans lockfiles .gitignore would skip, and Semgrep scans files .gitignore lists.
 # The organisation and repositories come from the run's own context, never from this file.
+#
+# Every job runs where the setting SCAN_RUNNER_2 points, GitHub's own computers while it is
+# empty: the scan machines (decision 93). On the machines that run each change's own checks, a
+# job of the change could reach a scan beside it on the same machine and quiet it. The scan
+# machines hold no change's own code only while the scan runner group admits only the scan
+# workflows (decision 98): a workflow lives in the repository it checks, so a pull request in a
+# repository the group admits can add a workflow of its own naming the scan label, and only the
+# group's workflow list keeps that job off the scan machines; nothing in this file can. No job
+# here holds a write token today (each, person-tokens too, takes the workflow's contents: read and
+# sets no permissions of its own), so none has to stay on GitHub's computers by the repository's
+# rule for write tokens. machine-rule/judge.mjs, the shared machine rule, holds each read-only job
+# here to running on ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }} exactly, holding no secret and
+# checking out with persist-credentials: false; each write-token job (one granted a write, or left
+# with the repository's default token) to reading no CHECKS_, SCAN_ or LOCKED_ setting, to one of
+# GitHub's standard labels written as a literal label and to an entry of machine-rule/kept.json;
+# and each job that calls a workflow (uses: at the job's level, naming no machine) to the calls
+# machine-rule/README.md lists, a ./ call refused. test/machine-rule.test.mjs runs it over this
+# folder. It reads this file with the yaml package and refuses, naming its line, every spelling
+# another parser could read another way (an anchor, alias, tag or merge key, a key written twice,
+# a step written as a flow, a backslash inside ${{ }} and the rest its header lists).
+#
+# That setting is the organisation's unless a repository sets a variable of the same name: this
+# workflow runs in each gated repository's own context, where GitHub reads a repository variable
+# SCAN_RUNNER_2 ahead of the organisation's, so a repository's admin can point that repository's
+# scan at any label. What keeps a repository from moving its scan onto machines that run changes'
+# own code is the runner groups' repository lists, and nothing in this file: a label reaches only
+# a set whose group admits the repository, so the scan stays apart only while no group admitting
+# a gated repository offers it a change-check set's label. CHECKS_RUNNER_2 overrides the same way.
 name: Security scan
 
 on:
@@ -35,6 +68,14 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels the scan of its older head, which no one reads once the
+# head has moved on. Only a pull_request run is ever cancelled: each pull request is one group,
+# and any other run (a merge queue's, today the only other trigger) is a group of its own, keyed
+# on its run id, with cancel-in-progress off, so no newer run cancels it, running or waiting.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pull-request-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
   HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
@@ -42,7 +83,7 @@ env:
 jobs:
   plan:
     name: Read the switches
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
     # Advisory only when the variable reads advisory (GitHub compares without case); the
     # final job still runs and counts every output this leaves missing.
@@ -96,7 +137,7 @@ jobs:
     name: Dependency review
     needs: plan
     if: needs.plan.outputs.native == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 10
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     steps:
@@ -135,7 +176,7 @@ jobs:
     name: Dependency audit (osv-scanner)
     needs: plan
     if: needs.plan.outputs.native != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 15
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
@@ -166,7 +207,7 @@ jobs:
       - name: Install osv-scanner by pinned version and checksum
         run: |
           set -euo pipefail
-          curl -fsSL -o "$RUNNER_TEMP/osv-scanner" \
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/osv-scanner" \
             "https://github.com/google/osv-scanner/releases/download/${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
           echo "${OSV_SCANNER_SHA256}  $RUNNER_TEMP/osv-scanner" | sha256sum --check --strict -
           chmod +x "$RUNNER_TEMP/osv-scanner"
@@ -205,7 +246,7 @@ jobs:
     name: Secret detection (gitleaks)
     needs: plan
     if: needs.plan.outputs.native != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 10
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
@@ -244,7 +285,7 @@ jobs:
         run: |
           set -euo pipefail
           archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/$archive" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
           echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
@@ -273,7 +314,7 @@ jobs:
     name: Static analysis (Semgrep)
     needs: plan
     if: needs.plan.outputs.native != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 20
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
@@ -335,11 +376,66 @@ jobs:
           path: scan/
           if-no-files-found: error
 
+  person-tokens:
+    name: Person tokens in workflows
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
+    steps:
+      - name: Name this workflow's own repository and commit
+        id: source
+        env:
+          SOURCE_REPO: ${{ job.workflow_repository }}
+          SOURCE_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$SOURCE_REPO" ] || [ -z "$SOURCE_SHA" ]; then
+            echo "::error title=security-scan::the contexts job.workflow_repository and job.workflow_sha must both be set, so the check's source is known"
+            exit 1
+          fi
+          echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the check at that commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.source.outputs.repo }}
+          ref: ${{ steps.source.outputs.sha }}
+          token: ${{ github.token }}
+          path: .security-scan-source
+          sparse-checkout: security-scan
+          persist-credentials: false
+
+      - name: Fetch the change with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: List the person tokens the changed workflows sign in to GitHub with
+        # Only the files the change changes are read, at its head; the exceptions are read at the
+        # base commit, so a change never lets itself in. The check only reads git; the decision is
+        # the final job's.
+        run: |
+          mkdir -p scan
+          set +e
+          node .security-scan-source/security-scan/person-tokens.mjs scan --target target --base "$BASE_SHA" --head "$HEAD_SHA" > scan/person-tokens.out
+          echo "$?" > scan/person-tokens.exit
+          exit 0
+
+      - name: Hand the output to the final job
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-scan-person-tokens
+          path: scan/
+          if-no-files-found: error
+
   security-scan:
     name: security-scan
-    needs: [plan, dependency-review, osv-scanner, gitleaks, semgrep]
+    needs: [plan, dependency-review, osv-scanner, gitleaks, semgrep, person-tokens]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - name: Name this workflow's own repository and commit

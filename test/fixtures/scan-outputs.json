@@ -1,5 +1,5 @@
 {
-  "about": "Recorded scanner outputs for test/security-scan-decide.test.mjs. Each output is { exit, body } (body is what the scanner printed, as JSON) or { exit, text } (raw text, for output that is not JSON). Names, packages and advisories are invented.",
+  "about": "Recorded scanner outputs for test/security-scan-decide.test.mjs. Each output is { exit, body } (body is what the scanner printed, as JSON) or { exit, text } (raw text, for output that is not JSON). The pt-* outputs are what security-scan/person-tokens.mjs writes. Names, packages, advisories and secrets are invented.",
   "accepted": {
     "parser-advisory": [
       { "id": "GHSA-2m4c-9fq8-wx7h", "record": "records/risk-acceptance/2026-10-harbor-lane-parser.md" }
@@ -25,6 +25,9 @@
     ],
     "eval-rule-and-path": [
       { "id": "javascript.lang.security.audit.eval-detected:src/run.js", "record": "records/risk-acceptance/2026-10-harbor-lane-eval.md" }
+    ],
+    "person-token-in-accepted-list": [
+      { "id": "person-token:.github/workflows/release.yml:HARBOR_LANE_PAT", "record": "records/risk-acceptance/2026-11-harbor-lane-pat.md" }
     ]
   },
   "outputs": {
@@ -240,257 +243,331 @@
         "version": "1.182.0"
       }
     },
-    "semgrep-crashed": { "exit": "2", "text": "" }
+    "semgrep-crashed": { "exit": "2", "text": "" },
+    "pt-clean": { "exit": "0", "body": { "looked_at": [], "uses": [], "notes": [], "error": null } },
+    "pt-added": { "exit": "0", "body": { "looked_at": [".github/workflows/release.yml"], "notes": [], "error": null,
+      "uses": [
+        {
+          "file": ".github/workflows/release.yml",
+          "line": 14,
+          "secret": "HARBOR_LANE_PAT",
+          "how": "as the input token of actions/checkout, which signs in to GitHub with it",
+          "added": true,
+          "allowed": false,
+          "exception": null,
+          "words": "HARBOR_LANE_PAT as the input token of actions/checkout, which signs in to GitHub with it; this change adds it",
+          "message": ".github/workflows/release.yml line 14 uses the repository secret HARBOR_LANE_PAT as the input token of actions/checkout, which signs in to GitHub with it. A GitHub token kept as a repository secret is a person's own, so this automation would sign in to GitHub as that person: refused. This change adds it, and .github/person-token-exceptions.json on the base branch lists no exception for it. Use the workflow's own token instead (${{ github.token }}, with a permissions block granting what the job needs), or a GitHub App token minted in the job by actions/create-github-app-token (${{ steps.<id>.outputs.token }})."
+        }
+      ] } },
+    "pt-allowed": { "exit": "0", "body": { "looked_at": [".github/workflows/release.yml"], "notes": [], "error": null,
+      "uses": [
+        {
+          "file": ".github/workflows/release.yml",
+          "line": 14,
+          "secret": "HARBOR_LANE_PAT",
+          "how": "as the input token of actions/checkout, which signs in to GitHub with it",
+          "added": false,
+          "allowed": true,
+          "exception": { "reason": "reads the ledger until the App is installed there", "until": "2027-01-31", "ended": false },
+          "words": "HARBOR_LANE_PAT as the input token of actions/checkout; allowed until 2027-01-31",
+          "message": ".github/workflows/release.yml line 14 uses the repository secret HARBOR_LANE_PAT; allowed until 2027-01-31."
+        }
+      ] } },
+    "pt-writes-unreadable-exceptions": { "exit": "0", "body": { "looked_at": [], "uses": [], "notes": [],
+      "error": "the .github/person-token-exceptions.json this change writes is not a list of { file, secret, reason, until } entries" } },
+    "pt-crashed": { "exit": "1", "text": "" },
+    "pt-not-json": { "exit": "0", "text": "{ looked_at" }
   },
   "scenarios": {
     "native: a runtime high added, blocking": {
       "mode": "blocking", "native": "true",
-      "outputs": { "dependency-review": "dr-runtime-high" },
+      "outputs": { "dependency-review": "dr-runtime-high", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-2m4c-9fq8-wx7h"] }
     },
     "native: a runtime high added, advisory": {
       "mode": "advisory", "native": "true",
-      "outputs": { "dependency-review": "dr-runtime-high" },
+      "outputs": { "dependency-review": "dr-runtime-high", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 1, "blocking": ["GHSA-2m4c-9fq8-wx7h"], "annotation": "security-scan would block: 1" }
     },
     "native: a runtime critical added, blocking": {
       "mode": "blocking", "native": "true",
-      "outputs": { "dependency-review": "dr-runtime-critical" },
+      "outputs": { "dependency-review": "dr-runtime-critical", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-f9gw-3mx2-p7qc"] }
     },
     "native: a development-scope high added, blocking": {
       "mode": "blocking", "native": "true",
-      "outputs": { "dependency-review": "dr-dev-high" },
+      "outputs": { "dependency-review": "dr-dev-high", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1 }
     },
     "native: a removed critical, blocking": {
       "mode": "blocking", "native": "true",
-      "outputs": { "dependency-review": "dr-removed-critical" },
+      "outputs": { "dependency-review": "dr-removed-critical", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 0 }
     },
     "native: an accepted advisory, blocking": {
       "mode": "blocking", "native": "true", "accepted": "parser-advisory",
-      "outputs": { "dependency-review": "dr-runtime-high" },
+      "outputs": { "dependency-review": "dr-runtime-high", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1,
         "acceptedBy": "records/risk-acceptance/2026-10-harbor-lane-parser.md" }
     },
     "native: an accepted advisory naming no record, blocking": {
       "mode": "blocking", "native": "true", "accepted": "parser-advisory-no-record",
-      "outputs": { "dependency-review": "dr-runtime-high" },
+      "outputs": { "dependency-review": "dr-runtime-high", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-2m4c-9fq8-wx7h"] }
     },
     "native: no dependency changes and no open-source output, blocking": {
       "mode": "blocking", "native": "true",
-      "outputs": { "dependency-review": "dr-no-changes" },
+      "outputs": { "dependency-review": "dr-no-changes", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 0 }
     },
     "native: the dependency review refused and wrote nothing, blocking": {
       "mode": "blocking", "native": "true",
-      "outputs": { "dependency-review": "dr-refused" },
+      "outputs": { "dependency-review": "dr-refused", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     },
     "native: the dependency review output missing, blocking": {
       "mode": "blocking", "native": "true",
-      "outputs": {},
+      "outputs": { "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     },
     "open source: everything clean, blocking": {
       "mode": "blocking", "native": "false",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 0 }
     },
     "open source: a gitleaks finding on the change, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-leak", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-leak", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1,
         "blocking": ["4f1c2b9e8d7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e:config/settings.js:generic-api-key:12"] }
     },
     "open source: gitleaks says leaks but lists none, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-leaks-but-empty", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-leaks-but-empty", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     },
     "open source: a dependency advisory the change adds, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-head-utils-high", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-head-utils-high", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-c3pq-7v5r-hj8x"] }
     },
     "open source: a dependency advisory already on the base, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-head-utils-high", "osv-base": "osv-base-utils-high", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-head-utils-high", "osv-base": "osv-base-utils-high", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1 }
     },
     "open source: a dependency advisory accepted by its alias, blocking": {
       "mode": "blocking", "accepted": "utils-advisory-by-alias",
-      "outputs": { "osv-head": "osv-head-utils-high", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-head-utils-high", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1,
         "acceptedBy": "records/risk-acceptance/2026-10-okafor-utils.md" }
     },
     "open source: a critical by severity word alone, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-head-utils-no-score", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-head-utils-no-score", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-c3pq-7v5r-hj8x"], "severity": "critical" }
     },
     "open source: a development-only dependency advisory, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-head-utils-dev", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-head-utils-dev", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1 }
     },
     "open source: no dependency files, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-no-dependency-files", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-no-dependency-files", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 0, "note": "no dependency files" }
     },
     "open source: an ERROR-level Semgrep result, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-eval" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-eval", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["javascript.lang.security.audit.eval-detected:src/run.js"] }
     },
     "open source: a WARNING-level Semgrep result, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-warning" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-warning", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1 }
     },
     "open source: malformed osv-scanner output, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-not-json", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-not-json", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     },
     "open source: malformed osv-scanner output, advisory": {
       "mode": "advisory",
-      "outputs": { "osv-head": "osv-not-json", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-not-json", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 1, "blocking": [], "errors": 1, "annotation": "security-scan would block: 1" }
     },
     "open source: osv-scanner crashed, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-crashed", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-crashed", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     },
     "open source: Semgrep crashed, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-crashed" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-crashed", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     },
     "open source: the gitleaks job did not run, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     },
     "open source: a malformed accepted list, blocking": {
       "mode": "blocking", "acceptedText": "[{ \"id\": \"GHSA-2m4c-9fq8-wx7h\", ",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     },
     "native: an unknown-scope high added, blocking": {
       "mode": "blocking", "native": "true",
-      "outputs": { "dependency-review": "dr-runtime-unknown-scope" },
+      "outputs": { "dependency-review": "dr-runtime-unknown-scope", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-w7x9-q4mf-2hvc"] }
     },
     "native: an unknown-scope high added, advisory": {
       "mode": "advisory", "native": "true",
-      "outputs": { "dependency-review": "dr-runtime-unknown-scope" },
+      "outputs": { "dependency-review": "dr-runtime-unknown-scope", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 1, "blocking": ["GHSA-w7x9-q4mf-2hvc"], "annotation": "security-scan would block: 1" }
     },
     "native: the dependency review refused, advisory": {
       "mode": "advisory", "native": "true",
-      "outputs": { "dependency-review": "dr-refused" },
+      "outputs": { "dependency-review": "dr-refused", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 1, "blocking": [], "errors": 1, "annotation": "security-scan would block: 1" }
     },
     "open source: a Semgrep result accepted by its bare rule id, blocking": {
       "mode": "blocking", "accepted": "eval-rule-bare",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-eval" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-eval", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["javascript.lang.security.audit.eval-detected:src/run.js"],
         "note": "names a Semgrep rule without a path" }
     },
     "open source: a Semgrep result accepted by rule and path, blocking": {
       "mode": "blocking", "accepted": "eval-rule-and-path",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-eval" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-eval", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1,
         "acceptedBy": "records/risk-acceptance/2026-10-harbor-lane-eval.md" }
     },
     "open source: the osv-scanner job failed, advisory": {
       "mode": "advisory",
-      "outputs": { "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 1, "blocking": [], "errors": 1, "annotation": "security-scan would block: 1" }
     },
     "open source: the change deletes its only lockfile, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 2, "errors": 0, "findings": 2,
         "blocking": ["dependency-files-removed", "lockfile-removed:package-lock.json"] }
     },
     "open source: the change deletes its only lockfile, base vulnerable, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-base-utils-high", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-base-utils-high", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 2, "errors": 0, "findings": 2,
         "blocking": ["dependency-files-removed", "lockfile-removed:package-lock.json"] }
     },
     "open source: the change deletes its only lockfile, advisory": {
       "mode": "advisory",
-      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 2, "errors": 0, "annotation": "security-scan would block: 2",
         "blocking": ["dependency-files-removed", "lockfile-removed:package-lock.json"] }
     },
     "open source: the last dependency file retired with its records, blocking": {
       "mode": "blocking", "accepted": "last-lockfile-retired",
-      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "errors": 0, "blocking": [], "findings": 2,
         "acceptedBy": "records/risk-acceptance/2026-11-okafor-ledger-retired.md" }
     },
     "open source: the last dependency file retired, its lockfile not accepted, blocking": {
       "mode": "blocking", "accepted": "every-dependency-file-only",
-      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-no-dependency-files", "osv-base": "osv-clean", "osv-removed": "removed-root-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "errors": 0, "blocking": ["lockfile-removed:package-lock.json"], "findings": 2 }
     },
     "open source: no dependency files at the change and its base scan missing, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-no-dependency-files", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-no-dependency-files", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     },
     "open source: the change deletes lockfiles among several, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-two-lockfiles", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-two-lockfiles", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 2, "errors": 0, "findings": 2,
         "blocking": ["lockfile-removed:services/harbor-lane/yarn.lock", "lockfile-removed:services/okafor-ledger/Cargo.lock"] }
     },
     "open source: the change deletes lockfiles among several, advisory": {
       "mode": "advisory",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-two-lockfiles", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-two-lockfiles", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 2, "errors": 0, "annotation": "security-scan would block: 2",
         "blocking": ["lockfile-removed:services/harbor-lane/yarn.lock", "lockfile-removed:services/okafor-ledger/Cargo.lock"] }
     },
     "open source: a removed lockfile accepted with its record, blocking": {
       "mode": "blocking", "accepted": "removed-yarn-lockfile",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-one-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-one-lockfile", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1,
         "acceptedBy": "records/risk-acceptance/2026-10-harbor-lane-retired.md" }
     },
     "open source: the change deletes files that are not lockfiles, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-not-lockfiles", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-not-lockfiles", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 0 }
     },
     "open source: the removed-lockfile list could not be read, blocking": {
       "mode": "blocking",
-      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-base-unknown", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean" },
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-base-unknown", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     },
     "open source: every scanner job failed, advisory": {
       "mode": "advisory",
-      "outputs": {},
+      "outputs": { "person-tokens": "pt-clean" },
       "expect": { "result": "pass", "wouldBlock": 3, "blocking": [], "errors": 3, "annotation": "security-scan would block: 3" }
     },
     "unset mode: a runtime high added": {
       "native": "true",
-      "outputs": { "dependency-review": "dr-runtime-high" },
+      "outputs": { "dependency-review": "dr-runtime-high", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-2m4c-9fq8-wx7h"], "mode": "blocking",
         "note": "SECURITY_SCAN_MODE is unset; read as blocking" }
     },
     "unknown mode: a runtime high added": {
       "mode": "warn", "native": "true",
-      "outputs": { "dependency-review": "dr-runtime-high" },
+      "outputs": { "dependency-review": "dr-runtime-high", "person-tokens": "pt-clean" },
       "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["GHSA-2m4c-9fq8-wx7h"], "mode": "blocking",
         "note": "neither advisory nor blocking; read as blocking" }
+    },
+    "native: a person token the change adds, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-no-changes", "person-tokens": "pt-added" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["person-token:.github/workflows/release.yml:HARBOR_LANE_PAT"], "findings": 1 }
+    },
+    "open source: a person token the change adds, advisory": {
+      "mode": "advisory", "native": "false",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-added" },
+      "expect": { "result": "pass", "wouldBlock": 1, "blocking": ["person-token:.github/workflows/release.yml:HARBOR_LANE_PAT"], "annotation": "security-scan would block: 1" }
+    },
+    "native: a person token its exception allows, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-no-changes", "person-tokens": "pt-allowed" },
+      "expect": { "result": "pass", "wouldBlock": 0, "blocking": [], "findings": 1,
+        "acceptedBy": "exception until 2027-01-31: reads the ledger until the App is installed there" }
+    },
+    "native: a person token named in the accepted list, blocking": {
+      "mode": "blocking", "native": "true", "accepted": "person-token-in-accepted-list",
+      "outputs": { "dependency-review": "dr-no-changes", "person-tokens": "pt-added" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": ["person-token:.github/workflows/release.yml:HARBOR_LANE_PAT"] }
+    },
+    "native: the person-token check did not run, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-no-changes" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "open source: the person-token check crashed, blocking": {
+      "mode": "blocking", "native": "false",
+      "outputs": { "osv-head": "osv-clean", "osv-base": "osv-clean", "osv-removed": "removed-none", "gitleaks": "gitleaks-clean", "semgrep": "semgrep-clean", "person-tokens": "pt-crashed" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "native: the person-token output is not JSON, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-no-changes", "person-tokens": "pt-not-json" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
+    },
+    "native: the exceptions file the change writes cannot be read, blocking": {
+      "mode": "blocking", "native": "true",
+      "outputs": { "dependency-review": "dr-no-changes", "person-tokens": "pt-writes-unreadable-exceptions" },
+      "expect": { "result": "fail", "wouldBlock": 1, "blocking": [], "errors": 1 }
     }
   }
 }

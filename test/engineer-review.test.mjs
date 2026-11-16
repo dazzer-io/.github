@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'yaml';
 import {
   decide, summary, evidenceLine, firstLineIsReviewed, headPushedAt,
   prNumberFromMergeGroup, run, targetOf, statusFor, renderCaller, CALLER_USES, CONTEXT,
@@ -203,6 +204,12 @@ test('a long reason is cut to the 140 characters a status keeps', () => {
 });
 
 const callerPath = fileURLToPath(new URL('../engineer-review/caller.yml', import.meta.url));
+// The three grants the run needs: statuses: write to set the status, pull-requests: read to read
+// the pull request and its reviews, and contents: read, without which GitHub answers 403 to a
+// private repository's activity, the record of the last push (compliance run 43770855381).
+const GRANTS = { contents: 'read', statuses: 'write', 'pull-requests': 'read' };
+// Said only when a check goes red on a run that could not read a private repository's activity.
+const PRIVATE = "the Engineer review job is not granted exactly contents: read, statuses: write and pull-requests: read, so in a private repository GitHub answers 403 to the activity it reads the last push from";
 const workflowPath = fileURLToPath(new URL('../.github/workflows/engineer-review.yml', import.meta.url));
 
 test('the caller file pins its reusable workflow to a commit and names nothing of the install', () => {
@@ -218,8 +225,19 @@ test('the caller file pins its reusable workflow to a commit and names nothing o
   assert.match(caller, /types: \[opened, synchronize, reopened\]/);
   assert.match(caller, /issue_comment:\n\s+types: \[created\]/);
   assert.match(caller, /pull_request_review:\n\s+types: \[submitted\]/);
-  assert.match(caller, /permissions:\n\s+statuses: write\n\s+pull-requests: read\n\n/);
-  assert.match(caller, /if: github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request/);
+  // The calling job holds uses and permissions alone, the shape the machine rule admits
+  // (machine-rule/README.md, "Calls"): its own grant, contents: read, statuses: write and
+  // pull-requests: read, is what it hands the called workflow, under a top that reads the code
+  // alone (decision 178).
+  assert.match(caller, /\npermissions:\n  contents: read\n\njobs:\n/, 'Could not find the caller\'s top granting contents: read alone');
+  assert.match(caller, /\n {2}engineer-review:\n {4}uses: <owner>\/<repo>\/\.github\/workflows\/engineer-review\.yml@<commit>\n {4}permissions:\n {6}contents: read\n {6}statuses: write\n {6}pull-requests: read\n$/, `Could not find the calling job holding uses and its own grant alone: ${PRIVATE}`);
+  assert.deepEqual(parse(caller).jobs['engineer-review'].permissions, GRANTS, PRIVATE);
+  // A comment on an issue that is no pull request is skipped by the called workflow's own job,
+  // which reads the caller's event: "When a reusable workflow is triggered by a caller workflow,
+  // the github context is always associated with the caller workflow." (GitHub's docs, Reusing
+  // workflow configurations).
+  assert.doesNotMatch(caller, /^\s*if:/m, 'Could not find the caller free of if:, a key the machine rule refuses in a call');
+  assert.match(fs.readFileSync(workflowPath, 'utf8'), /\n {4}if: github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request\n/, 'Could not find the called workflow\'s job skipping a comment that is not on a pull request');
 
   const commit = '5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d';
   const copy = renderCaller(caller, { owner: 'harbor-lane', repo: '.github', commit });
@@ -231,21 +249,112 @@ test('the caller file pins its reusable workflow to a commit and names nothing o
   assert.throws(() => renderCaller(caller, { owner: 'harbor-lane/x', repo: '.github', commit }), /owner/);
 });
 
-test('the reusable workflow answers to calls and to this repository\'s own events, pinned and with its least rights', () => {
-  const wf = fs.readFileSync(workflowPath, 'utf8');
-  for (const trigger of ['workflow_call:', 'pull_request:', 'issue_comment:', 'pull_request_review:']) assert.ok(wf.includes(`  ${trigger}`), trigger);
-  assert.match(wf, /permissions:\n\s+statuses: write\n\s+pull-requests: read\n\n/);
-  assert.doesNotMatch(wf, /actions: write/);
-  const uses = wf.split('\n').filter((l) => /^\s*-?\s*uses:/.test(l));
-  assert.ok(uses.length >= 1);
-  for (const line of uses) {
-    assert.match(line, /@[0-9a-f]{40}\b/, `every uses: line is pinned to a commit: ${line.trim()}`);
+const readmePath = fileURLToPath(new URL('../engineer-review/README.md', import.meta.url));
+// Said only when a check goes red on a README that would let a version bump edit a caller's commit
+// alone: the called job may then ask a grant the old caller does not hand, GitHub refuses to start
+// it, and no status is ever set.
+const REBUILD = 'the README\'s advice on moving to a newer version no longer says a caller is rebuilt with decide.mjs caller rather than its commit edited by hand, with its grants checked against caller.yml';
+// Said only when a check goes red on a README that lets a caller be made, or a bump reviewed,
+// from a checkout at an older commit: decide.mjs fills the caller.yml beside itself, so an older
+// checkout prints the old grants pinned to the new commit and GitHub refuses the call.
+const CHECKOUT = 'the README\'s advice on moving to a newer version no longer says decide.mjs caller is run from a checkout at the new commit, with the called job\'s permissions at that commit compared with the new caller file\'s own';
+
+test('the README moves a caller to a newer version by making it again, never by editing its commit alone', () => {
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const start = readme.indexOf('To move a repository to a newer version');
+  assert.ok(start >= 0, `Could not find the paragraph on moving to a newer version: ${REBUILD}`);
+  const section = readme.slice(start).split(/\n[ \t]*\n/)[0].replace(/\s+/g, ' ');
+  assert.match(section, /rebuilt with `decide\.mjs caller`/, REBUILD);
+  assert.match(section, /never by editing only the commit/, REBUILD);
+  // decide.mjs fills the caller.yml beside itself, so the command and the reviewer's check are
+  // both read at the new commit, never at whatever commit a checkout happens to hold.
+  assert.match(section, /from a checkout of the shared workflow repository, `dazzer-io\/\.github`, at the new commit/, CHECKOUT);
+  assert.match(section, /`git -C <checkout> checkout <new commit>`/, CHECKOUT);
+  assert.match(section, /`node <checkout>\/engineer-review\/decide\.mjs caller [^`]*--commit <new commit>`/, CHECKOUT);
+  assert.match(section, /compares the called job's `permissions` at the new commit with the job-level `permissions` in the new caller file itself/, CHECKOUT);
+  assert.doesNotMatch(section, /against `engineer-review\/caller\.yml`/, CHECKOUT);
+});
+
+// Said only when a check goes red on a README whose account of DZ-33 parts from compliance's
+// policy (policies/change-management.md: "the status is the gate only, not the evidence") and
+// from scheduler's DZ-33 line, which reads no status, its creator or its link.
+const DZ33 = 'the README takes the Engineer review status, its creator or its link as DZ-33\'s evidence, where compliance\'s policy makes the status the merge gate only and DZ-33 reads the review itself';
+
+test('the README gives DZ-33 the review itself as evidence and the status as the merge gate only', () => {
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const flat = readme.replace(/\s+/g, ' ');
+  // Each sentence naming DZ-33: the ruleset's own words around it (from the GitHub Actions app
+  // alone) describe the gate, not DZ-33.
+  const sentences = flat.split(/(?<=\.)\s+/).filter((b) => /DZ-33/.test(b));
+  assert.ok(sentences.length > 0, `Could not find DZ-33 named in the README: ${DZ33}`);
+  for (const b of sentences) {
+    // compliance test/controls.test.mjs refuses these words in DZ-33's own text.
+    assert.doesNotMatch(b, /created by GitHub Actions|from the GitHub Actions app|link(s|ing)? to an Engineer review run/, DZ33);
+    assert.doesNotMatch(b, /checks each status's creator|link opens an Engineer review run/, DZ33);
+    assert.match(b, /merge gate only, never the evidence/, DZ33);
+    assert.match(b, /reads no status, its creator or its link/, DZ33);
   }
+  assert.doesNotMatch(flat, /The status itself carries the evidence/, DZ33);
+});
+
+// Said only when a check goes red on a README that, anywhere it describes the status, says the
+// status counts only when set from an Engineer review run: the ruleset pins only the GitHub Actions
+// app, so a workflow of the repository can set it too, and the review itself is the evidence.
+const GATE = 'a README sentence describing the Engineer review status says it counts only when set from an Engineer review run, where a workflow of the repository can set it too and only the review itself is the evidence';
+
+test('every README sentence describing the status makes it the merge gate, never a status that counts only from its own run', () => {
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const flat = readme.replace(/\s+/g, ' ');
+  const sentences = flat.split(/(?<=\.)\s+/).filter((b) => /status/i.test(b));
+  assert.ok(sentences.length > 0, `Could not find the status described in the README: ${GATE}`);
+  for (const b of sentences) {
+    assert.doesNotMatch(b, /counts only when/i, `${GATE}: ${b}`);
+    assert.doesNotMatch(b, /\bonly\b[^.]*\bset (it )?from an? Engineer review run/i, `${GATE}: ${b}`);
+  }
+  const start = readme.indexOf('## Why');
+  assert.ok(start >= 0, `Could not find the README's Why section: ${GATE}`);
+  const why = readme.slice(start, readme.indexOf('\n## ', start + 1)).replace(/\s+/g, ' ');
+  assert.match(why, /merge gate/, GATE);
+  assert.match(why, /a workflow of the repository (itself )?(could|can) also set/, GATE);
+  assert.match(why, /the review itself[^.]*is the evidence/, GATE);
+});
+
+// Said only when a check goes red on a README whose adoption step lets a first caller be made from
+// whatever checkout is at hand: decide.mjs fills the caller.yml beside itself, so a stale clone
+// prints old grants pinned to the new commit, GitHub refuses the call and no status is ever set.
+const ADOPT = 'the README\'s adoption step no longer says decide.mjs caller is run from a checkout of dazzer-io/.github at the commit being pinned';
+
+test('the README makes a first caller from a checkout of the shared workflow repository at its pin', () => {
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const start = readme.indexOf('## Adopting it in a repository');
+  const end = readme.indexOf('\n2. ', start);
+  assert.ok(start >= 0 && end > start, `Could not find the README's first adoption step: ${ADOPT}`);
+  const step = readme.slice(start, end).replace(/\s+/g, ' ');
+  assert.match(step, /from a checkout of the shared workflow repository, `dazzer-io\/\.github`, at the commit being pinned/, ADOPT);
+  assert.match(step, /git -C <checkout> checkout <40-character commit id>/, ADOPT);
+  assert.match(step, /node <checkout>\/engineer-review\/decide\.mjs caller .*--commit <40-character commit id>/, ADOPT);
+  assert.doesNotMatch(step, /(^|\s)node engineer-review\/decide\.mjs caller/, ADOPT);
+  // caller.yml's own comment, printed into every caller, gives the same command the same way.
+  const comment = fs.readFileSync(callerPath, 'utf8').split('\n').filter((l) => /^#/.test(l)).map((l) => l.replace(/^#\s?/, '')).join(' ').replace(/\s+/g, ' ');
+  const CALLER_ADOPT = 'caller.yml\'s comment no longer says decide.mjs caller is run from a checkout of the shared workflow repository at the commit being pinned';
+  assert.match(comment, /decide\.mjs caller/, CALLER_ADOPT);
+  assert.match(comment, /from a checkout of the shared workflow repository[^.]*at the commit being pinned/, CALLER_ADOPT);
+  assert.doesNotMatch(comment, /(^|\s)node engineer-review\/decide\.mjs caller/, CALLER_ADOPT);
+});
+
+test('the reusable workflow answers to calls and to this repository\'s own events, pinned and with its least rights', () => {
+  const wf = parse(fs.readFileSync(workflowPath, 'utf8'));
+  for (const trigger of ['workflow_call', 'pull_request', 'issue_comment', 'pull_request_review']) assert.ok(trigger in wf.on, trigger);
+  // The top reads the code alone; the one job holds the three grants it uses, the most a caller
+  // may hand it (machine-rule/README.md, "Calls").
+  assert.deepEqual(wf.permissions, { contents: 'read' }, `the workflow's top grants more than contents: read: ${JSON.stringify(wf.permissions)}`);
+  assert.deepEqual(Object.keys(wf.jobs), ['engineer-review']);
+  assert.deepEqual(wf.jobs['engineer-review'].permissions, GRANTS, `${PRIVATE}: the job grants ${JSON.stringify(wf.jobs['engineer-review'].permissions)}`);
+  for (const u of Object.values(wf.jobs).flatMap((job) => (job.steps ?? []).map((s) => s.uses)).filter(Boolean)) assert.match(u, /@[0-9a-f]{40}$/, `every uses: is pinned to a commit: ${u}`);
 });
 
 test('the job is named apart from the status it sets', () => {
-  const wf = fs.readFileSync(workflowPath, 'utf8');
-  const names = [...wf.matchAll(/^ {4}name: (.+)$/gm)].map((m) => m[1].trim());
+  const names = Object.values(parse(fs.readFileSync(workflowPath, 'utf8')).jobs).map((job) => job.name);
   assert.deepEqual(names, ['Settle engineer review']);
   assert.notEqual(names[0], CONTEXT);
   assert.equal(CONTEXT, 'Engineer review');
@@ -268,32 +377,8 @@ test('the script is fetched with checkout at the workflow\'s own repository and 
 // Said only when a check goes red on a run that fetches or runs a pull request's own code.
 const UNTRUSTED = "the Engineer review run fetches or runs code a pull request's author chose";
 
-// The workflow with its whole-line comments dropped.
-function workflowCode(wf) {
-  return wf.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
-}
-// The job's steps, each from its "- " line to the next.
-function workflowSteps(code) {
-  const at = code.indexOf('\n    steps:\n');
-  assert.ok(at >= 0, 'the job has no steps');
-  return code.slice(at + '\n    steps:\n'.length).split(/\n(?= {6}- )/).filter((s) => s.trim());
-}
-// A step's own keys, in order.
-function stepKeys(step) {
-  return [...step.matchAll(/^(?: {6}- | {8})([A-Za-z][\w-]*):/gm)].map((m) => m[1]);
-}
-// The trimmed, non-blank lines nested under a step's key, or null when it has none.
-function stepBlock(step, header) {
-  const lines = step.split('\n');
-  const at = lines.findIndex((l) => header.test(l));
-  if (at < 0) return null;
-  const out = [];
-  for (const l of lines.slice(at + 1)) {
-    if (l.trim() && !/^ {10}/.test(l)) break;
-    if (l.trim()) out.push(l.trim());
-  }
-  return out;
-}
+// Every value a parsed workflow holds, its keys and comments left out.
+const valuesOf = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(valuesOf) : []);
 
 const SOURCE_OUTPUTS = ['echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"', 'echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"'];
 const SOURCE_CHECKS = ['if [ -z "$SOURCE_REPO" ]; then', 'if [ -z "$SOURCE_SHA" ]; then', 'exit 1', 'fi'];
@@ -302,41 +387,43 @@ test("a comment run fetches only the workflow's own commit and runs only the scr
   // issue_comment holds a write token for every pull request, a fork's too. Its run is safe
   // only while the one checkout is job.workflow_sha (on that trigger GitHub reads this file
   // from the default branch, and a caller from its own) and nothing else fetches or runs code.
-  const code = workflowCode(fs.readFileSync(workflowPath, 'utf8'));
+  const wf = parse(fs.readFileSync(workflowPath, 'utf8'));
+  const jobs = Object.values(wf.jobs);
+  const steps = jobs.flatMap((job) => job.steps ?? []);
+  const code = valuesOf(wf).join('\n');
   for (const fetches of [/\bhead[._]?(?:sha|ref)/i, /\bmerge_commit_sha\b/, /refs\/pull\//,
     /\bgit\s+(?:fetch|pull|checkout|clone|switch)\b/, /\bgh\s/, /\bcurl\b/, /\bwget\b/, /\bGITHUB_(?:ENV|PATH)\b/]) {
     assert.doesNotMatch(code, fetches, `${UNTRUSTED}: the workflow names a pull request's head, a fetching tool or a later step's environment (${fetches})`);
   }
-  assert.equal((code.match(/^\s*env:\s*$/gm) || []).length, 2, `${UNTRUSTED}: env is set beyond the two steps that need it`);
+  assert.equal([wf, ...jobs, ...steps].filter((o) => o.env).length, 2, `${UNTRUSTED}: env is set beyond the two steps that need it`);
   assert.deepEqual(code.split('\n').filter((l) => l.includes('GITHUB_OUTPUT')).map((l) => l.trim()), SOURCE_OUTPUTS,
     `${UNTRUSTED}: a step output is written from something other than the workflow's own repository and commit`);
 
-  const steps = workflowSteps(code);
-  const source = steps.find((s) => /^ {8}id: source$/m.test(s));
+  const source = steps.find((s) => s.id === 'source');
   assert.ok(source, `${UNTRUSTED}: no step names the workflow's own commit`);
-  assert.deepEqual(stepKeys(source), ['name', 'id', 'env', 'run'], `${UNTRUSTED}: the naming step carries more than its name, id, env and script`);
-  assert.deepEqual(stepBlock(source, /^ {8}env:\s*$/), ['SOURCE_REPO: ${{ job.workflow_repository }}', 'SOURCE_SHA: ${{ job.workflow_sha }}'],
+  assert.deepEqual(Object.keys(source), ['name', 'id', 'env', 'run'], `${UNTRUSTED}: the naming step carries more than its name, id, env and script`);
+  assert.deepEqual(source.env, { SOURCE_REPO: '${{ job.workflow_repository }}', SOURCE_SHA: '${{ job.workflow_sha }}' },
     `${UNTRUSTED}: the naming step's env holds more than the workflow's own repository and commit`);
-  for (const line of stepBlock(source, /^ {8}run: \|\s*$/) || ['(no script)']) {
+  for (const line of String(source.run ?? '(no script)').split('\n').map((l) => l.trim()).filter(Boolean)) {
     assert.ok(SOURCE_CHECKS.includes(line) || SOURCE_OUTPUTS.includes(line) || /^echo "::error title=Engineer review::[^"$`\\]*"$/.test(line),
       `${UNTRUSTED}: the naming step runs ${line}`);
   }
 
-  const actions = steps.filter((s) => /^\s*-?\s*uses:/m.test(s));
+  const actions = steps.filter((s) => s.uses);
   assert.equal(actions.length, 1, `${UNTRUSTED}: ${actions.length} steps run an action, where the one allowed is the script's checkout`);
   const [checkout] = actions;
-  assert.match(checkout, /uses: actions\/checkout@[0-9a-f]{40}/, `${UNTRUSTED}: the one action is not the pinned checkout`);
-  assert.match(checkout, /repository: \$\{\{ steps\.source\.outputs\.repo \}\}/, `${UNTRUSTED}: the checkout's repository is not the workflow's own`);
-  assert.match(checkout, /ref: \$\{\{ steps\.source\.outputs\.sha \}\}/, `${UNTRUSTED}: the checkout's commit is not the workflow's own`);
-  assert.match(checkout, /persist-credentials: false/, `${UNTRUSTED}: the checkout leaves the token in the fetched copy`);
+  assert.match(checkout.uses, /^actions\/checkout@[0-9a-f]{40}$/, `${UNTRUSTED}: the one action is not the pinned checkout`);
+  assert.equal(checkout.with?.repository, '${{ steps.source.outputs.repo }}', `${UNTRUSTED}: the checkout's repository is not the workflow's own`);
+  assert.equal(checkout.with?.ref, '${{ steps.source.outputs.sha }}', `${UNTRUSTED}: the checkout's commit is not the workflow's own`);
+  assert.equal(checkout.with?.['persist-credentials'], false, `${UNTRUSTED}: the checkout leaves the token in the fetched copy`);
 
-  const runs = steps.filter((s) => /^\s*-?\s*run:/m.test(s));
+  const runs = steps.filter((s) => s.run);
   assert.equal(runs.length, 2, `${UNTRUSTED}: ${runs.length} steps run commands, where two are allowed`);
   const [first, decision] = runs;
   assert.equal(first, source, `${UNTRUSTED}: the first command is not the step naming the workflow's own commit`);
-  assert.deepEqual(stepKeys(decision), ['name', 'env', 'run'], `${UNTRUSTED}: the decision step carries more than its name, env and command`);
-  assert.deepEqual(stepBlock(decision, /^ {8}env:\s*$/), ['GITHUB_TOKEN: ${{ github.token }}'], `${UNTRUSTED}: the decision step's env holds more than its token`);
-  assert.match(decision, /^ {8}run: node \.engineer-review\/engineer-review\/decide\.mjs\s*$/m, `${UNTRUSTED}: the last command is not the fetched decision script`);
+  assert.deepEqual(Object.keys(decision), ['name', 'env', 'run'], `${UNTRUSTED}: the decision step carries more than its name, env and command`);
+  assert.deepEqual(decision.env, { GITHUB_TOKEN: '${{ github.token }}' }, `${UNTRUSTED}: the decision step's env holds more than its token`);
+  assert.equal(decision.run.trim(), 'node .engineer-review/engineer-review/decide.mjs', `${UNTRUSTED}: the last command is not the fetched decision script`);
   assert.ok(steps.indexOf(checkout) < steps.indexOf(decision), `${UNTRUSTED}: the script runs before it is fetched`);
 });
 
@@ -393,6 +480,10 @@ test('a caller pin is refused unless its commit is on the shared workflow reposi
   for (const commit of pins.accepted) {
     const copy = await callerFor(client, caller, { owner: pins.owner, repo: pins.repo, commit });
     assert.ok(copy.includes(`@${commit}\n`));
+    // What decide.mjs caller prints is what a gated repository runs: its job carries the three grants.
+    const printed = parse(copy);
+    assert.deepEqual(printed.permissions, { contents: 'read' });
+    assert.deepEqual(printed.jobs['engineer-review'].permissions, GRANTS, `${PRIVATE}: the printed caller grants ${JSON.stringify(printed.jobs['engineer-review'].permissions)}`);
   }
   for (const [commit, why] of Object.entries(pins.refused)) {
     await assert.rejects(callerFor(client, caller, { owner: pins.owner, repo: pins.repo, commit }),

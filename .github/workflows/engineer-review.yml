@@ -20,8 +20,7 @@ on:
     types: [submitted]
 
 permissions:
-  statuses: write
-  pull-requests: read
+  contents: read
 
 jobs:
   engineer-review:
@@ -31,6 +30,12 @@ jobs:
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # contents: read because GitHub answers a private repository's activity, where the decision
+    # reads the last push, only with it; a caller hands at most these three (machine-rule/README.md, "Calls").
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: read
     # One run at a time per pull request, so a slower run cannot overwrite a newer answer;
     # each run reads the pull request afresh, so a superseded waiting run loses nothing.
     concurrency:

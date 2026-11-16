@@ -41,15 +41,24 @@ audit window holds the evidence; it costs one act per change (decision D83).
 
 It is a commit status set by a reusable workflow, not a workflow the ruleset runs, because GitHub
 runs a ruleset-required workflow only on `pull_request`, `pull_request_target` and `merge_group`,
-so a review comment could never start it (decision D86). The status counts only when GitHub
-Actions set it from an Engineer review run (decision D89).
+so a review comment could never start it (decision D86). The status is the merge gate, which the
+ruleset requires from the GitHub Actions app alone (decision D89); a workflow of the repository
+itself could also set it, so the status is never the evidence: the review itself, kept on the pull
+request, is the evidence (see "The evidence" and "Known gap").
 
 ## Adopting it in a repository
 
 1. Make the repository's caller file from `engineer-review/caller.yml`, pinned to a commit on the
-   shared workflow repository's `main` branch that holds the version you want:
+   shared workflow repository's `main` branch that holds the version you want. Run the command
+   from a checkout of the shared workflow repository, `dazzer-io/.github`, at the commit being
+   pinned: it fills the `caller.yml` beside the script it runs, so a checkout at another commit (a
+   stale clone, say) prints that commit's grants pinned to yours. Where the grants at the two
+   commits differ, GitHub refuses to start the called job, no status is set and, once the ruleset
+   requires it, every merge is blocked:
 
-       node engineer-review/decide.mjs caller --owner <organisation> --repo <the shared workflow repository's name> --commit <40-character commit id> > engineer-review.yml
+       git -C <checkout> fetch
+       git -C <checkout> checkout <40-character commit id>
+       node <checkout>/engineer-review/decide.mjs caller --owner dazzer-io --repo .github --commit <40-character commit id> > engineer-review.yml
 
    The template names no organisation, repository or commit; the command fills its one `uses:`
    line, refuses a branch or tag name in place of a commit id, and asks GitHub to compare
@@ -76,13 +85,12 @@ it through a reviewed pull request. A caller is rebuilt with `decide.mjs caller`
 never by editing only the commit in its `uses:` line: the called job may ask a grant the old caller
 does not hand (as `contents: read` did from d55b0f3 on), and GitHub then refuses to start it, so no
 status is set and, once the ruleset requires it, every merge is blocked. Run it from a checkout of
-the shared workflow repository, `dazzer-io/.github`, at the new commit (`git -C <checkout> checkout
-<new commit>`, then `node <checkout>/engineer-review/decide.mjs caller --owner dazzer-io --repo .github
---commit <new commit>`): the command fills the `caller.yml` beside the script it runs, so a checkout
+the shared workflow repository, `dazzer-io/.github`, at the new commit (`git -C <checkout> fetch`,
+`git -C <checkout> checkout <new commit>`, then `node <checkout>/engineer-review/decide.mjs caller
+--owner dazzer-io --repo .github --commit <new commit>`): the command fills the `caller.yml` beside the script it runs, so a checkout
 at an older commit prints the old grants pinned to the new commit. **Whoever reviews a caller bump
 does the same check by hand**: compare `main...<the new commit>` in the shared workflow repository
-(on GitHub, or
-`gh api repos/<organisation>/<shared workflow repository>/compare/main...<commit> --jq .status`)
+(on GitHub, or `gh api repos/dazzer-io/.github/compare/main...<new commit> --jq .status`)
 and accept only `behind` or `identical`. The reviewer also compares the called job's `permissions`
 at the new commit with the job-level `permissions` in the new caller file itself, which must hand
 every grant the called job asks.

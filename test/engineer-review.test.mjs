@@ -297,6 +297,51 @@ test('the README gives DZ-33 the review itself as evidence and the status as the
   assert.doesNotMatch(flat, /The status itself carries the evidence/, DZ33);
 });
 
+// Said only when a check goes red on a README that, anywhere it describes the status, says the
+// status counts only when set from an Engineer review run: the ruleset pins only the GitHub Actions
+// app, so a workflow of the repository can set it too, and the review itself is the evidence.
+const GATE = 'a README sentence describing the Engineer review status says it counts only when set from an Engineer review run, where a workflow of the repository can set it too and only the review itself is the evidence';
+
+test('every README sentence describing the status makes it the merge gate, never a status that counts only from its own run', () => {
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const flat = readme.replace(/\s+/g, ' ');
+  const sentences = flat.split(/(?<=\.)\s+/).filter((b) => /status/i.test(b));
+  assert.ok(sentences.length > 0, `Could not find the status described in the README: ${GATE}`);
+  for (const b of sentences) {
+    assert.doesNotMatch(b, /counts only when/i, `${GATE}: ${b}`);
+    assert.doesNotMatch(b, /\bonly\b[^.]*\bset (it )?from an? Engineer review run/i, `${GATE}: ${b}`);
+  }
+  const start = readme.indexOf('## Why');
+  assert.ok(start >= 0, `Could not find the README's Why section: ${GATE}`);
+  const why = readme.slice(start, readme.indexOf('\n## ', start + 1)).replace(/\s+/g, ' ');
+  assert.match(why, /merge gate/, GATE);
+  assert.match(why, /a workflow of the repository (itself )?(could|can) also set/, GATE);
+  assert.match(why, /the review itself[^.]*is the evidence/, GATE);
+});
+
+// Said only when a check goes red on a README whose adoption step lets a first caller be made from
+// whatever checkout is at hand: decide.mjs fills the caller.yml beside itself, so a stale clone
+// prints old grants pinned to the new commit, GitHub refuses the call and no status is ever set.
+const ADOPT = 'the README\'s adoption step no longer says decide.mjs caller is run from a checkout of dazzer-io/.github at the commit being pinned';
+
+test('the README makes a first caller from a checkout of the shared workflow repository at its pin', () => {
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const start = readme.indexOf('## Adopting it in a repository');
+  const end = readme.indexOf('\n2. ', start);
+  assert.ok(start >= 0 && end > start, `Could not find the README's first adoption step: ${ADOPT}`);
+  const step = readme.slice(start, end).replace(/\s+/g, ' ');
+  assert.match(step, /from a checkout of the shared workflow repository, `dazzer-io\/\.github`, at the commit being pinned/, ADOPT);
+  assert.match(step, /git -C <checkout> checkout <40-character commit id>/, ADOPT);
+  assert.match(step, /node <checkout>\/engineer-review\/decide\.mjs caller .*--commit <40-character commit id>/, ADOPT);
+  assert.doesNotMatch(step, /(^|\s)node engineer-review\/decide\.mjs caller/, ADOPT);
+  // caller.yml's own comment, printed into every caller, gives the same command the same way.
+  const comment = fs.readFileSync(callerPath, 'utf8').split('\n').filter((l) => /^#/.test(l)).map((l) => l.replace(/^#\s?/, '')).join(' ').replace(/\s+/g, ' ');
+  const CALLER_ADOPT = 'caller.yml\'s comment no longer says decide.mjs caller is run from a checkout of the shared workflow repository at the commit being pinned';
+  assert.match(comment, /decide\.mjs caller/, CALLER_ADOPT);
+  assert.match(comment, /from a checkout of the shared workflow repository[^.]*at the commit being pinned/, CALLER_ADOPT);
+  assert.doesNotMatch(comment, /(^|\s)node engineer-review\/decide\.mjs caller/, CALLER_ADOPT);
+});
+
 test('the reusable workflow answers to calls and to this repository\'s own events, pinned and with its least rights', () => {
   const wf = parse(fs.readFileSync(workflowPath, 'utf8'));
   for (const trigger of ['workflow_call', 'pull_request', 'issue_comment', 'pull_request_review']) assert.ok(trigger in wf.on, trigger);

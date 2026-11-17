@@ -1,5 +1,5 @@
 {
-  "about": "The jobs kept on GitHub's computers, and the few that take another effect, each by repository, workflow file and job (a whole-file entry lists every job id its file holds), with its reason, the decision it rests on and its source. Effects: stay (on a literal GitHub standard label, no setting as its own machine, a CHECKS_RUNNER_<N> handed on only in a step's env; it may hold the write or sign-in it holds there), checks (reads CHECKS_RUNNER_<N> as a change check does, holding only the write it names) and canary (runners' canary.yml and locked-canary.yml alone, the locked sets in locked-canary.yml alone). machine-rule/judge.mjs reads this file from dazzer-io/.github, never from the repository it judges, and the morning readings read it to leave stay jobs out (r-1.58). machine-rule/README.md says each rule.",
+  "about": "The jobs kept on GitHub's computers, and the few that take another effect, each by repository, workflow file and job (a whole-file entry lists every job id its file holds), with its reason, the decision it rests on and its source. Effects: stay (on a literal GitHub standard label, or windows-latest, which a stay entry alone admits (decision 14), no setting as its own machine, a CHECKS_RUNNER_<N> handed on only in a step's env; it may hold the write or sign-in it holds there), checks (reads CHECKS_RUNNER_<N> as a change check does, holding only the write it names) and canary (runners' canary.yml and locked-canary.yml alone, the locked sets in locked-canary.yml alone). machine-rule/judge.mjs reads this file from dazzer-io/.github, never from the repository it judges, and the morning readings read it to leave stay jobs out (r-1.58). machine-rule/README.md says each rule.",
   "entries": [
     {
       "repository": "dazzer-io/dazzer",
@@ -230,6 +230,16 @@
       "reason": "started by a push to main, it tags the released version on the change-check machines, holding contents: write to push the tag",
       "decision": 47,
       "source": "brain-builder .github/workflows/release.yml:28-33 at main, read 2026-11-08"
+    },
+    {
+      "repository": "dazzer-io/brain-builder",
+      "workflow": "gates.yml",
+      "job": "windows",
+      "name": "Windows, the application's tests",
+      "effect": "stay",
+      "reason": "a change check that runs the application's own tests a second time, on GitHub's own Windows machine, since on Linux its Windows-only tests are skipped; none of our machines runs Windows, so it stays on GitHub's computers, paid, holding contents: read and signing in to nothing, the one kind of job kept.json admits on windows-latest (decision 14)",
+      "decision": 14,
+      "source": "brain-builder .github/workflows/gates.yml:80-94 (job windows, runs-on at 83) on the joined change of work/dazzer-apps-seed at 57393ac, read 2026-11-17; work/dazzer-apps-seed D14 (the operator's \"Yes, all three picks\", 16 Nov)"
     },
     {
       "repository": "dazzer-io/scheduler",

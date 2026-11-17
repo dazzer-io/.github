@@ -105,6 +105,12 @@ export const isStandard = (label) => Object.hasOwn(GITHUB_STANDARD_CORES, String
 // GitHub's machines as a setting's fallback may name them: a standard one, or ubuntu-<N>-core.
 export const isGitHubMachine = (label) => isStandard(label) || /^ubuntu-\d+-core$/.test(String(label));
 export const GITHUB_MACHINE = `${STANDARD}, or a larger one named ubuntu-<N>-core`;
+// GitHub's Windows machine, admitted only as the literal machine of a job a kept.json stay entry
+// keeps (decision 14, the operator's yes to a small paid Windows machine that runs only the
+// application's own tests on brain-builder's pull requests). It is none of the standard machines
+// above and never a setting's fallback, so every other rule reading them refuses it as before.
+const KEPT_WINDOWS = 'windows-latest';
+const keptWindows = (literal, effect) => effect === 'stay' && literal === KEPT_WINDOWS;
 // The labels of our own machines (runners' MACHINE_LABEL).
 export const OUR_MACHINE = /^dazzer-(checks|checks-regular|locked|scan)-([1-9][0-9]*)-core$/;
 export function coresFromLabel(label) {
@@ -1427,7 +1433,7 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
         else if (Array.isArray(runsOn) || isObj(runsOn)) noAt(routes.runsOn(runsOn, { wf: w, id, job }, 0).why + '.');
         else if (typeof runsOn !== 'string') noAt(`runs-on ${show(runsOn)} names no machine this rule can read.`);
         else if (literal !== null && OUR_MACHINE.test(literal) && effect !== 'canary') noAt(`names one of our own machines literally, '${literal}', so it would run there with no setting naming it, and the watcher, which empties the setting to send a waiting job back to GitHub's, could never move it. Read the setting: \${{ vars.<FAMILY>_RUNNER_<N> || '<GitHub's machine>' }}.`);
-        else if (literal !== null && !isGitHubMachine(literal) && effect !== 'canary') noAt(`names the machine '${literal}' literally, which is neither GitHub's machine (${GITHUB_MACHINE}) nor a setting, so where it runs could not be judged.`);
+        else if (literal !== null && !isGitHubMachine(literal) && effect !== 'canary' && !keptWindows(literal, effect)) noAt(`names the machine '${literal}' literally, which is neither GitHub's machine (${GITHUB_MACHINE}) nor a setting, so where it runs could not be judged.`);
       }
       // dazzer-app's stricter class exempts the literal ubuntu-latest (its holdsMoreThanTheCode,
       // verdict.test.ts:1253) and, on a workflow no pull-request event starts, the locked setting
@@ -1463,7 +1469,7 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
       if (effect === 'canary') judgeCanary({ repository, file, js, job, triggers, secretReads, no, noAt, routes, w, id });
       // A shared scan's job is judged by the scans' own rules below, its stay entry only naming it.
       if (effect === 'stay' && !isScanFile) {
-        if (!(literal !== null && isStandard(literal))) noAt(`is kept on GitHub's computers by kept.json (effect stay) and runs on ${show(runsOn)}, not one of GitHub's standard machines written as a label (${STANDARD}).`);
+        if (!(literal !== null && (isStandard(literal) || keptWindows(literal, effect)))) noAt(`is kept on GitHub's computers by kept.json (effect stay) and runs on ${show(runsOn)}, not one of GitHub's standard machines written as a label (${STANDARD}).`);
         const outsideEnv = settingReadsIn({ job: withoutStepEnv(job), top });
         const own = [...outsideEnv.families.CHECKS, ...reads.families.LOCKED, ...reads.families.SCAN];
         if (own.length || outsideEnv.whole) no(`is kept on GitHub's computers by kept.json (effect stay) and reads ${unique(own).join(', ') || VARS_WHOLE} beyond a step's env: a stay job reads no CHECKS_, LOCKED_ or SCAN_ setting as its own machine, and hands CHECKS_RUNNER_<N> on only in a step's env, as dazzer-app's plan jobs do (decision 34).`);

@@ -489,7 +489,7 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
   const others = [
     ['dazzer', 'release.yml', 'publish', 'stay', 40], ['dazzer', 'pr-automation.yml', 'label', 'stay', 36], ['dazzer', 'harness-pin-sync.yml', 'sync', 'stay', 253],
     ...['contract-watch.yml:watch', 'promote-production.yml:start', 'promote-production.yml:promote', 'sweep.yml:sweep', 'lane-times.yml:refresh'].map((s) => ['dazzer-app', ...s.split(':'), 'stay', 190]),
-    ['brain-builder', 'release.yml', 'tag', 'checks', 47], ['scheduler', 'tick.yml', 'runner-readings', 'stay', 22],
+    ['brain-builder', 'release.yml', 'tag', 'checks', 47], ['brain-builder', 'gates.yml', 'windows', 'stay', 14], ['scheduler', 'tick.yml', 'runner-readings', 'stay', 22],
     ['runners', 'apply.yml', 'apply', 'stay', 9], ['runners', 'image.yml', 'build', 'stay', 9], ['runners', 'image.yml', 'push', 'stay', 9],
     ['runners', 'canary.yml', 'canary', 'canary', 50], ['runners', 'canary.yml', 'scan', 'canary', 50],
     ['runners', 'canary.yml', 'nvmrc-exact-v7', 'canary', 50], ['runners', 'canary.yml', 'nvmrc-exact-v7-in-a-container', 'canary', 50],
@@ -540,6 +540,39 @@ test('a made-up workflow shaped as dazzer\'s harness-pin-sync.yml, signed in wit
     const e = ours[0];
     await c(() => assert.ok(ours.length === 1 && e.job === 'sync' && e.name === 'Sync harness pin + mirror' && e.effect === 'stay' && e.decision === 253 && /dazzer-agent/.test(e.reason ?? '') && /harness-pin-sync\.yml:\d+-\d+, read 2026-11-12 at dazzer pull request 1482 head bcb9d7042/.test(e.source ?? ''),
       `Could not find kept.json's one stay entry for dazzer's harness-pin-sync.yml job sync, named as GitHub shows it, on decision 253, its reason naming dazzer-agent's records and its source line read at dazzer pull request 1482 head bcb9d7042: kept.json names no stay entry so: ${JSON.stringify(ours)}`));
+  });
+});
+
+// The operator's yes to a small paid Windows machine for brain-builder's pull requests (decision
+// 14, work/dazzer-apps-seed D14): its gates.yml runs the application's own tests a second time on
+// GitHub's Windows machine. That label stands only in a job a kept.json stay entry keeps: never as
+// one of GitHub's standard machines, never as a setting's fallback, never with no entry. The
+// fixture is made up in gates.yml's shape; the entry is kept.json's own.
+test('GitHub\'s Windows machine stands only in a job a kept.json stay entry keeps, as brain-builder\'s gates.yml job windows is kept (decision 14); with no entry, as a setting\'s fallback, beside a write token or in a public repository it is refused', async () => {
+  need();
+  const { kept } = lists();
+  const BB = { repository: 'dazzer-io/brain-builder', visibility: 'private' };
+  const LABEL = ['windows', 'latest'].join('-');
+  const NAME = "Windows, the application's tests";
+  const win = (runsOn, extra = '') => `  windows:\n    name: ${NAME}\n    runs-on: ${runsOn}\n    timeout-minutes: 15\n${extra}${STEPS}`;
+  const gates = (runsOn, top = READ, extra = '') => ({ 'gates.yml': workflow('pull_request', top, job('checks', CHECKS2), win(runsOn, extra)) });
+  const ours = kept.entries.filter((e) => e.repository === BB.repository && e.workflow === 'gates.yml');
+  const without = { ...BB, kept: { ...kept, entries: kept.entries.filter((e) => !ours.includes(e)) } };
+  const keptIn = (ctx) => ({ ...ctx, kept: { ...kept, entries: [...kept.entries, { repository: ctx.repository, workflow: 'gates.yml', job: 'windows', name: NAME, effect: 'stay', reason: 'made up', decision: 14, source: 'made up' }] } });
+  await everyCase(async (c) => {
+    await c(() => mustPass('brain-builder\'s gates.yml shape, its job windows on GitHub\'s Windows machine kept by kept.json\'s stay entry', gates(LABEL), BB, { file: 'gates.yml' }));
+    await c(() => mustRefuse('the gates.yml shape with its entry taken out', gates(LABEL), without, { file: 'gates.yml', job: 'windows', at: `runs-on: ${LABEL}`, says: new RegExp(`names the machine '${LABEL}' literally, which is neither GitHub's machine`) }));
+    await c(() => mustRefuse('a change check falling back to GitHub\'s Windows machine', gates(`@{{ vars.CHECKS_RUNNER_2 || '${LABEL}' }}`), without, { file: 'gates.yml', job: 'windows', says: new RegExp(`its fallback '${LABEL}' is not GitHub's machine`) }));
+    await c(() => mustRefuse('a kept job falling back to GitHub\'s Windows machine', gates(`@{{ vars.CHECKS_RUNNER_2 || '${LABEL}' }}`), BB, { file: 'gates.yml', job: 'windows', says: new RegExp(`\\(effect stay\\) and runs on "\\$\\{\\{ vars\\.CHECKS_RUNNER_2 \\|\\| '${LABEL}' \\}\\}", not one of GitHub's standard machines`) }));
+    await c(() => mustRefuse('a kept job on another Windows label', gates('windows-2022'), BB, { file: 'gates.yml', job: 'windows', says: /names the machine 'windows-2022' literally, which is neither GitHub's machine/ }));
+    await c(() => mustRefuse('a kept job on GitHub\'s Windows machine holding a write token on a pull request', gates(LABEL, 'permissions:\n  contents: write\n'), BB, { file: 'gates.yml', job: 'windows', says: new RegExp(`holds a write token \\(contents: write\\) in a workflow a pull-request event starts \\(pull_request\\) and runs on "${LABEL}", not one of GitHub's standard machines`) }));
+    await c(() => mustRefuse('a kept job on GitHub\'s Windows machine in a public repository', { 'gates.yml': workflow('pull_request', READ, win(LABEL)) }, keptIn(PUBLIC), { file: 'gates.yml', job: 'windows', says: new RegExp(`a public repository, and runs on "${LABEL}", not one of GitHub's standard machines`) }));
+    for (const [what, ok] of [['a standard machine', J.isStandard(LABEL)], ["GitHub's machine a setting may fall back to", J.isGitHubMachine(LABEL)]]) {
+      await c(() => assert.ok(!ok, `Could not find ${LABEL} left out of ${what}: it is admitted only where a stay entry keeps the job`));
+    }
+    const e = ours[0];
+    await c(() => assert.ok(ours.length === 1 && e.job === 'windows' && e.name === NAME && e.effect === 'stay' && e.decision === 14 && /gates\.yml:\d+-\d+/.test(e.source ?? '') && /work\/dazzer-apps-seed D14/.test(e.source ?? '') && /Yes, all three picks/.test(e.source ?? ''),
+      `Could not find kept.json's one stay entry for brain-builder's gates.yml job windows, named as GitHub shows it, on decision 14, its source naming gates.yml's lines and work/dazzer-apps-seed D14: kept.json names so: ${JSON.stringify(ours)}`));
   });
 });
 

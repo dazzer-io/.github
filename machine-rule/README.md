@@ -215,7 +215,14 @@ reading one is refused.
 - **A setting read as a job's machine carries GitHub's machine of the same width as its
   fallback** (decision 15): `${{ vars.CHECKS_RUNNER_8 || 'ubuntu-8-core' }}`. A setting with no
   fallback, a fallback of another width, or a fallback that is not GitHub's machine is refused,
-  so an empty setting always means GitHub's machine.
+  so an empty setting always means GitHub's machine. GitHub's machine here is a Linux one
+  (`ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, or `ubuntu-<N>-core`); `windows-latest` is
+  never a fallback.
+- **GitHub's Windows machine, `windows-latest`, stands only in a job a kept.json stay entry
+  keeps** (decision 14, the operator's yes to a small paid Windows machine that runs only the
+  application's own tests on brain-builder's pull requests). It is never one of GitHub's standard
+  machines, so every class that asks for a standard label still refuses it, and with no entry it
+  is refused as a machine named literally.
 - **None of our own machines is named literally** (`dazzer-<set>-<N>-core`). The watcher empties
   the setting to send a waiting job back to GitHub's, and it cannot move a literal label. The
   one exception is runners' two canaries, below.
@@ -361,7 +368,8 @@ fails its check leaves the rule unread.
 
 - **`kept.json`**: the jobs kept on GitHub's computers. Each entry carries its repository,
   workflow, reason, decision and source, and one of three effects:
-  - `stay`: on a literal GitHub standard label, reading no setting as its machine. A plan job
+  - `stay`: on a literal GitHub standard label, or the one exception, `windows-latest` (decision
+    14; brain-builder's `gates.yml` job `windows` today), reading no setting as its machine. A plan job
     may hand `CHECKS_RUNNER_<N>` on in a step's `env` (decision 34), only in a workflow that
     neither signs in nor holds a write token, as dazzer-app's `ci.yml` and `split-trial.yml`
     are (decisions 9, 23, 36, 181).

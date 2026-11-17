@@ -208,6 +208,17 @@
       "source": "dazzer-app .github/workflows/sweep.yml at main 4b236f2e, read 2026-11-08; work/checks-on-google decision 190 (builder r-3.8's report, 8 Nov: machine-rule/judge.mjs over the planned move)"
     },
     {
+      "repository": "dazzer-io/dazzer-app",
+      "workflow": "lane-times.yml",
+      "jobs": [
+        "refresh"
+      ],
+      "effect": "stay",
+      "reason": "a scheduled job (Saturday, and by hand) that reads the week's CI runs and writes its summary to its own run page, holding contents: read and actions: read and signing in to nothing (no environment, no id-token: write), so decision 9 keeps it off the locked set, which takes only workflows that sign in; it runs on GitHub's literal machine for a minute or two a week, and its weekly bot pull request, the one job that signed in, was removed by dazzer-app pull request 420 (decision 190)",
+      "decision": 190,
+      "source": "dazzer-app .github/workflows/lane-times.yml on branch run/release-stays-fast-app-packing (pull request 420), read 2026-11-17; work/release-stays-fast (the operator's \"Yes, add it\", 17 Nov)"
+    },
+    {
       "repository": "dazzer-io/brain-builder",
       "workflow": "release.yml",
       "job": "tag",

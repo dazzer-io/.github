@@ -488,7 +488,7 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
   ];
   const others = [
     ['dazzer', 'release.yml', 'publish', 'stay', 40], ['dazzer', 'pr-automation.yml', 'label', 'stay', 36], ['dazzer', 'harness-pin-sync.yml', 'sync', 'stay', 253],
-    ...['contract-watch.yml:watch', 'promote-production.yml:start', 'promote-production.yml:promote', 'sweep.yml:sweep'].map((s) => ['dazzer-app', ...s.split(':'), 'stay', 190]),
+    ...['contract-watch.yml:watch', 'promote-production.yml:start', 'promote-production.yml:promote', 'sweep.yml:sweep', 'lane-times.yml:refresh'].map((s) => ['dazzer-app', ...s.split(':'), 'stay', 190]),
     ['brain-builder', 'release.yml', 'tag', 'checks', 47], ['scheduler', 'tick.yml', 'runner-readings', 'stay', 22],
     ['runners', 'apply.yml', 'apply', 'stay', 9], ['runners', 'image.yml', 'build', 'stay', 9], ['runners', 'image.yml', 'push', 'stay', 9],
     ['runners', 'canary.yml', 'canary', 'canary', 50], ['runners', 'canary.yml', 'scan', 'canary', 50],
@@ -507,10 +507,10 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
   }
   const tag = keeps('brain-builder', 'release.yml', 'tag');
   if (!tag || JSON.stringify(tag.writes) !== JSON.stringify(['contents']) || tag.name !== 'Tag the released version') misses.push(`Could not find brain-builder's tag job kept checks naming contents and the name GitHub shows: ${JSON.stringify(tag ?? null)}`);
-  // dazzer-app's four production workflows that sign in and that no pull request or deployment
-  // starts go to the locked machines; the three that stay say why (decision 190).
+  // dazzer-app's three production workflows that sign in and that no pull request or deployment
+  // starts go to the locked machines; the four that stay say why (decision 190).
   const app = (file) => kept.entries.filter((e) => e.repository === 'dazzer-io/dazzer-app' && e.workflow === file);
-  for (const file of ['release-check.yml', 'canary-drill.yml', 'scorecard.yml', 'lane-times.yml']) {
+  for (const file of ['release-check.yml', 'canary-drill.yml', 'scorecard.yml']) {
     if (app(file).length) misses.push(`Could not find dazzer-app's ${file} let go from kept.json to the locked machines (decision 190): ${JSON.stringify(app(file))}`);
   }
   const stays = [['sweep.yml', [/signs in to nothing/, /decision 9\b/]], ['contract-watch.yml', [/signs in to nothing/, /decision 9\b/]], ['promote-production.yml', [/deployment_status/, /the deployed commit's own file decides its runs-on/]]];

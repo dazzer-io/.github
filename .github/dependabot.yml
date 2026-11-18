@@ -1,0 +1,25 @@
+# Keeps this repository's pinned actions and its one npm package current. Each ecosystem's updates
+# arrive as one grouped pull request a week, and a new release waits out a cooldown first, so a
+# release that is pulled soon after publishing never reaches a pull request here.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns:
+          - "*"

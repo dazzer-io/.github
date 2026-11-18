@@ -7,8 +7,8 @@ you already use.
 
 [dazzer-plugin](https://github.com/dazzer-io/dazzer-plugin) brings Dazzer into the AI tools you
 already work in, such as Claude, Codex and GitHub Copilot. It makes your AI check what you
-already know before it answers, and save what settles instead of losing it when the conversation
-ends. Its README shows how to install it in each tool.
+already know before it answers, and save decisions and facts as they come up, instead of losing
+them when the conversation ends. Its README shows how to install it in each tool.
 
 ## Learn more
 

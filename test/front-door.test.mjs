@@ -98,10 +98,11 @@ const privateNames = () => {
   for (const f of readdirSync(at('machine-rule')).filter((x) => x.endsWith('.json'))) {
     for (const m of readFileSync(at(join('machine-rule', f)), 'utf8').matchAll(/dazzer-io\/([A-Za-z0-9_.-]+)/g)) if (!PUBLIC.has(m[1])) names.add(m[1]);
   }
+  const fromLists = names.size;
   // The repositories the machine rule's ruleset leaves out are private too.
   for (const n of JSON.parse(readFileSync(at(join('machine-rule', 'ruleset.json')), 'utf8')).conditions?.repository_name?.exclude ?? []) if (!PUBLIC.has(n)) names.add(n);
   // A name that is also an ordinary word is matched only as an owner's name or a full one.
-  return [...names].map((n) => [n, new RegExp(/-/.test(n) || n === 'dazzer' ? `(?<![\\w./-])${escape(n)}(?![\\w-]|\\.\\w)` : `(?<![\\w./-])${escape(n)}'|dazzer-io/${escape(n)}(?![\\w.-])`)]);
+  return { fromLists, entries: [...names].map((n) => [n, new RegExp(/-/.test(n) || n === 'dazzer' ? `(?<![\\w./-])${escape(n)}(?![\\w-]|\\.\\w)` : `(?<![\\w./-])${escape(n)}'|dazzer-io/${escape(n)}(?![\\w.-])`)]) };
 };
 // The prose of a file: all of a document or an issue form, the comments of code and workflows.
 const proseOf = (f, t) => {
@@ -114,8 +115,8 @@ const proseOf = (f, t) => {
 test('no document or comment carries an internal reference: a decision number, a task id, a person, a private repository, a private path, a commit id or a promise the checks do not keep', () => {
   const files = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean).filter((f) => !f.startsWith('test/fixtures/'));
   assert.ok(files.includes('README.md') && files.includes('machine-rule/judge.mjs'), `Could not find this repository's files as git tracks them: ${files.length} read`);
-  const names = privateNames();
-  assert.ok(names.length >= 3, `Could not find the private repositories the machine rule's lists name: ${names.length} found`);
+  const { fromLists, entries: names } = privateNames();
+  assert.ok(fromLists >= 3, `Could not find the private repositories the machine rule's lists name: ${fromLists} found`);
   const faults = [...FAULTS, ...names.map(([n, re]) => [`the private repository ${n}`, re])];
   const misses = [];
   let read = 0;

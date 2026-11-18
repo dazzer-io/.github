@@ -1,0 +1,13 @@
+{
+  "salt": "fixture-only-salt",
+  "repositories": [
+    "64935f3884c00979724167c0108ce3c1090f7e30e1f4f312538cfad1af272636",
+    "ec95c12bfa50474fc3c42cf491123f866ef059845f32c741a74bcb2751bf14f4"
+  ],
+  "people": [
+    "7c8fd580be299eea417a4158efca95756895bf78fdaab21a60d6c006cec81f85"
+  ],
+  "addresses": [
+    "9b0a9f79cc8e3f9624da1bfbea817767c70f5a5dee65625bd80a371aa3494bd6"
+  ]
+}

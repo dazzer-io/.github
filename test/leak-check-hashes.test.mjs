@@ -61,12 +61,14 @@ test('the list holds a hash for every private and internal repository and every 
   noPlainName(written, 'the written list');
   noPlainName(said, 'what the maker printed');
   const list = JSON.parse(written);
+  assert.ok(typeof list.salt === 'string' && list.salt.length > 0, 'the list holds no salt: its hashes are not salted');
+  const hash = (name) => oneWay(name, list.salt);
   for (const r of REPOS.filter((r) => r.visibility !== 'public')) {
-    assert.ok(list.repositories.includes(oneWay(r.name)), `${FAULT}: the ${r.visibility} repository is missing from the list`);
+    assert.ok(list.repositories.includes(hash(r.name)), `${FAULT}: the ${r.visibility} repository is missing from the list`);
   }
-  assert.ok(!list.repositories.includes(oneWay('open-lantern')), 'a public repository name was hashed: the list holds private names only');
-  for (const p of PEOPLE) assert.ok(list.people.includes(oneWay(p)), 'a person named in the names file has no hash');
-  for (const a of ADDRESSES) assert.ok(list.addresses.includes(oneWay(a)), 'an address named in the names file has no hash');
+  assert.ok(!list.repositories.includes(hash('open-lantern')), 'a public repository name was hashed: the list holds private names only');
+  for (const p of PEOPLE) assert.ok(list.people.includes(hash(p)), 'a person named in the names file has no hash');
+  for (const a of ADDRESSES) assert.ok(list.addresses.includes(hash(a)), 'an address named in the names file has no hash');
   assert.ok(loadHashes(out).size >= 5, 'the leak check does not accept the list the maker wrote');
 });
 

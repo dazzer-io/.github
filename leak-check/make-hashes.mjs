@@ -1,7 +1,7 @@
 // Makes the leak check's one-way hash list (read by hashes.mjs). It reads the organisation's private
 // and internal repository names live with the caller's own GitHub sign-in (gh), and the people's names
-// and addresses from a names file whose path is given, kept outside every repository. It writes only
-// hashes, made by hashes.mjs's oneWay so the scanner matches them, sorted so the order tells nothing,
+// and addresses from a names file whose path is given, kept outside every repository. It writes a fresh
+// salt and only salted hashes, made by hashes.mjs's oneWay so the scanner matches them, sorted so the order tells nothing,
 // and it never prints a plain name: what it says is counts and places only.
 //
 //   node leak-check/make-hashes.mjs --names <names.json> --out <hashes.json> [--org <org>]
@@ -11,10 +11,11 @@
 // --check reads the repository list again and exits 1, saying "a private repository name has no hash",
 // while any private or internal repository's name is missing from the list.
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { oneWay, loadHashes } from './hashes.mjs';
+import { oneWay, loadList } from './hashes.mjs';
 
 export const MISSING = 'a private repository name has no hash';
 const ORG = 'dazzer-io';
@@ -57,7 +58,8 @@ function readNames(file) {
   return out;
 }
 
-const hashed = (names) => [...new Set(names.map(oneWay))].sort();
+// Each name hashed with the list's salt (never map(oneWay): its index would become the salt).
+const hashed = (names, salt) => [...new Set(names.map((n) => oneWay(n, salt)))].sort();
 
 async function privateRepositories(listRepositories, org) {
   const repos = await listRepositories(org);
@@ -82,9 +84,9 @@ export async function main(argv, { listRepositories = ghRepositories, out = cons
   try {
     if (check) {
       if (!hashesFile) { err('--check needs --hashes <hashes.json>'); return 2; }
-      const have = loadHashes(hashesFile);
+      const { salt, repositories: have } = loadList(hashesFile);
       const repos = await privateRepositories(listRepositories, org);
-      const missing = repos.filter((n) => !have.has(oneWay(n))).length;
+      const missing = repos.filter((n) => !have.has(oneWay(n, salt))).length;
       if (missing) { err(`${MISSING}: ${missing} of ${repos.length} private or internal repositories of ${org}; make the list again`); return 1; }
       out(`every one of ${repos.length} private or internal repositories of ${org} has a hash`);
       return 0;
@@ -92,9 +94,11 @@ export async function main(argv, { listRepositories = ghRepositories, out = cons
     if (!names || !outFile) { err('give --names <names.json> and --out <hashes.json>, or --check --hashes <hashes.json>'); return 2; }
     const people = readNames(names);
     const repos = await privateRepositories(listRepositories, org);
-    const list = { repositories: hashed(repos), people: hashed(people.people), addresses: hashed(people.addresses) };
+    // A fresh salt for each list, written beside the hashes as hashes.mjs reads it.
+    const salt = randomBytes(16).toString('hex');
+    const list = { salt, repositories: hashed(repos, salt), people: hashed(people.people, salt), addresses: hashed(people.addresses, salt) };
     writeFileSync(outFile, `${JSON.stringify(list, null, 2)}\n`);
-    loadHashes(outFile);
+    loadList(outFile);
     out(`wrote ${outFile}: ${list.repositories.length} repositories, ${list.people.length} people, ${list.addresses.length} addresses, as one-way hashes`);
     return 0;
   } catch (e) {

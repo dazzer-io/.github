@@ -221,7 +221,7 @@ node read.mjs --repo <owner/name> --workflow <file> --event <push|pull_request> 
     over the complete records of that file in that group, `workers` and `serial` come from the
     newest of them, and `n` counts them. A record whose `ms` for the file is not a finite number
     (JSON reads `1e400` as Infinity) is not one of them, and a path with none in a group has no
-    entry for it. No single entry is ever picked from several groups (spec-split.md, D12).
+    entry for it. No single entry is ever picked from several groups.
   - `jobs[group]` holds `ms` (the median of the group's longest job), `setup_ms` (the median of
     job time minus record span) and `n`.
   - `--job-prefix` limits which jobs feed `files`; `jobs` always holds every group.
@@ -304,11 +304,10 @@ per line; a line with no tab, or an empty group, is a file of no group.
     once a file discovered twice has been refused, so `deal` runs no check that could never
     fire. `checkDeal(files, parts)` is the planner's test oracle: the tests check every count's
     deal with it, and it refuses one that misses a file, holds one twice or holds one never
-    discovered: `the deal does not hold every file exactly once: <file>`. No gate calls it. CI
-    Gate, not built yet, is to hold the shares' records, not the discovered list `checkDeal`
-    takes, and is to make its own check from them, in its own words: their `discovered` and
-    `history` hashes, their file lists and `discovered_count` (spec-split.md in dev-cycle, "CI
-    Gate checks every file ran exactly once").
+    discovered: `the deal does not hold every file exactly once: <file>`. No gate calls it. A
+    gate that checks every file ran exactly once is to hold the shares' records, not the
+    discovered list `checkDeal` takes, and is to make its own check from them, in its own words:
+    their `discovered` and `history` hashes, their file lists and `discovered_count`.
 
   The same inputs, in any order, give the same deal, so every part computes the whole deal from
   the one history file and takes its own share.

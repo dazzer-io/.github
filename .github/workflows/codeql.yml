@@ -1,48 +1,47 @@
-# Shared CodeQL scan (decisions 118 and 119): GitHub's code scanning for every dazzer-io
-# repository, as one workflow here that each repository calls, in place of a copy of its own.
-# A repository calls it from a short caller file (README.md, "The shared CodeQL scan"), naming its
-# languages; this file decides everything else, so a new repository needs no copy and no review of
-# one, and a change in a calling repository cannot edit the scan it is scanned by.
+# Shared CodeQL scan: GitHub's code scanning for every dazzer-io repository, as one workflow here
+# that each repository calls, in place of a copy of its own. A repository calls it from a short
+# caller file (README.md, "The shared CodeQL scan"), naming its languages; this file decides
+# everything else, so a new repository needs no copy and no review of one, and a change in a
+# calling repository cannot edit the scan it is scanned by.
 #
-# WHAT THE ACTION ALSO READS (decision 170). github/codeql-action names five repository properties
-# that have some meaning to it: github-codeql-config-file, -disable-overlay, -extra-queries,
+# WHAT THE ACTION ALSO READS. github/codeql-action names five repository properties that have some
+# meaning to it: github-codeql-config-file, -disable-overlay, -extra-queries,
 # -file-coverage-on-prs and -tools (github/codeql-action v4.39.3
 # src/feature-flags/properties.ts:10-20), and it parses github-codeql-extra-queries as queries
 # (src/config/db-config.ts:472-475). So one such property, not this file, could change the queries
-# a scan runs (src/config/db-config.ts:543-560). The organisation defines none of them: its one
-# custom property is kind (read 8 Nov 2026).
+# a scan runs (src/config/db-config.ts:543-560). The organisation defines none of them.
 #
-# WHAT IT SCANS. What GitHub's automatic setup scanned on dazzer and dazzer-app, read from its own
-# runs on 5 Nov 2026: each language the caller names, of actions, javascript-typescript and python
-# alone, with build-mode none (CodeQL reads the source and builds nothing, so no code of the change
-# runs), the security-extended query suite (what the setup calls "extended"), under the category
+# WHAT IT SCANS. What GitHub's automatic setup scanned on the organisation's repositories: each
+# language the caller names, of actions, javascript-typescript and python alone, with build-mode
+# none (CodeQL reads the source and builds nothing, so no code of the change runs), the
+# security-extended query suite (what the setup calls "extended"), under the category
 # /language:<language>, the one its analyses were stored under. The analysis is now keyed by this
 # workflow, not the automatic setup, so whether each alert carries on by its rule and fingerprint,
 # rather than closing and opening again, is read on a calling repository's first run on main, not
 # promised here.
 #
 # ONLY THREE LANGUAGES. The analysis's first step refuses any language but actions,
-# javascript-typescript and python, the three dazzer and dazzer-app scan today (decision 133).
+# javascript-typescript and python, the three the organisation's repositories scan today.
 # GitHub's page on compiled languages does not say whether build mode none for C# or Java reads
 # the change's build files (restoring dependencies through dotnet, Maven or Gradle), which would run
 # what the change wrote on the scan machines; and Go, Swift and Kotlin cannot be scanned without a
-# build at all. So a later language joins by its own decision, never by a caller naming it.
+# build at all. So a later language joins by a change to this file, never by a caller naming it.
 #
 # DAZZER-IO IS A TRUSTED PUBLISHER. CodeQL's actions/unpinned-tag query warns on every action or
 # reusable workflow used at a branch or tag rather than a commit, unless its owner is on the list
 # of trusted publishers the query reads (trustedActionsOwnerDataModel, which CodeQL fills with
 # actions, github and advanced-security). Calling the organisation's own shared workflows at main
-# is the design (decisions 118 and 119), so every caller carried a warning on its own call of this
-# scan, and a required results check failing on warnings refused the change. Ben chose to trust
-# dazzer-io's own (decision 165), so this scan adds dazzer-io to that list. It names dazzer-io and
-# no other owner: an action or workflow of any other owner, used without a commit, still warns.
+# is the design, so every caller carried a warning on its own call of this scan, and a required
+# results check failing on warnings refused the change. The organisation trusts its own
+# workflows, so this scan adds dazzer-io to that list. It names dazzer-io and no other owner: an
+# action or workflow of any other owner, used without a commit, still warns.
 # It touches the analysis of actions alone; every other language and every other query is as before.
 #   - How. The analysis's second step, run for actions only, writes a model pack,
 #     shared-scan/trusted-publishers, whose one row adds dazzer-io to that list, into CodeQL's own
 #     package cache under the runner's home folder (~/.codeql/packages/<scope>/<name>/<version>),
 #     where CodeQL finds a pack named without a registry. Its scope, shared-scan, is a CodeQL pack
 #     scope and not the organisation's name, since the pack is no GitHub project and no line here
-#     names a project by hand (decision 167). The analyze step names it to the queries
+#     names a project by hand. The analyze step names it to the queries
 #     through CODEQL_ACTION_EXTRA_OPTIONS, a variable GitHub's docs set on that step to limit the
 #     number of paths (GitHub docs, the max-paths setting, CODEQL_ACTION_EXTRA_OPTIONS on the
 #     analyze step), as --model-packs of database run-queries; every language also gets
@@ -54,11 +53,11 @@
 #     holds no token and takes no input. CodeQL 2.27.4, the version this pin of the action runs,
 #     reads the pack from that folder, and a pack it cannot find stops the analysis, so a pack
 #     written wrongly turns the run red rather than passing unseen.
-#   - Nothing is published (decision 166). GitHub's own route for an organisation's packs is its
+#   - Nothing is published. GitHub's own route for an organisation's packs is its
 #     package registry, but a public package cannot be made private again, and a private one needs
 #     a grant for each repository's workflows, which a new repository would wait on.
 #
-# NO MODEL PACKS FROM THE SCANNED CODE (decision 169). GitHub's docs say: "If you later change
+# NO MODEL PACKS FROM THE SCANNED CODE. GitHub's docs say: "If you later change
 # your configuration to use advanced setup, any model packs in the .github/codeql/extensions
 # directory will still be recognized and used" (GitHub docs, Edit default setup). A data extension
 # model pack can add an owner to the allow list for the actions/unpinned-tag query, and that "will
@@ -72,13 +71,12 @@
 #     creation, either from a Code Scanning configuration file or from extension files stored in
 #     the 'extensions' directory of the analyzed codebase" (CodeQL CLI manual, database
 #     run-queries, --no-database-extension-packs); this scan names no configuration file.
-#   - The repositories today. None of dazzer-io's 19 repositories had a .github/codeql folder on
-#     its default branch, read 8 Nov 2026 (each answered 404). A repository that wants models of
-#     its own asks for them here, in the shared scan, where a change to them is reviewed.
+#   - A repository that wants models of its own asks for them here, in the shared scan, where a
+#     change to them is reviewed.
 #
 # WHY IT IS SPLIT IN THREE: analyze, upload and complete.
 #   - analyze runs on the scan machines, by ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}, so an
-#     empty setting keeps it on GitHub's computers (decision 93). A called workflow reads its
+#     empty setting keeps it on GitHub's computers. A called workflow reads its
 #     caller's variables (docs.github.com, Variables reference: "For reusable workflows, the
 #     variables from the caller workflow's repository are used."), so the setting resolves as the
 #     calling repository sees it, and a repository the setting is not visible to scans on GitHub's.
@@ -97,16 +95,16 @@
 #     of this run.
 #   - upload, on GitHub's own ubuntu-latest written as a literal label, is the only job holding
 #     security-events: write, since a write token on a machine of ours would sit within reach of
-#     whatever ran there before it (decision 36). It checks nothing out and runs no script: one job,
+#     whatever ran there before it. It checks nothing out and runs no script: one job,
 #     named Upload CodeQL results, takes each language the caller names in turn, fetches that
 #     language's results by name into a folder of its own, failing if they are missing, and hands
 #     them to code scanning under the same category, /language:<language>. It runs only when every
-#     language's analysis succeeded, so a partial scan never passes (decision 101, kept for every
-#     caller by decision 131): a failed analysis uploads nothing and the run is red; a cancelled one
+#     language's analysis succeeded, so a partial scan never passes, for every caller: a failed
+#     analysis uploads nothing and the run is red; a cancelled one
 #     uploads nothing and the run ends cancelled, not red. An upload that fails after every
 #     analysis passed leaves the languages before it already sent and sends none after it; that
 #     run is red.
-#   - complete, named "CodeQL complete", is the one check a caller requires (decision 135). It
+#   - complete, named "CodeQL complete", is the one check a caller requires. It
 #     runs always, after analyze and upload, on GitHub's own ubuntu-latest with no token at all
 #     (permissions: {}), and fails unless the analysis and the upload both succeeded; its name is
 #     the same whatever languages a caller names. The Analyze and upload checks cannot be required
@@ -116,15 +114,16 @@
 #
 # WHAT THE CALLER GRANTS. A called workflow's token is at most what its calling job grants, so the
 # calling job grants contents: read, actions: read and security-events: write, and nothing more.
+# This file's own top grants nothing (permissions: {}): each job names its own grant.
 # The scan declares no secret and reads none, so a caller passes none (no secrets:, no inherit).
 # Concurrency is the caller's, since only it knows its triggers.
 #
 # WHO DEFINES THE SCAN. Called at @main, this file is read from this repository's main branch,
 # never from the change being scanned; and the scan runner group is to admit only the shared
-# workflows at refs/heads/main (decision 119, the runners task r-1.54), which this file cannot
-# see. A change to this repository's own copy is a pull request here, reviewed here; a pull
-# request elsewhere runs this file as main holds it. No workflow of this repository but the two
-# scans may call it (machine-rule/judge.mjs, the shared machine rule, refuses such a call).
+# workflows at refs/heads/main, which this file cannot see. A change to this repository's own
+# copy is a pull request here, reviewed here; a pull request elsewhere runs this file as main
+# holds it. No workflow of this repository but the two scans may call it
+# (machine-rule/judge.mjs, the shared machine rule, refuses such a call).
 #
 # test/codeql-shared.test.mjs pins what is scanned and what each job holds, line for line where it
 # matters; machine-rule/judge.mjs holds its jobs to the machine rules every workflow here keeps (a
@@ -144,16 +143,15 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
-    # The slowest analysis on record was dazzer's javascript-typescript on main, 1165 s on GitHub's
-    # 2-core ubuntu-latest (its automatic setup's last 20 runs, 5 Nov 2026); the limit is about twice
-    # that, since the scan machines fetch the CodeQL bundle GitHub's image already holds.
+    # The slowest analysis on record was a javascript-typescript analysis of main, 1165 s on
+    # GitHub's 2-core ubuntu-latest; the limit is about twice that, since the scan machines fetch
+    # the CodeQL bundle GitHub's image already holds.
     timeout-minutes: 40
     permissions:
       contents: read
@@ -163,9 +161,9 @@ jobs:
       matrix:
         language: ${{ fromJSON(inputs.languages) }}
     steps:
-      # Only the languages whose build mode none is known to run no build tool, the three dazzer and
-      # dazzer-app scan today (decision 133); a later language joins by its own decision. It runs
-      # before the checkout, reads only the language this run was handed, and builds nothing.
+      # Only the languages whose build mode none is known to run no build tool, the three the
+      # organisation's repositories scan today; a later language joins by a change to this file. It
+      # runs before the checkout, reads only the language this run was handed, and builds nothing.
       - name: Refuse a language this scan does not take
         env:
           LANGUAGE: ${{ matrix.language }}
@@ -178,8 +176,8 @@ jobs:
               ;;
           esac
 
-      # Actions only: dazzer-io joins CodeQL's trusted publishers (decision 165, DAZZER-IO IS A
-      # TRUSTED PUBLISHER above). It runs before the checkout, so it reads nothing the change wrote,
+      # Actions only: dazzer-io joins CodeQL's trusted publishers (DAZZER-IO IS A TRUSTED PUBLISHER
+      # above). It runs before the checkout, so it reads nothing the change wrote,
       # and holds no token. It first removes the pack's folder, so a file left there by an earlier
       # run on the same machine is never read as part of it. Every line of its script sits at one
       # indent, so each file it writes is exactly the lines between its two markers.
@@ -217,7 +215,7 @@ jobs:
       # would send. The database is not uploaded either, since that also needs security-events: write.
       # For actions, the queries read the trusted-publisher pack the second step wrote; for any
       # other language the option holds only --no-database-extension-packs, which actions also
-      # takes (decision 169).
+      # takes.
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         env:
@@ -242,10 +240,10 @@ jobs:
   upload:
     name: Upload CodeQL results
     needs: analyze
-    # Only when every language's analysis succeeded: a partial scan never passes (decision 101). A
+    # Only when every language's analysis succeeded: a partial scan never passes. A
     # skipped upload reads as success to a required-check rule, so callers require complete's check.
     if: ${{ needs.analyze.result == 'success' }}
-    # GitHub's own standard machine, by a literal label: this job holds a write token (decision 36).
+    # GitHub's own standard machine, by a literal label: this job holds a write token.
     runs-on: ubuntu-latest
     # Each upload waits for code scanning to process it, at most 155 s by the action's own backoff
     # (5, 15, 35, 75 and 155 s), and the three languages are sent in turn, at most 465 s; the
@@ -313,7 +311,7 @@ jobs:
           category: /language:python
           matrix: '{"language":"python"}'
 
-  # The one check a caller requires (decision 135): it fails unless every analysis and every upload
+  # The one check a caller requires: it fails unless every analysis and every upload
   # succeeded, whatever languages were named. It reads nothing but the results of analyze and
   # upload, passed to its script through env, and holds no token.
   complete:

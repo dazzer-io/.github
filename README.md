@@ -1,14 +1,40 @@
-# dazzer-io shared workflows
+# dazzer-io/.github
 
-The checks every gated dazzer-io repository runs through the organisation ruleset: the AI review, the engineer review, the security scan and the machine rule. Built by the SOC 2 readiness job. The security scan also refuses a change to a workflow that signs in to GitHub with a person's token kept as a repository secret (`security-scan/README.md`, Person tokens).
+This repository is the public home of three things for Dazzer's GitHub organisation:
 
-`machine-rule/` is the organisation's one machine rule (decision 121): which job of any dazzer-io repository may run on which of our machines, or must stay on GitHub's. `machine-rule/judge.mjs` reads a repository's `.github/workflows` folder with the `yaml` package, pinned at 2.9.1, and refuses each job it cannot place, naming its file, line and job. `.github/workflows/machine-rule.yml` runs it, then actionlint, on every pull request and merge queue entry, and the organisation ruleset `machine-rule-required` (`machine-rule/ruleset.json`) runs that file on the default branch of every repository. `machine-rule/apply-ruleset.mjs` is the one command that writes three organisation rulesets, each kept as a file beside it: `machine-rule-required`; `main-spelling-refused` (`machine-rule/main-spelling.json`), in dazzer, dazzer-app and runners, the repositories the locked runner group `google-locked` admits, runners for its locked canary on the locked machines; and `codeql-complete-required` (`machine-rule/codeql-complete.json`), in dazzer and dazzer-app alone. With no flag it reads how each live one differs from its file; `--apply` is run by Ben (decisions 177, 192). The jobs kept on GitHub, the secrets a change check may read and the repositories held to the stricter class are three lists beside it, kept here so a repository cannot widen them from its own pull request. `machine-rule/README.md` says each rule and the decision behind it; `test/machine-rule.test.mjs` and `test/machine-rule-ruleset.test.mjs` prove them.
+- **The organisation profile.** `profile/README.md` is the page shown at
+  [github.com/dazzer-io](https://github.com/dazzer-io).
+- **Community defaults.** `SECURITY.md`, `CONTRIBUTING.md`, the issue forms and the pull request
+  template in `.github/` apply to every public dazzer-io repository that has no copy of its own.
+- **The shared checks** that Dazzer's repositories run on every change, kept here once so no
+  repository carries a copy of its own.
 
-`test-times/` is the shared test-time recorder. It keeps each test's and test file's time on every run, kept with the run on GitHub, and reads those records back for the planners and the weekly reading. Its README says how a repository wires it in.
+To report a security problem, follow [SECURITY.md](SECURITY.md); please do not open a public issue.
 
-## The shared CodeQL scan
+## The shared checks
 
-`.github/workflows/codeql.yml` is GitHub's code scanning for every repository, kept here once, so no repository carries a copy of its own (decisions 118 and 119). A repository calls it from one short file, `.github/workflows/codeql.yml` of its own, naming its languages and its triggers:
+| Check | Files | What it does |
+|---|---|---|
+| CodeQL | `.github/workflows/codeql.yml` | GitHub's code scanning, called by each repository from a short caller file (below). |
+| Security scan | `.github/workflows/security-scan.yml`, `security-scan/` | Scans only what a change brings in: dependency advisories, leaked secrets, static analysis, and workflows that sign in to GitHub with a person's token. See [security-scan/README.md](security-scan/README.md). |
+| Engineer review | `.github/workflows/engineer-review.yml`, `engineer-review/` | Sets the commit status `Engineer review`, pending until a person who may merge has recorded a review of the pull request's head commit. See [engineer-review/README.md](engineer-review/README.md). |
+| Machine rule | `.github/workflows/machine-rule.yml`, `machine-rule/` | Judges which job of a workflow may run on which machine, then lints the workflows with actionlint and zizmor. See [machine-rule/README.md](machine-rule/README.md). |
+| Test times | `test-times/` | Records each test's time on every run and reads the records back. See [test-times/README.md](test-times/README.md). |
+| Decide tests | `.github/workflows/decide-tests.yml` | Runs this repository's own tests on every pull request. |
+
+`machine-rule/apply-ruleset.mjs` writes three organisation rulesets, each kept as a file beside
+it: `machine-rule-required` (`machine-rule/ruleset.json`), `main-spelling-refused`
+(`machine-rule/main-spelling.json`) and `codeql-complete-required`
+(`machine-rule/codeql-complete.json`). With no flag it only reads how each live ruleset differs
+from its file; `--apply`, which writes them, is run by an organisation owner.
+
+Every workflow here grants its token nothing at the top (`permissions: {}`), each job names the
+least it needs, and every action is pinned by its full commit id.
+
+## Calling the shared CodeQL scan
+
+A repository calls the scan from one short file of its own, `.github/workflows/codeql.yml`,
+naming its languages and its triggers:
 
 ```yaml
 name: CodeQL
@@ -39,18 +65,39 @@ jobs:
       languages: '["actions", "javascript-typescript"]'
 ```
 
-- **At `@main`, nothing else.** The scan is then read from this repository's main branch, never from the change being scanned. The scan machines' runner group is to admit only the shared workflows at `refs/heads/main` (decision 119, set by the runners repository's task r-1.54), so a call at another ref would wait for a machine it is never given.
-- **The calling job grants exactly those three.** A called workflow's token is at most its caller's: `contents: read` to check out, `actions: read` so CodeQL can read the run's workflow on a private repository, and `security-events: write`, held only by the scan's upload job on GitHub's own `ubuntu-latest`.
+- **At `@main`, nothing else.** The scan is read from this repository's main branch, never from
+  the change being scanned.
+- **The calling job grants exactly those three.** A called workflow's token is at most its
+  caller's: `contents: read` to check out, `actions: read` so CodeQL can read the run's workflow
+  on a private repository, and `security-events: write`, held only by the scan's upload job on
+  GitHub's own `ubuntu-latest`.
 - **No secrets.** The scan declares none and reads none: no `secrets:`, no `secrets: inherit`.
-- **`languages`** is a JSON list in a string, of CodeQL's language names, scanned with build mode none and the `security-extended` suite. Name the languages the automatic setup found there.
-- **Three languages only: `actions`, `javascript-typescript` and `python`.** These are what dazzer and dazzer-app scan today, and their build mode none is known to run no build tool. The analysis's first step refuses any other language and the run is red (decision 133). GitHub's page on compiled languages does not say whether build mode none for C# or Java reads the change's build files, which would run what the change wrote on the scan machines. Go, Swift and Kotlin cannot be scanned without a build at all. So a later language joins by its own decision, never by a caller naming it.
-- **Every language or none.** The results are uploaded only when every language's analysis succeeded, so a partial scan never passes. A failed analysis uploads nothing and the run is red. A cancelled one uploads nothing and the run ends cancelled, but its `CodeQL complete` check, which runs whatever happened before it, is red. One job, `Upload CodeQL results`, sends each language in turn under its own category. An upload that fails after every analysis passed leaves the languages before it already sent and sends none after it; that run is red.
-- **Require one check: `CodeQL complete`.** GitHub shows it as `<calling job's name or id> / CodeQL complete`: `codeql / CodeQL complete` for a calling job with the id `codeql` and no `name:`, the one shape the machine rule admits (decision 171). Its name is the same whatever languages are named. It runs after every analysis and the upload, on GitHub's own machine with a token that grants nothing (`permissions: {}`), and fails unless both succeeded (decision 135), so a cancelled run turns it red.
-- **A caller that merges through a merge queue adds `merge_group`** to its caller's triggers, as `engineer-review/README.md` says for its own check; without it the required check never reports on the queue's commit (decision 138). Require it, not the `Analyze (<language>)` or `Upload CodeQL results` checks: a required-check rule reads a skipped upload as success, and a pull request that adds a language to its own caller fails that language's guard, skips the upload, and leaves the Analyze checks of the languages already named green. It costs one GitHub minute a run.
-- **dazzer-io's own workflows at `main` raise no unpinned-tag alert.** Calling the organisation's own shared workflows at `main` is the design, so the analysis of `actions` adds dazzer-io to the publishers CodeQL's `actions/unpinned-tag` query trusts (decision 165). It names dazzer-io alone: any other owner's action or workflow used without a commit still raises the alert, and every other language and query is as before. The list is a model pack, `shared-scan/trusted-publishers`, that the scan writes into CodeQL's package cache on each run; its scope is a CodeQL pack scope, not the organisation's name, since the pack is no GitHub project (decision 167). Nothing is published, since a public package cannot be made private again and a private one needs a grant for every repository (decision 166).
-- **No model packs from the scanned code.** GitHub's docs say: "If you later change your configuration to use advanced setup, any model packs in the `.github/codeql/extensions` directory will still be recognized and used" (GitHub docs, Edit default setup). A data extension model pack can add an owner to the allow list for the `actions/unpinned-tag` query, and that "will prevent security alerts when using unpinned tags for Actions published by that owner" (CodeQL docs, Customizing library models for GitHub Actions). So a change could stop its own scan's unpinned-tag alerts for an owner's Actions by adding such a pack there. For every language the scan therefore hands CodeQL's `database run-queries` the option `--no-database-extension-packs` (decision 169; github/codeql-action v4.39.3 `src/codeql.ts:779-790`), which CodeQL's manual says omits "extension packs stored in the database during database creation, either from a Code Scanning configuration file or from extension files stored in the 'extensions' directory of the analyzed codebase" (CodeQL CLI manual, database run-queries, `--no-database-extension-packs`). None of dazzer-io's 19 repositories had a `.github/codeql` folder on its default branch, read 8 Nov 2026 (each answered 404). A repository that wants models of its own asks for them here, in the shared scan.
-- **Alert history.** Each language is uploaded under the category `/language:<language>`, the one GitHub's automatic setup uses. The analysis is now keyed by this workflow, not the setup, so whether alerts carry on by rule and fingerprint, rather than closing and opening again, is read on the repository's first run on main once the setup is switched off there, not promised here.
-- **Where it runs.** The analysis runs where the setting `SCAN_RUNNER_2` points, read as the calling repository sees it (a called workflow reads its caller's variables), and on GitHub's computers while that is empty or not visible to the repository. A repository variable named `SCAN_RUNNER_2` overrides the organisation's, so that repository's admin can point its scan at any label. Only the runner groups' repository lists keep a repository's scan off machines that run changes' own code: a label reaches only a set whose group admits the repository, so the scan stays apart only while no group admitting a gated repository offers it a change-check set's label.
-- **Only the scans call it here.** In this repository, no workflow but the two scans may call it (`machine-rule/judge.mjs`, proved by `test/machine-rule.test.mjs`).
+- **`languages`** is a JSON list in a string, of CodeQL's language names, scanned with build mode
+  none and the `security-extended` suite. Only `actions`, `javascript-typescript` and `python` are
+  taken, since their build mode none is known to run no build tool; any other language turns the
+  run red.
+- **Every language or none.** The results are uploaded only when every language's analysis
+  succeeded, so a partial scan never passes.
+- **Require one check: `CodeQL complete`.** GitHub shows it as `codeql / CodeQL complete` for a
+  calling job with the id `codeql` and no `name:`. It fails unless every analysis and the upload
+  succeeded, whatever languages are named.
+- **A caller that merges through a merge queue adds `merge_group`** to its triggers; without it
+  the required check never reports on the queue's commit.
 
-`test/codeql-shared.test.mjs` pins what the scan scans and what each of its jobs holds; `test/machine-rule.test.mjs` holds its jobs to the machine rule every workflow of every dazzer-io repository keeps.
+The header of `.github/workflows/codeql.yml` explains each choice in full, and
+`test/codeql-shared.test.mjs` pins what the scan scans and what each of its jobs holds.
+
+## Running the tests
+
+```
+npm ci --ignore-scripts
+node --test test/*.test.mjs
+```
+
+The tests read fixtures only: nothing reaches the network.
+
+## Contributing and licence
+
+Issues are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). The code here is released under the
+[MIT License](LICENSE). The Dazzer name and logo are trademarks of Dazzer; you are welcome to use
+them to refer to the project, but not in a way that suggests Dazzer endorses you or your work.

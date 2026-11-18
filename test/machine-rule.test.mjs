@@ -1,10 +1,7 @@
-// Proves machine-rule/judge.mjs, the organisation's one machine rule (decision 121), and its three
+// Proves machine-rule/judge.mjs, the organisation's one machine rule, and its three
 // lists, kept.json, secrets.json and strict.json. It replaces this repository's runs-on test and
-// ports the kept cases of the four copies the rule replaces, each section naming the copy it ports:
-//   - dazzer's gate, scripts/checks/check-runner-setting.mjs and its test, at 58797b699;
-//   - dazzer-app's verdict test, test/verdict.test.ts (holdsMoreThanTheCode), at 4b236f2e;
-//   - this repository's runs-on test, at dca1d18, the test file this one replaces;
-//   - runners' bin/check-repos-read-setting.mjs, its test and test/scan.test.mjs's gate S6, at 789b335.
+// ports the kept cases of the four older copies the rule replaces: three checks kept elsewhere
+// in the organisation, and this repository's runs-on test, the test file this one replaces.
 // Every case is fed to the judge as text, under a made-up workflow name, and a fake GitHub is
 // reached only through the call handed to the readings: nothing here reaches the network. Every
 // failure starts "Could not find", so a run with the rule missing, or any planted fault, reads red
@@ -53,8 +50,8 @@ async function everyCase(body) {
   assert.ok(!misses.length, misses.join('\n'));
 }
 // Every refusal case seen passing, so the last test can run each one again in the other shapes a
-// job takes (decision 184), and every clean case, so the locked settings' new names can be read
-// through each case holding an old one (decision 253).
+// job takes, and every clean case, so the locked settings' new names can be read
+// through each case holding an old one.
 const RECORDED = [];
 const PASSED = [];
 // A refusal of <file> (and <job>) whose words match says, on the line holding at when given.
@@ -91,7 +88,7 @@ const QUIET = { repository: 'dazzer-io/made-up-tools', visibility: 'private' };
 const PUBLIC = { repository: 'dazzer-io/made-up-plugin', visibility: 'public' };
 const SHARED = { repository: 'dazzer-io/.github', visibility: 'public', shared: true };
 // The path of the test file this one replaces, built from its parts so that no line here holds it:
-// a case below refuses every file of this repository that still names it (decision 178).
+// a case below refuses every file of this repository that still names it.
 const OLD_TEST = ['test/runs-on', 'test', 'mjs'].join('.');
 
 test('the rule loads, and reads the shared workflows it admits calls into from this repository', () => {
@@ -101,8 +98,8 @@ test('the rule loads, and reads the shared workflows it admits calls into from t
   }
 });
 
-// ================================================================ reading (dazzer's gate, decision 42; runs-on test rounds 1-6)
-test('a spelling another parser could read another way is refused, naming its line (dazzer gate; runs-on test)', async () => {
+// ================================================================ reading
+test('a spelling another parser could read another way is refused, naming its line', async () => {
   need();
   const hide = (code) => check(`    timeout-minutes: 10${String.fromCharCode(code)}    permissions: write-all\n`);
   const cases = [
@@ -146,7 +143,7 @@ test('a spelling another parser could read another way is refused, naming its li
   });
 });
 
-test('ordinary spellings read clean: CRLF, a leading byte order mark or ---, block scalars, comments, steps at the job-key indent (dazzer gate; runs-on test controls)', async () => {
+test('ordinary spellings read clean: CRLF, a leading byte order mark or ---, block scalars, comments, steps at the job-key indent', async () => {
   need();
   const cases = [
     ['the plain layout', check()],
@@ -166,8 +163,8 @@ test('ordinary spellings read clean: CRLF, a leading byte order mark or ---, blo
   });
 });
 
-// ================================================================ the route reader (runners' reader)
-test('a runs-on reaches a declared setting on every route, a quoted label only as the final || fallback (runners reader)', async () => {
+// ================================================================ the route reader
+test('a runs-on reaches a declared setting on every route, a quoted label only as the final || fallback', async () => {
   need();
   const refused = [
     ['a list of labels', '[self-hosted, linux]', /lists labels/],
@@ -203,7 +200,7 @@ test('a runs-on reaches a declared setting on every route, a quoted label only a
   });
 });
 
-test('through a plan job\'s outputs and a matrix the route reaches the setting, and a literal reached through them is refused (runners reader)', async () => {
+test('through a plan job\'s outputs and a matrix the route reaches the setting, and a literal reached through them is refused', async () => {
   need();
   const text = `name: made up
 on: pull_request
@@ -264,11 +261,11 @@ ${STEPS}`;
     await c(() => mustRefuse('a plan job reading no setting', { 'routes.yml': text }, DAZZER, { file: 'routes.yml', job: 'through-bare-plan', says: /job bare-plan reads no CHECKS_RUNNER/ }));
     await c(() => mustRefuse('a matrix row naming a label', { 'routes.yml': text }, DAZZER, { file: 'routes.yml', job: 'matrix-literal', says: /matrix\.machine takes "ubuntu-latest" literally/ }));
     await c(() => mustRefuse('a matrix key no row sets', { 'routes.yml': text }, DAZZER, { file: 'routes.yml', job: 'matrix-unset', says: /which no matrix row sets/ }));
-    await c(() => mustRefuse('a matrix setting with no fallback anywhere (runners passed it; the plan holds the fallback, decision 15)', { 'routes.yml': text }, DAZZER, { file: 'routes.yml', job: 'matrix-no-fallback', says: /no fallback/ }));
+    await c(() => mustRefuse('a matrix setting with no fallback anywhere (the plan holds the fallback)', { 'routes.yml': text }, DAZZER, { file: 'routes.yml', job: 'matrix-no-fallback', says: /no fallback/ }));
   });
 });
 
-test('a reusable workflow\'s inputs: a workflow started by hand, or called by none, gets its machine typed by hand (runners reader)', async () => {
+test('a reusable workflow\'s inputs: a workflow started by hand, or called by none, gets its machine typed by hand', async () => {
   need();
   const callee = (on) => `on:\n${on}jobs:\n  reused:\n    runs-on: @{{ inputs.machine }}\n${STEPS}`;
   await everyCase(async (c) => {
@@ -277,8 +274,8 @@ test('a reusable workflow\'s inputs: a workflow started by hand, or called by no
   });
 });
 
-// ================================================================ a workflow that signs in (dazzer gate, decisions 9, 23, 40)
-test('a workflow that signs in reads no CHECKS_ or SCAN_ setting, and each job reads the locked setting held to main (dazzer gate)', async () => {
+// ================================================================ a workflow that signs in
+test('a workflow that signs in reads no CHECKS_ or SCAN_ setting, and each job reads the locked setting held to main', async () => {
   need();
   const signing = (on, top, ...jobs) => workflow(on, top, ...jobs);
   const ID = 'permissions:\n  contents: read\n  id-token: write\n';
@@ -324,7 +321,7 @@ test('a workflow that signs in reads no CHECKS_ or SCAN_ setting, and each job r
   });
 });
 
-test('a job of a workflow that does not sign in reads no LOCKED_ setting, whatever its kind (dazzer gate)', async () => {
+test('a job of a workflow that does not sign in reads no LOCKED_ setting, whatever its kind', async () => {
   need();
   const cases = [
     ['a change check', check('    env:\n      K: @{{ vars.LOCKED_RUNNER_2 }}\n')],
@@ -338,8 +335,8 @@ test('a job of a workflow that does not sign in reads no LOCKED_ setting, whatev
   });
 });
 
-// ================================================================ write tokens (dazzer gate, decision 36; runs-on test)
-test('a job holding a write token on a pull request stays on GitHub\'s standard machine and reads no setting (dazzer gate; runs-on test)', async () => {
+// ================================================================ write tokens
+test('a job holding a write token on a pull request stays on GitHub\'s standard machine and reads no setting', async () => {
   need();
   const cases = [
     ['pull-requests: write in a block, reading the setting', workflow('pull_request', 'permissions:\n  contents: read\n  pull-requests: write\n', job('label', CHECKS2))],
@@ -371,8 +368,8 @@ test('in dazzer-io/.github a write-token job stays on GitHub\'s standard machine
   });
 });
 
-// ================================================================ secrets (dazzer gate's CHANGE_CHECK_SECRETS, now secrets.json)
-test('a change check reads only the secrets machine-rule/secrets.json names for its repository (dazzer gate)', async () => {
+// ================================================================ secrets (secrets.json)
+test('a change check reads only the secrets machine-rule/secrets.json names for its repository', async () => {
   need();
   const refused = [
     ['a secret off the list by dot', '    env:\n      K: @{{ secrets.HARBOR_KEY }}\n', /reads secrets\.HARBOR_KEY, which machine-rule\/secrets\.json does not name/],
@@ -395,7 +392,7 @@ test('a change check reads only the secrets machine-rule/secrets.json names for 
 });
 
 // ================================================================ unclassified workflows and the kept list
-test('in a repository reading a CHECKS_ or LOCKED_ setting, a workflow that neither signs in nor runs on pull_request is refused unless kept.json names each job (dazzer gate\'s unclassified)', async () => {
+test('in a repository reading a CHECKS_ or LOCKED_ setting, a workflow that neither signs in nor runs on pull_request is refused unless kept.json names each job', async () => {
   need();
   const nightly = workflow('schedule', READ, job('sweep', 'ubuntu-latest'));
   const pushed = workflow('push', 'permissions:\n  contents: write\n', job('tag', CHECKS2));
@@ -406,12 +403,12 @@ test('in a repository reading a CHECKS_ or LOCKED_ setting, a workflow that neit
     await c(() => mustRefuse('a push-started job on the change-check machines', { 'release.yml': pushed }, DAZZER, { file: 'release.yml', job: 'tag', says: /not started by pull_request/ }));
     await c(() => mustPass('the same kept with the effect checks, naming its write', { 'release.yml': pushed }, { ...DAZZER, ...keptBy({ repository: 'dazzer-io/dazzer', workflow: 'release.yml', job: 'tag', name: 'tag', effect: 'checks', writes: ['contents'] }) }));
     await c(() => mustRefuse('the same kept checks, naming another write', { 'release.yml': pushed }, { ...DAZZER, ...keptBy({ repository: 'dazzer-io/dazzer', workflow: 'release.yml', job: 'tag', name: 'tag', effect: 'checks', writes: ['issues'] }) }, { file: 'release.yml', job: 'tag', says: /holds no write unless its kept\.json entry has the effect checks and names that write/ }));
-    await c(() => mustPass('a nightly job in a private repository that reads no setting, with no entry (decision 16)', { 'sweep.yml': nightly }, QUIET));
+    await c(() => mustPass('a nightly job in a private repository that reads no setting, with no entry', { 'sweep.yml': nightly }, QUIET));
     await c(() => mustRefuse('the same, read as moving by --moving', { 'sweep.yml': nightly }, { ...QUIET, moving: true }, { file: 'sweep.yml', job: 'sweep', says: /is not started by pull_request .*kept\.json names no entry/ }));
   });
 });
 
-test('in a repository reading a CHECKS_ or LOCKED_ setting, a job on a literal GitHub label is refused unless kept.json names it; one that reads none needs nothing (decisions 15, 16, 121)', async () => {
+test('in a repository reading a CHECKS_ or LOCKED_ setting, a job on a literal GitHub label is refused unless kept.json names it; one that reads none needs nothing', async () => {
   need();
   const files = { 'ci.yml': workflow('pull_request', READ, job('check', CHECKS2), job('report', 'ubuntu-latest')) };
   await everyCase(async (c) => {
@@ -435,7 +432,7 @@ test('kept.json\'s entries: a whole-file entry lists every job, a job entry carr
     await c(() => mustRefuse('a stay job off GitHub\'s standard labels', nightly(job('sweep', 'ubuntu-8-core')), keptBy({ workflow: 'nightly.yml', jobs: ['sweep'], effect: 'stay' }), { file: 'nightly.yml', job: 'sweep', says: /effect stay\) and runs on "ubuntu-8-core"/ }));
     await c(() => mustRefuse('a stay job reading CHECKS_RUNNER_2 in its own env', nightly(job('sweep', 'ubuntu-latest', '    env:\n      M: @{{ vars.CHECKS_RUNNER_2 }}\n')), keptBy({ workflow: 'nightly.yml', jobs: ['sweep'], effect: 'stay' }), { file: 'nightly.yml', job: 'sweep', says: /beyond a step's env/ }));
     await c(() => mustRefuse('a stay job reading CHECKS_RUNNER_2 in a step\'s run', nightly(job('sweep', 'ubuntu-latest', '', '    steps:\n      - run: echo @{{ vars.CHECKS_RUNNER_2 }}\n')), keptBy({ workflow: 'nightly.yml', jobs: ['sweep'], effect: 'stay' }), { file: 'nightly.yml', job: 'sweep', says: /beyond a step's env/ }));
-    await c(() => mustPass('a stay plan job handing CHECKS_RUNNER_2 on in a step\'s env (decision 34)', nightly(job('sweep', 'ubuntu-latest', '', '    steps:\n      - env:\n          M: @{{ vars.CHECKS_RUNNER_2 }}\n        run: echo made-up\n')), keptBy({ workflow: 'nightly.yml', jobs: ['sweep'], effect: 'stay' })));
+    await c(() => mustPass('a stay plan job handing CHECKS_RUNNER_2 on in a step\'s env', nightly(job('sweep', 'ubuntu-latest', '', '    steps:\n      - env:\n          M: @{{ vars.CHECKS_RUNNER_2 }}\n        run: echo made-up\n')), keptBy({ workflow: 'nightly.yml', jobs: ['sweep'], effect: 'stay' })));
     const r = await c(() => mustPass('an entry naming a job its file does not hold yet', nightly(job('sweep', 'ubuntu-latest')), keptBy({ workflow: 'nightly.yml', jobs: ['sweep', 'later'], effect: 'stay' })));
     if (r) await c(() => assert.ok(r.notes.some((n) => n.includes('later')), `Could not find the entry naming a job not yet there said as a note: ${JSON.stringify(r.notes)}`));
   });
@@ -472,7 +469,7 @@ test('kept.json\'s own check refuses an entry with no effect or an unknown one, 
   });
 });
 
-test('kept.json names the 19 jobs of runners\' allowed list, each stay on its decision, and the jobs every copy keeps on GitHub today', () => {
+test('kept.json names the 19 jobs of the older allowed list, each stay on its decision, and the jobs every copy keeps on GitHub today', () => {
   need();
   const { kept } = lists();
   assert.deepEqual(J.checkKept(kept), [], 'Could not find kept.json passing its own check');
@@ -507,24 +504,24 @@ test('kept.json names the 19 jobs of runners\' allowed list, each stay on its de
   }
   const tag = keeps('brain-builder', 'release.yml', 'tag');
   if (!tag || JSON.stringify(tag.writes) !== JSON.stringify(['contents']) || tag.name !== 'Tag the released version') misses.push(`Could not find brain-builder's tag job kept checks naming contents and the name GitHub shows: ${JSON.stringify(tag ?? null)}`);
-  // dazzer-app's three production workflows that sign in and that no pull request or deployment
-  // starts go to the locked machines; the four that stay say why (decision 190).
+  // The stricter class's three production workflows that sign in and that no pull request or
+  // deployment starts go to the locked machines; the four that stay say why.
   const app = (file) => kept.entries.filter((e) => e.repository === 'dazzer-io/dazzer-app' && e.workflow === file);
   for (const file of ['release-check.yml', 'canary-drill.yml', 'scorecard.yml']) {
-    if (app(file).length) misses.push(`Could not find dazzer-app's ${file} let go from kept.json to the locked machines (decision 190): ${JSON.stringify(app(file))}`);
+    if (app(file).length) misses.push(`Could not find dazzer-app's ${file} let go from kept.json to the locked machines: ${JSON.stringify(app(file))}`);
   }
   const stays = [['sweep.yml', [/signs in to nothing/, /decision 9\b/]], ['contract-watch.yml', [/signs in to nothing/, /decision 9\b/]], ['promote-production.yml', [/deployment_status/, /the deployed commit's own file decides its runs-on/]]];
   for (const [file, says] of stays) {
     const reasons = app(file).map((e) => e.reason);
-    if (reasons.length !== 1 || !says.every((s) => s.test(reasons[0])) || /until the locked machines take it/.test(reasons[0])) misses.push(`Could not find dazzer-app's ${file} kept once, its reason saying why it stays (${says.join(', ')}) rather than waiting on the locked machines (decision 190): ${JSON.stringify(reasons)}`);
+    if (reasons.length !== 1 || !says.every((s) => s.test(reasons[0])) || /until the locked machines take it/.test(reasons[0])) misses.push(`Could not find dazzer-app's ${file} kept once, its reason saying why it stays (${says.join(', ')}) rather than waiting on the locked machines: ${JSON.stringify(reasons)}`);
   }
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-// dazzer's harness-pin-sync.yml signs in and copies dazzer-agent's records, which no review of ours
-// reads, so its job sync names GitHub's machine literally for good and is kept by a stay entry
-// (decision 253, dazzer pull request 1482). The fixture is made up in that shape; the entry is kept.json's own.
-test('a made-up workflow shaped as dazzer\'s harness-pin-sync.yml, signed in with its job sync on ubuntu-latest, is refused with no entry and admitted by kept.json\'s stay entry (decision 253)', async () => {
+// A workflow that signs in and copies records from outside, which no review of ours reads, names
+// GitHub's machine literally for good and is kept by a stay entry. The fixture is made up in that
+// shape; the entry is kept.json's own.
+test('a made-up workflow that signs in and copies records from outside, its job sync on ubuntu-latest, is refused with no entry and admitted by kept.json\'s stay entry', async () => {
   need();
   const { kept } = lists();
   const sync = 'name: made up\non:\n  schedule:\n    - cron: "1 2 * * *"\n  workflow_dispatch: {}\npermissions:\n  contents: read\n  id-token: write\njobs:\n'
@@ -543,12 +540,11 @@ test('a made-up workflow shaped as dazzer\'s harness-pin-sync.yml, signed in wit
   });
 });
 
-// The operator's yes to a small paid Windows machine for brain-builder's pull requests (decision
-// 14, work/dazzer-apps-seed D14): its gates.yml runs the application's own tests a second time on
-// GitHub's Windows machine. That label stands only in a job a kept.json stay entry keeps: never as
+// A small paid Windows machine for one repository's pull requests: its gates.yml runs the
+// application's own tests a second time on GitHub's Windows machine. That label stands only in a job a kept.json stay entry keeps: never as
 // one of GitHub's standard machines, never as a setting's fallback, never with no entry. The
 // fixture is made up in gates.yml's shape; the entry is kept.json's own.
-test('GitHub\'s Windows machine stands only in a job a kept.json stay entry keeps, as brain-builder\'s gates.yml job windows is kept (decision 14); with no entry, as a setting\'s fallback, beside a write token or in a public repository it is refused', async () => {
+test('GitHub\'s Windows machine stands only in a job a kept.json stay entry keeps, as a gates.yml job windows is kept; with no entry, as a setting\'s fallback, beside a write token or in a public repository it is refused', async () => {
   need();
   const { kept } = lists();
   const BB = { repository: 'dazzer-io/brain-builder', visibility: 'private' };
@@ -576,7 +572,7 @@ test('GitHub\'s Windows machine stands only in a job a kept.json stay entry keep
   });
 });
 
-test('the canary effect: runners\' canary.yml and locked-canary.yml alone, by hand, reading only the code, on our own sets named literally, the locked sets in locked-canary.yml alone', async () => {
+test('the canary effect: the canary\'s canary.yml and locked-canary.yml alone, by hand, reading only the code, on our own sets named literally, the locked sets in locked-canary.yml alone', async () => {
   need();
   const RUNNERS = { repository: 'dazzer-io/runners', visibility: 'private' };
   const canary = (on = 'workflow_dispatch', top = READ, extra = '', values = '[dazzer-checks-2-core, dazzer-checks-8-core]') => workflow(on, top, `  canary:\n    name: canary on @{{ matrix.set }}\n    runs-on: @{{ matrix.set }}\n    strategy:\n      matrix:\n        set: ${values}\n${extra}${STEPS}`, job('scan', 'dazzer-scan-2-core'));
@@ -591,12 +587,12 @@ test('the canary effect: runners\' canary.yml and locked-canary.yml alone, by ha
     await c(() => mustRefuse('our set named literally anywhere but the canary', { 'check.yml': canary() }, RUNNERS, { file: 'check.yml', job: 'scan', says: /names one of our own machines literally/ }));
     await c(() => mustRefuse('canary.yml naming a locked set', { 'canary.yml': canary('workflow_dispatch', READ, '', '[dazzer-checks-2-core, dazzer-locked-2-core]') }, keptBy, { file: 'canary.yml', job: 'canary', says: /takes "dazzer-locked-2-core", a locked set, which only locked-canary\.yml may name/ }));
     await c(() => mustRefuse('canary.yml on a locked set named literally', { 'canary.yml': workflow('workflow_dispatch', READ, job('canary', 'dazzer-locked-2-core')) }, keptBy, { file: 'canary.yml', job: 'canary', says: /is a canary job on 'dazzer-locked-2-core', a locked set, which only locked-canary\.yml may name/ }));
-    await c(() => mustPass('canary.yml with no main guard, run by hand from any branch (decision 50)', { 'canary.yml': canary() }, keptBy));
+    await c(() => mustPass('canary.yml with no main guard, run by hand from any branch', { 'canary.yml': canary() }, keptBy));
   });
 });
 
-// runners' locked-canary.yml as written at bb859e4 (decisions 221, 223), its steps made up.
-test('the canary effect admits runners\' locked-canary.yml as written, on the locked sets alone (decision 223)', async () => {
+// The canary's locked-canary.yml as written, its steps made up.
+test('the canary effect admits the canary\'s locked-canary.yml as written, on the locked sets alone', async () => {
   need();
   const RUNNERS = { repository: 'dazzer-io/runners', visibility: 'private' };
   const locked = ({ on = 'workflow_dispatch', top = READ, values = '\n          - dazzer-locked-2-core\n          - dazzer-locked-8-core', runsOn = '@{{ matrix.set }}', guard = "github.ref == 'refs/heads/main'" } = {}) => workflow(on, top, `  locked:\n    name: locked canary on @{{ matrix.set }}\n${guard === null ? '' : `    if: ${guard}\n`}    strategy:\n      fail-fast: false\n      matrix:\n        set:${values}\n    runs-on: ${runsOn}\n    timeout-minutes: 15\n${STEPS}`);
@@ -617,8 +613,8 @@ test('the canary effect admits runners\' locked-canary.yml as written, on the lo
   });
 });
 
-// ================================================================ the scan reads (runners' reader after r-1.61, decisions 98, 119, 160)
-test('a SCAN_RUNNER_<N> read is refused wherever it hides outside the shared scans, by every spelling the reader reads (runners reader)', async () => {
+// ================================================================ the scan reads
+test('a SCAN_RUNNER_<N> read is refused wherever it hides outside the shared scans, by every spelling the reader reads', async () => {
   need();
   const text = `name: made up
 on: pull_request
@@ -687,7 +683,7 @@ ${STEPS}`;
   assert.deepEqual(plain, [], `Could not find an unparsable expression naming CHECKS_RUNNER_2 alone read as no scan read: ${JSON.stringify(plain)}`);
 });
 
-test('in dazzer-io/.github only the two shared scans read a scan setting; another of its workflows may not (runners reader; runs-on test)', async () => {
+test('in dazzer-io/.github only the two shared scans read a scan setting; another of its workflows may not', async () => {
   need();
   const scan = `on: workflow_call\n${READ}jobs:\n  semgrep:\n    runs-on: ${SCAN}\n${STEPS}`;
   await everyCase(async (c) => {
@@ -697,7 +693,7 @@ test('in dazzer-io/.github only the two shared scans read a scan setting; anothe
   });
 });
 
-// ================================================================ the shared scans' jobs (runs-on test, decisions 93, 98, 135)
+// ================================================================ the shared scans' jobs (runs-on test)
 test('the shared scans\' jobs: the scan machines exactly, no secret, no git credential kept, one final check, write jobs on GitHub\'s machine (runs-on test)', async () => {
   need();
   const scanJob = (runsOn = SCAN, extra = '', steps = STEPS) => `  semgrep:\n    runs-on: ${runsOn}\n${extra}${steps}`;
@@ -745,8 +741,8 @@ test('the plant took: a secret on a # line in a run: | block of this repository\
   assert.ok(r.lines.some((l) => /security-scan\.yml:\d+ jobs\.[\w-]+: .*a scan job holds no secret/.test(l)), `Could not find the planted secret refused in security-scan.yml: ${said(r)}`);
 });
 
-// ================================================================ public repositories (decision 104)
-test('in a public repository every job but the shared scans\' names a literal GitHub standard label and reads no setting (runs-on test, decision 104)', async () => {
+// ================================================================ public repositories
+test('in a public repository every job but the shared scans\' names a literal GitHub standard label and reads no setting (runs-on test)', async () => {
   need();
   await everyCase(async (c) => {
     await c(() => mustRefuse('a job on the change-check machines', { 'gates.yml': workflow('pull_request', READ, job('gates', CHECKS2)) }, PUBLIC, { file: 'gates.yml', job: 'gates', says: /a public repository/ }));
@@ -756,8 +752,8 @@ test('in a public repository every job but the shared scans\' names a literal Gi
   });
 });
 
-// ================================================================ calls (decision 171; dazzer gate's judgeCall; runs-on test; runners reader)
-test('a call is admitted only into dazzer-io/.github\'s shared workflows at main, holding uses, permissions and with alone, each half of each condition red alone (decision 171)', async () => {
+// ================================================================ calls
+test('a call is admitted only into dazzer-io/.github\'s shared workflows at main, holding uses, permissions and with alone, each half of each condition red alone', async () => {
   need();
   const CALL = ['  codeql:', '    uses: dazzer-io/.github/.github/workflows/codeql.yml@main', '    permissions:', '      contents: read', '      actions: read', '      security-events: write', '    with:', `      languages: '["actions", "javascript-typescript"]'`];
   const calling = (lines, on = '[pull_request, push]') => ({ 'codeql.yml': `name: CodeQL\non: ${on}\n${READ}jobs:\n${lines.join('\n')}\n`, 'ci.yml': check() });
@@ -812,19 +808,18 @@ test('engineer-review.yml alone may be called at a commit, and only one GitHub\'
       try { await judgeOf(files(`dazzer-io/.github/.github/workflows/engineer-review.yml@${SHA}`), { ...DAZZER, compare: async () => { throw new Error('GitHub answered 502'); } }); } catch (e) { thrown = e; }
       assert.ok(thrown instanceof J.Unread, `Could not find a compare GitHub did not answer read as unread, never as a pass or a refusal: ${thrown?.message ?? 'it passed'}`);
     });
-    await c(() => mustRefuse('a call of engineer-review.yml under an if: with no permissions of its own, the shape the caller template held before decision 178', { 'engineer-review.yml': `name: Engineer review\non: [pull_request]\npermissions:\n  statuses: write\n  pull-requests: read\njobs:\n  engineer-review:\n    if: github.event_name != 'issue_comment' || github.event.issue.pull_request\n    uses: dazzer-io/.github/.github/workflows/engineer-review.yml@${SHA}\n`, 'ci.yml': check() }, { ...DAZZER, compare: compareAs('behind') }, { file: 'engineer-review.yml', says: /writes if: in a call/ }));
+    await c(() => mustRefuse('a call of engineer-review.yml under an if: with no permissions of its own, the shape an older caller template held', { 'engineer-review.yml': `name: Engineer review\non: [pull_request]\npermissions:\n  statuses: write\n  pull-requests: read\njobs:\n  engineer-review:\n    if: github.event_name != 'issue_comment' || github.event.issue.pull_request\n    uses: dazzer-io/.github/.github/workflows/engineer-review.yml@${SHA}\n`, 'ci.yml': check() }, { ...DAZZER, compare: compareAs('behind') }, { file: 'engineer-review.yml', says: /writes if: in a call/ }));
   });
 });
 
 // engineer-review/caller.yml is the shape a repository copies to call engineer review
 // (engineer-review/README.md, "Adopting it"), so it passes the rule in every class of repository
-// that may copy it (decision 178). It is filled as `node engineer-review/decide.mjs caller` fills
+// that may copy it. It is filled as `node engineer-review/decide.mjs caller` fills
 // it, by renderCaller, at a commit GitHub's compare reads as on main, as callerFor confirms. In a
-// repository strict.json names, a call asks a grant only as codeql.yml's job codeql (dazzer-app's
-// verdict test, verdict.test.ts:1248, 1258) or as this caller, exactly (soc2-remediation D154): its
-// file, its job, its target and its three grants, with no secrets: and no with:. Each near miss of
-// that admission is refused there, as every call but codeql.yml's was before (decision 184).
-test('engineer-review/caller.yml, filled as decide.mjs caller fills it, passes the rule in every class of repository that copies it, the strict one included, and every near miss of it stays refused there (decision 178, soc2-remediation D154)', async () => {
+// repository strict.json names, a call asks a grant only as codeql.yml's job codeql or as this
+// caller, exactly: its file, its job, its target and its three grants, with no secrets: and no with:. Each near miss of
+// that admission is refused there, as every call but codeql.yml's was before.
+test('engineer-review/caller.yml, filled as decide.mjs caller fills it, passes the rule in every class of repository that copies it, the strict one included, and every near miss of it stays refused there', async () => {
   need();
   const { renderCaller, CALLER_USES } = await import('../engineer-review/decide.mjs');
   const template = readFileSync(join(ROOT, 'engineer-review/caller.yml'), 'utf8');
@@ -847,7 +842,7 @@ test('engineer-review/caller.yml, filled as decide.mjs caller fills it, passes t
     const app = { ...APP, compare: async (q) => { asked.push(q); return 'behind'; } };
     const r = await c(() => mustPass('caller.yml copied into dazzer-app, the repository strict.json names', { 'engineer-review.yml': caller, 'ci.yml': check() }, app));
     if (r) await c(() => assert.ok(asked.some((q) => q.base === 'main' && q.head === SHA), `Could not find the caller's pin asked of GitHub's compare as main...${SHA} in dazzer-app: ${JSON.stringify(asked)}`));
-    // Each near miss of the one admitted call, in dazzer-app: refused for its grant, as any other call there is.
+    // Each near miss of the one admitted call, in the stricter class: refused for its grant, as any other call there is.
     const GRANT = /is a call in a repository strict\.json names, and asks for a permission of its own: a call there asks a grant only as codeql\.yml's job codeql, calling the shared scan, or as engineer-review\.yml's job engineer-review/;
     const swap = (from, to) => { assert.ok(caller.includes(from), `Could not find ${JSON.stringify(from)} in the filled caller to change`); return caller.replace(from, to); };
     const GRANTS = '    permissions:\n      contents: read\n      statuses: write\n      pull-requests: read\n';
@@ -880,9 +875,9 @@ test('in dazzer-io/.github a workflow outside the two scans calls neither scan (
 });
 
 // A call, and a job a checks entry keeps, meet every class rule any job meets, the workflow's top
-// included: what it reads, holds, signs in for and where it runs (decision 184). Each case here is
+// included: what it reads, holds, signs in for and where it runs. Each case here is
 // one the round before it passed.
-test('a call and a job a checks entry keeps are held to every class rule any job meets, the workflow\'s top included (decision 184)', async () => {
+test('a call and a job a checks entry keeps are held to every class rule any job meets, the workflow\'s top included', async () => {
   need();
   const GRANT = '    permissions:\n      contents: read\n      actions: read\n      security-events: write\n';
   const scan = (top = READ, { id = 'codeql', grant = GRANT, uses = 'dazzer-io/.github/.github/workflows/codeql.yml@main', withText = `    with:\n      languages: '["actions"]'\n` } = {}) => `name: CodeQL\non: [pull_request, push]\n${top}jobs:\n  ${id}:\n    uses: ${uses}\n${grant}${withText}`;
@@ -909,18 +904,18 @@ test('a call and a job a checks entry keeps are held to every class rule any job
     await c(() => mustRefuse('dazzer-app\'s call of the shared scan from another file', { 'scan.yml': scan(), ...beside }, APP, { file: 'scan.yml', job: 'codeql', says: /is a call in a repository strict\.json names, and asks for a permission of its own/ }));
     await c(() => mustRefuse('dazzer-app\'s codeql.yml calling another shared workflow as its job codeql', { 'codeql.yml': scan(READ, { uses: 'dazzer-io/.github/.github/workflows/engineer-review.yml@main', grant: '    permissions:\n      statuses: write\n', withText: '' }), ...beside }, APP, { file: 'codeql.yml', job: 'codeql', says: /asks for a permission of its own/ }));
     await c(() => mustPass('dazzer-app\'s own call, codeql.yml\'s job codeql', { 'codeql.yml': scan(), ...beside }, APP));
-    // Finding 2: a checks entry admits writes only as decision 47 decided, a push-started job of a private repository.
+    // A checks entry admits writes only for a push-started job of a private repository.
     const labelling = (on, top) => ({ 'label.yml': workflow(on, top, job('label', CHECKS2)), ...beside });
     await c(() => mustRefuse('a pull-request job holding pull-requests: write on CHECKS_RUNNER_2, kept by a checks entry naming the write', labelling('pull_request', 'permissions:\n  pull-requests: write\n'), keptAs(DAZZER, 'label.yml', 'label', ['pull-requests']), { file: 'label.yml', job: 'label', says: /holds a write token \(pull-requests: write\) in a workflow a pull-request event starts/ }));
     await c(() => mustRefuse('a job on CHECKS_RUNNER_2 kept by a checks entry in a public repository', labelling('pull_request', READ), keptAs(PUBLIC, 'label.yml', 'label'), { file: 'label.yml', job: 'label', says: /a public repository, and reads CHECKS_RUNNER_2/ }));
     await c(() => mustRefuse('a job on CHECKS_RUNNER_2 kept by a checks entry in dazzer-io/.github', labelling('pull_request', READ), keptAs(SHARED, 'label.yml', 'label'), { file: 'label.yml', job: 'label', says: /a public repository, and reads CHECKS_RUNNER_2/ }));
     await c(() => mustRefuse('a push-started write job on CHECKS_RUNNER_2 kept by a checks entry naming the write, in dazzer-io/.github', labelling('push', 'permissions:\n  contents: write\n'), keptAs(SHARED, 'label.yml', 'label', ['contents']), { file: 'label.yml', job: 'label', says: /holds a write token \(contents: write\) in a workflow of dazzer-io\/\.github, whatever starts it/ }));
-    await c(() => mustPass('brain-builder\'s shape: a push-started job of a private repository on CHECKS_RUNNER_2 holding contents: write, kept by a checks entry naming it (decision 47)', labelling('push', 'permissions:\n  contents: write\n'), keptAs(DAZZER, 'label.yml', 'label', ['contents'])));
+    await c(() => mustPass('a push-started job of a private repository on CHECKS_RUNNER_2 holding contents: write, kept by a checks entry naming it', labelling('push', 'permissions:\n  contents: write\n'), keptAs(DAZZER, 'label.yml', 'label', ['contents'])));
   });
 });
 
-// ================================================================ dazzer-app's stricter class (strict.json; verdict.test.ts holdsMoreThanTheCode)
-test('in a repository on strict.json, a job off a literal GitHub label holds no more than the code (dazzer-app verdict test)', async () => {
+// ================================================================ the stricter class (strict.json)
+test('in a repository on strict.json, a job off a literal GitHub label holds no more than the code', async () => {
   need();
   const OFF = "@{{ needs.plan.outputs.machine || 'ubuntu-latest' }}";
   const CHECKOUT = '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        with:\n          persist-credentials: false\n';
@@ -951,11 +946,10 @@ test('in a repository on strict.json, a job off a literal GitHub label holds no 
   });
 });
 
-// The locked shape dazzer-app's production jobs read (decision 190, the shape r-3.8 teaches the
-// app's own holdsMoreThanTheCode): the locked setting held to main, falling back to the literal
+// The locked shape the stricter class's production jobs read: the locked setting held to main, falling back to the literal
 // ubuntu-latest, on a workflow no pull-request event starts. It is exempt from the stricter class
 // as the literal ubuntu-latest is, and every class rule still judges the job.
-test('in a repository on strict.json, the locked setting held to main falling back to ubuntu-latest, on a workflow no pull request starts, is exempt from the stricter class, and every class rule still judges it (decision 190)', async () => {
+test('in a repository on strict.json, the locked setting held to main falling back to ubuntu-latest, on a workflow no pull request starts, is exempt from the stricter class, and every class rule still judges it', async () => {
   need();
   const locked = (n, fallback = 'ubuntu-latest') => `@{{ github.ref == 'refs/heads/main' && vars.LOCKED_RUNNER_${n} || '${fallback}' }}`;
   const SCHEDULED = "\n  schedule:\n    - cron: '23 */2 * * *'\n  workflow_dispatch:";
@@ -982,7 +976,7 @@ test('in a repository on strict.json, the locked setting held to main falling ba
     // Any LOCKED_RUNNER_<N> is exempt from the stricter class; the signs-in class still judges its width and its name.
     await c(async () => exempt('the locked shape reading LOCKED_RUNNER_8', await mustRefuse('LOCKED_RUNNER_8 falling back to ubuntu-latest', release(locked(8)), APP, { file: 'made-up-release.yml', job: 'act', says: /reads LOCKED_RUNNER_8, a 8-core machine, but its fallback 'ubuntu-latest' has 2 cores/ })));
     await c(async () => exempt('the locked shape reading LOCKED_RUNNER_4', await mustRefuse('LOCKED_RUNNER_4, which the organisation does not declare, falling back to ubuntu-latest', release(locked(4)), APP, { file: 'made-up-release.yml', job: 'act', says: /reads LOCKED_RUNNER_4, which the organisation does not declare/ })));
-    // Every class rule still judges it: decision 9's LOCKED_ class, and the tag rule a deployment meets.
+    // Every class rule still judges it: the LOCKED_ class, and the tag rule a deployment meets.
     await c(async () => exempt('the locked shape on a workflow that signs in to nothing', await mustRefuse('the locked shape on a scheduled workflow that signs in to nothing, as sweep is', release(locked(2), SCHEDULED, SWEEP), APP, { file: 'made-up-release.yml', job: 'act', says: /is a job of a workflow that does not sign in, and it reads LOCKED_RUNNER_2/ })));
     await c(async () => exempt('the locked shape on a workflow deployment_status starts', await mustRefuse('the locked shape on a workflow deployment_status starts, as promote-production is', release(locked(2), '\n  deployment_status:\n  workflow_dispatch:'), APP, { file: 'made-up-release.yml', job: 'act', says: /signs in and that a tag starts \(deployment_status\)/ })));
     // Still held to no more than the code.
@@ -995,13 +989,13 @@ test('in a repository on strict.json, the locked setting held to main falling ba
     await c(() => mustRefuse('the locked shape falling back to ubuntu-24.04', release(locked(2, 'ubuntu-24.04')), APP, { file: 'made-up-release.yml', job: 'act', says: held }));
     await c(() => mustRefuse('the locked shape falling back to ubuntu-8-core', release(locked(8, 'ubuntu-8-core')), APP, { file: 'made-up-release.yml', job: 'act', says: held }));
     await c(() => mustRefuse('the workflow holding the locked shape on a pull request, its top granting more than the code', release(locked(2), '\n  pull_request:\n  workflow_dispatch:'), APP, { file: 'made-up-release.yml', says: /a repository strict\.json names, and grants its token more than reading the code/ }));
-    // dazzer, which strict.json does not name, reads the same job as it did.
+    // A repository strict.json does not name reads the same job as it did.
     await c(() => mustPass('the locked shape in dazzer, which strict.json does not name', release(locked(2)), DAZZER));
   });
 });
 
 // ================================================================ the lists
-test('secrets.json and strict.json pass their own checks and carry what the copies held: dazzer\'s CHANGE_CHECK_SECRETS, dazzer-app strict', () => {
+test('secrets.json and strict.json pass their own checks and carry what the copies held: the change-check secrets and the stricter class', () => {
   need();
   const { secrets, strict } = lists();
   assert.deepEqual(J.checkSecrets(secrets), [], 'Could not find secrets.json passing its own check');
@@ -1010,11 +1004,11 @@ test('secrets.json and strict.json pass their own checks and carry what the copi
   assert.deepEqual(strict.repositories.map((e) => e.repository), ['dazzer-io/dazzer-app'], 'Could not find strict.json naming dazzer-app alone');
   const bad = J.checkSecrets({ about: 'x', repositories: { 'dazzer-io/dazzer': { names: ['GITHUB_TOKEN', 'lower'], reason: '', decision: 0, source: '' } } });
   for (const words of ['GITHUB_TOKEN', 'capitals', 'no reason', 'no whole-number decision']) assert.ok(bad.some((p) => p.includes(words)), `Could not find secrets.json's check refusing ${words}: ${JSON.stringify(bad)}`);
-  assert.deepEqual([...J.DECLARED_SETTINGS], ['CHECKS_RUNNER_2', 'CHECKS_RUNNER_8', 'CHECKS_RUNNER_16', 'LOCKED_RUNNER_2', 'LOCKED_RUNNER_8', 'LOCKED_MACHINE_2', 'LOCKED_MACHINE_8', 'SCAN_RUNNER_2'], 'Could not find the declared settings as runners\' org/settings.json names them at 789b335, and the locked settings\' new names, LOCKED_MACHINE_2 and LOCKED_MACHINE_8 (decision 253)');
+  assert.deepEqual([...J.DECLARED_SETTINGS], ['CHECKS_RUNNER_2', 'CHECKS_RUNNER_8', 'CHECKS_RUNNER_16', 'LOCKED_RUNNER_2', 'LOCKED_RUNNER_8', 'LOCKED_MACHINE_2', 'LOCKED_MACHINE_8', 'SCAN_RUNNER_2'], 'Could not find the declared settings as the organisation names them, and the locked settings\' new names, LOCKED_MACHINE_2 and LOCKED_MACHINE_8');
 });
 
 // ================================================================ this repository's own folder
-test('the judge reads this repository\'s own workflow folder clean, and refuses a literal-label job planted in any shared workflow that kept.json does not name (r-1.58)', async () => {
+test('the judge reads this repository\'s own workflow folder clean, and refuses a literal-label job planted in any shared workflow that kept.json does not name', async () => {
   need();
   const files = J.readFolder(ROOT);
   assert.ok(files && files.length >= 5, `Could not find this repository's workflows to read: ${JSON.stringify(files?.map((f) => f.path))}`);
@@ -1041,8 +1035,9 @@ test('machine-rule.yml runs the judge, then a pinned actionlint and zizmor, on t
   const runs = steps.map((s) => s.run ?? '').join('\n');
   const checks = [
     [JSON.stringify(Object.keys(js.on)) === JSON.stringify(['pull_request', 'merge_group']), 'its triggers pull_request and merge_group alone'],
-    [JSON.stringify(js.permissions) === JSON.stringify({ contents: 'read' }), 'its token reading the code alone'],
-    [jobs.length === 1 && only['runs-on'] === 'ubuntu-latest' && !('permissions' in only), 'one job on the literal ubuntu-latest'],
+    [JSON.stringify(js.permissions) === JSON.stringify({}), 'no token at its top (permissions: {})'],
+    [JSON.stringify(only.permissions) === JSON.stringify({ contents: 'read' }), 'its one job\'s token reading the code alone'],
+    [jobs.length === 1 && only['runs-on'] === 'ubuntu-latest', 'one job on the literal ubuntu-latest'],
     [!/secrets/i.test(text), 'no secret anywhere in it'],
     [steps.filter((s) => /^actions\/checkout@[0-9a-f]{40}$/.test(String(s.uses).split(' ')[0])).length === 2 && steps.filter((s) => s.uses?.startsWith('actions/checkout@')).every((s) => s.with?.['persist-credentials'] === false), 'two checkouts pinned by commit, each with persist-credentials: false'],
     [steps.some((s) => s.uses?.startsWith('actions/checkout@') && s.with?.repository === '${{ steps.source.outputs.repo }}' && s.with?.ref === '${{ steps.source.outputs.sha }}' && s.with?.path === '.machine-rule') && text.includes('${{ job.workflow_repository }}') && text.includes('${{ job.workflow_sha }}'), 'the rule checked out of job.workflow_repository at job.workflow_sha'],
@@ -1058,13 +1053,13 @@ test('machine-rule.yml runs the judge, then a pinned actionlint and zizmor, on t
 });
 
 // actionlint 1.7.12's runner-label errors, word for word as it writes them (its labels list as it
-// printed them over runners' canary.yml at f56d757). It knows GitHub's labels alone, so it calls
-// each of our own sets unknown, though the judge alone rules where our names may stand (decision 198).
+// printed them over a workflow of the canary's). It knows GitHub's labels alone, so it calls
+// each of our own sets unknown, though the judge alone rules where our names may stand.
 const ACTIONLINT_LABELS = ['windows-latest', 'windows-latest-8-cores', 'windows-2025', 'windows-2025-vs2026', 'windows-2022', 'windows-11-arm', 'ubuntu-slim', 'ubuntu-latest', 'ubuntu-latest-4-cores', 'ubuntu-latest-8-cores', 'ubuntu-latest-16-cores', 'ubuntu-24.04', 'ubuntu-24.04-arm', 'ubuntu-22.04', 'ubuntu-22.04-arm', 'macos-latest', 'macos-latest-xlarge', 'macos-latest-large', 'macos-26-intel', 'macos-26-xlarge', 'macos-26-large', 'macos-26', 'macos-15-intel', 'macos-15-xlarge', 'macos-15-large', 'macos-15', 'macos-14-xlarge', 'macos-14-large', 'macos-14', 'self-hosted', 'x64', 'arm', 'arm64', 'linux', 'macos', 'windows'];
 const unknownLabel = (label) => `label "${label}" is unknown. available labels are ${ACTIONLINT_LABELS.map((l) => `"${l}"`).join(', ')}. if it is a custom label for self-hosted runner, set list of labels in actionlint.yaml config file`;
 const conflictingLabel = (label) => `label "${label}" conflicts with label "ubuntu-latest" defined at line:31,col:14. note: to run your job on each workers, use matrix`;
 
-test('machine-rule.yml\'s lint step ignores actionlint\'s unknown-label error for exactly the names OUR_MACHINE matches, and still reports every near miss (decision 198)', () => {
+test('machine-rule.yml\'s lint step ignores actionlint\'s unknown-label error for exactly the names OUR_MACHINE matches, and still reports every near miss', () => {
   need();
   const text = readFileSync(join(ROOT, '.github/workflows/machine-rule.yml'), 'utf8');
   const steps = Object.values(J.readWorkflow(text).js?.jobs ?? {})[0]?.steps ?? [];
@@ -1121,8 +1116,8 @@ test('the YAML reader is the yaml package, pinned at exactly 2.9.1 and installed
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-// ================================================================ the files this change made stale (decision 178)
-test('the files this change made stale say what is true after it: no file names the deleted test, codeql.yml\'s header counts its three jobs, node_modules/ is ignored (decision 178)', () => {
+// ================================================================ the files this change made stale
+test('the files this change made stale say what is true after it: no file names the deleted test, codeql.yml\'s header counts its three jobs, node_modules/ is ignored', () => {
   need();
   const misses = [];
   // The deleted file's name as a grep for it reads it, the same text in any folder.
@@ -1163,7 +1158,7 @@ test('the files this change made stale say what is true after it: no file names 
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-// ================================================================ the command (runners reader's origin rule; decision 164)
+// ================================================================ the command
 const temp = (prefix) => mkdtempSync(join(tmpdir(), prefix));
 function copyOf(files) {
   const dir = temp('machine-rule-copy-');
@@ -1208,7 +1203,7 @@ test('the command: exit 0 clean, 1 refused, 2 unread, and a folder with no workf
       await c(() => assert.ok(r.code === 2 && /is read as dazzer-io\/\.github only when its origin can be read and names exactly dazzer-io\/\.github/.test(r.err), `Could not find a copy read as .github with ${why} refused, exit 2: exit ${r.code}\n${r.all}`));
     }
     const token = await run(['--repository', 'dazzer-io/.github', '--visibility', 'public', scanCopy], { gitRemote: () => 'https://x-access-token:made-up-token-123@gitlab.example.com/dazzer-io/.github.git' });
-    await c(() => assert.ok(token.code === 2 && token.err.includes('; it has an origin on gitlab.example.com, so whether its shared scans may read a scan setting is unknown.') && !token.err.includes('made-up-token-123') && !token.err.includes('x-access-token'), `Could not find the refusal naming the origin's host alone, never its token (decision 164): ${token.err}`));
+    await c(() => assert.ok(token.code === 2 && token.err.includes('; it has an origin on gitlab.example.com, so whether its shared scans may read a scan setting is unknown.') && !token.err.includes('made-up-token-123') && !token.err.includes('x-access-token'), `Could not find the refusal naming the origin's host alone, never its token: ${token.err}`));
     const foreign = await run(['--repository', 'made-up-org/.github', '--visibility', 'public', scanCopy]);
     await c(() => assert.ok(foreign.code === 1 && /a scan setting/.test(foreign.all), `Could not find another owner's .github read as no shared repository, its scan refused: ${foreign.all}`));
     const broken = temp('machine-rule-lists-');
@@ -1219,11 +1214,11 @@ test('the command: exit 0 clean, 1 refused, 2 unread, and a folder with no workf
   });
 });
 
-// ================================================================ no bare host checked as a substring (decision 179)
+// ================================================================ no bare host checked as a substring
 // GitHub's code scanner reads .includes, .indexOf, .startsWith or .endsWith on a text shaped like a bare
 // host name as a weak URL check (js/incomplete-url-substring-sanitization), and main's code-scanning
 // rule refuses a merge while one stands; a test names a host by the words around it instead.
-test('no JavaScript file git tracks here checks a bare host name as a substring, which GitHub\'s code scanner reads as a weak URL check (decision 179)', () => {
+test('no JavaScript file git tracks here checks a bare host name as a substring, which GitHub\'s code scanner reads as a weak URL check', () => {
   const misses = [];
   let tracked = [];
   try {
@@ -1246,7 +1241,7 @@ test('no JavaScript file git tracks here checks a bare host name as a substring,
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-// ================================================================ the readings (runners' scan test gate S6 and readCalls, decision 160)
+// ================================================================ the readings
 // A fake GitHub: repositories, each with its default branch and files by ref; listings, raw files,
 // branches and the organisation's repository list, each answered as the contents API answers.
 function fakeGitHub({ repos = {}, called = {}, missingBranch = [], extraOrgRepos = [] } = {}) {
@@ -1289,7 +1284,7 @@ async function readingsOf(gh, opts = {}) {
 }
 const mentions = (r, words) => [...r.lines, ...r.unread].some((l) => l.includes(words));
 
-test('the readings: every private, non-archived repository read at its default branch and judged, the gate S6 cases each refusing it (runners scan test S6)', async () => {
+test('the readings: every private, non-archived repository read at its default branch and judged, the older gate\'s cases each refusing it', async () => {
   need();
   const cases = [
     [{ 'codeql.yml': "on: pull_request\npermissions:\n  contents: read\njobs:\n  analyse:\n    runs-on: @{{ vars['SCAN_RUNNER_2'] || 'ubuntu-latest' }}\n" + STEPS }, 'REFUSED dazzer-io/dazzer on main .github/workflows/codeql.yml', 'the index spelling vars[\'SCAN_RUNNER_2\']'],
@@ -1321,7 +1316,7 @@ test('the readings: every private, non-archived repository read at its default b
   });
 });
 
-test('the readings follow every call at the ref it names, up to GitHub\'s ten levels, and refuse a call they cannot read (runners readCalls, scan test S6)', async () => {
+test('the readings follow every call at the ref it names, up to GitHub\'s ten levels, and refuse a call they cannot read', async () => {
   need();
   const reads = 'on: workflow_call\njobs:\n  inner:\n    runs-on: @{{ vars.SCAN_RUNNER_2 || \'ubuntu-latest\' }}\n' + STEPS;
   const plain = 'on: workflow_call\njobs:\n  inner:\n    runs-on: ubuntu-latest\n' + STEPS;
@@ -1368,19 +1363,16 @@ test('the readings: --class production lists only refusals in workflows that sig
   });
 });
 
-// ================================================================ parity with the four old copies (decision 181)
+// ================================================================ parity with the four old copies
 // Every refusal each old copy makes, one case per branch, each naming the old file and line. A
 // refusal the rule carries is a case it refuses. One it drops on purpose is a case it admits, and
-// that case holds only while machine-rule/README.md's Left out names it with its decision: a dropped
-// refusal with no such line is a fault, never a Left out line written to excuse it. The copies, as
-// read for this change:
-//   dazzer's gate, scripts/checks/check-runner-setting.mjs at 58797b699 (the file as a221466 left it);
-//   dazzer-app's verdict test, test/verdict.test.ts at 4b236f2e;
-//   this repository's runs-on test at dca1d18, its path held in OLD_TEST;
-//   runners' bin/check-repos-read-setting.mjs and bin/switch-on.mjs (gate S6) at 789b335.
-// A spelling is read the same way in every repository, so the reading rows feed a change check of
-// dazzer (or of dazzer-app, for its own reader) whichever copy refused the spelling.
-// Each bullet of Left out: its head, naming the decision, and each spelling or refusal it drops,
+// that case holds only while machine-rule/README.md's Left out names it: a dropped
+// refusal with no such line is a fault, never a Left out line written to excuse it. The copies are
+// three checks kept elsewhere in the organisation and this repository's runs-on test, its path
+// held in OLD_TEST. A spelling is read the same way in every repository, so the reading rows feed
+// a change check of one made-up repository (or of the stricter class, for its own reader) whichever
+// copy refused the spelling.
+// Each bullet of Left out: its head and each spelling or refusal it drops,
 // one line under it. A case cites the bullet by words of its head and the line by its words.
 const LEFT_OUT = (() => {
   const md = readFileSync(join(ROOT, 'machine-rule/README.md'), 'utf8');
@@ -1395,15 +1387,14 @@ const LEFT_OUT = (() => {
 })();
 // Every Left out line a case cited, so the last test finds a line no case cites.
 const CITED = new Set();
-const leftOutNames = (words, decision, spelling) => {
-  const decided = new RegExp(`\\bdecisions? (?:\\d+, )*(?:\\d+ and )?${decision}\\b`);
-  const bullet = LEFT_OUT.find((b) => b.head.includes(words) && decided.test(b.head));
+const leftOutNames = (words, spelling) => {
+  const bullet = LEFT_OUT.find((b) => b.head.includes(words));
   if (!bullet || !bullet.spellings.includes(spelling)) return false;
   CITED.add(`${bullet.head}\n${spelling}`);
   return true;
 };
 const R = (says, job, file) => ({ says, job, file });
-const L = (left, decision, spelling) => ({ left, decision, spelling });
+const L = (left, spelling) => ({ left, spelling });
 const keptIn = (ctx, ...entries) => ({ ...ctx, ...lists(), kept: { about: 'made up', entries: entries.map((e) => ({ repository: ctx.repository, reason: 'made up', decision: 1, source: 'made up', ...e })) } });
 async function parity(copy, rows) {
   need();
@@ -1414,12 +1405,12 @@ async function parity(copy, rows) {
       const files = typeof text === 'string' ? { 'made-up.yml': text } : text;
       if (expect.left) {
         await c(() => mustPass(name, files, ctx));
-        await c(() => assert.ok(leftOutNames(expect.left, expect.decision, expect.spelling), `Could not find machine-rule/README.md's Left out naming '${expect.spelling}' under its bullet on ${expect.left} by decision ${expect.decision}, so admitting ${name} is a dropped refusal`));
+        await c(() => assert.ok(leftOutNames(expect.left, expect.spelling), `Could not find machine-rule/README.md's Left out naming '${expect.spelling}' under its bullet on ${expect.left}, so admitting ${name} is a dropped refusal`));
       } else await c(() => mustRefuse(name, files, ctx, { file: expect.file ?? Object.keys(files)[0], job: expect.job, says: expect.says }));
     }
   });
 }
-// The spellings the old readers refused, each a change check of dazzer but for where it hides.
+// The spellings the old readers refused, each a change check but for where it hides.
 const SP = {
   duplicate: check('    runs-on: ubuntu-latest\n'),
   secondDoc: `${check()}---\npermissions: write-all\n`,
@@ -1509,7 +1500,7 @@ const PIN = 'b'.repeat(40);
 const reviewCall = `name: Engineer review\non: [pull_request, pull_request_review]\npermissions:\n  contents: read\njobs:\n  engineer-review:\n    uses: dazzer-io/.github/.github/workflows/engineer-review.yml@${PIN}\n    permissions:\n      statuses: write\n      pull-requests: read\n`;
 const behind = async () => 'behind';
 const handsOn = (languages) => calling(codeqlCall({ languages }));
-// The readings of dazzer holding files, and the workflows its calls reach.
+// The readings of a repository holding files, and the workflows its calls reach.
 const readingsSay = (files, called, words) => async (name) => {
   const r = await readingsOf(fakeGitHub({ repos: { ...cleanRepos(), dazzer: { files } }, called }));
   assert.ok(r.refused > 0 && mentions(r, words), `Could not find the readings refusing ${name}, naming ${words}:\n${[...r.lines, ...r.unread].join('\n')}`);
@@ -1519,14 +1510,14 @@ const keptSays = (entries, says) => async (name) => {
   assert.ok(problems.some((p) => says.test(p)), `Could not find kept.json's check refusing ${name} saying ${says}: ${JSON.stringify(problems)}`);
 };
 
-test('parity: every refusal of dazzer\'s gate is carried, or named in Left out by its decision (check-runner-setting.mjs at 58797b699)', async () => {
+test('parity: every refusal of the older gate is carried, or named in Left out', async () => {
   const ID = 'permissions:\n  contents: read\n  id-token: write\n';
   const signing = (...jobs) => workflow(PUSH, ID, ...jobs);
   const stepEnv = '    steps:\n      - env:\n          K: @{{ vars.CHECKS_RUNNER_2 }}\n        run: echo made-up\n';
   const keep = (...entries) => keptIn(DAZZER, ...entries);
   const runsOn = (value) => workflow('pull_request', READ, job('check', value));
-  await parity('check-runner-setting.mjs', [
-    // Reading (readWorkflow and its parts, decision 42).
+  await parity('the older gate', [
+    // Reading (readWorkflow and its parts).
     [741, 'a parse error, a key written twice', SP.duplicate, R(/DUPLICATE_KEY/)],
     [741, 'a parse warning, a second document', SP.secondDoc, R(/MULTIPLE_DOCS/)],
     [763, 'an anchor', SP.anchor, R(/YAML anchor/)],
@@ -1552,10 +1543,10 @@ test('parity: every refusal of dazzer\'s gate is carried, or named in Left out b
     [1696, 'a job id four spaces in', SP.deepId, R(/is not a plain job id/)],
     [1667, 'a tree with no workflow folder', null, async (name) => {
       const r = await J.judgeFiles({ ...DAZZER, ...lists(), files: [] });
-      assert.ok(r.nothing === true && !r.lines.length && leftOutNames('tree-level refusals', 142, 'a tree with no workflow folder'), `Could not find ${name} said as nothing to judge, never as clean, with Left out naming 'a tree with no workflow folder' under dazzer's tree-level refusals by decision 142: ${JSON.stringify(r)}`);
+      assert.ok(r.nothing === true && !r.lines.length && leftOutNames('tree-level refusals', 'a tree with no workflow folder'), `Could not find ${name} said as nothing to judge, never as clean, with Left out naming 'a tree with no workflow folder' under an older copy's tree-level refusals: ${JSON.stringify(r)}`);
     }],
-    [1706, 'a tree holding no change-check job', { 'deploy.yml': signing(job('deploy', LOCKED2)) }, L('tree-level refusals', 142, 'a tree holding no change-check job')],
-    [1710, 'a tree holding no production job', { 'ci.yml': check() }, L('tree-level refusals', 142, 'a tree holding no production job')],
+    [1706, 'a tree holding no change-check job', { 'deploy.yml': signing(job('deploy', LOCKED2)) }, L('tree-level refusals', 'a tree holding no change-check job')],
+    [1710, 'a tree holding no production job', { 'ci.yml': check() }, L('tree-level refusals', 'a tree holding no production job')],
     // What kind each job is (kindOf, 1259-1273; unclassifiedWhy, 1461-1464).
     [1461, 'a workflow that signs in on pull_request_target', workflow('pull_request_target', ID, job('deploy', LOCKED2)), R(/runs on pull_request_target, where github\.ref is the default branch/)],
     [1461, 'a workflow that signs in on workflow_run', workflow('workflow_run', ID, job('deploy', LOCKED2)), R(/runs on workflow_run, where github\.ref is the default branch/)],
@@ -1590,8 +1581,8 @@ test('parity: every refusal of dazzer\'s gate is carried, or named in Left out b
     [1637, 'a kept job off GitHub\'s standard labels', { 'nightly.yml': workflow('schedule', READ, job('sweep', 'ubuntu-8-core')), 'ci.yml': check() }, R(/effect stay\) and runs on "ubuntu-8-core"/, 'sweep'), keep({ workflow: 'nightly.yml', jobs: ['sweep'], effect: 'stay' })],
     // The call of the shared scan (judgeCall, 1409-1449).
     [1427, 'the shared scan called at a tag', calling(codeqlCall({ uses: 'dazzer-io/.github/.github/workflows/codeql.yml@v1' })), R(/at v1, not at main/)],
-    [1427, 'the shared scan called at refs/heads/main', calling(codeqlCall({ uses: 'dazzer-io/.github/.github/workflows/codeql.yml@refs/heads/main' })), L('narrower call admissions', 171, 'a call at `refs/heads/main`, which dazzer\'s gate and dazzer-app\'s verdict test refused')],
-    [1367, 'a call of engineer-review.yml, which the gate read as a change check calling a workflow', { 'review.yml': reviewCall, 'ci.yml': check() }, L('narrower call admissions', 171, 'a call of `engineer-review.yml` outside a repository strict.json names, which dazzer\'s gate read as a change check calling a workflow'), { ...DAZZER, compare: behind }],
+    [1427, 'the shared scan called at refs/heads/main', calling(codeqlCall({ uses: 'dazzer-io/.github/.github/workflows/codeql.yml@refs/heads/main' })), L('narrower call admissions', 'a call at `refs/heads/main`, which two older copies refused')],
+    [1367, 'a call of engineer-review.yml, which the gate read as a change check calling a workflow', { 'review.yml': reviewCall, 'ci.yml': check() }, L('narrower call admissions', 'a call of `engineer-review.yml` outside a repository strict.json names, which an older copy read as a change check calling a workflow'), { ...DAZZER, compare: behind }],
     [1431, 'the call under another job id', calling(codeqlCall({ id: 'scan' })), R(/GitHub shows its check as 'scan \/ CodeQL complete'/)],
     [1431, 'the call given a name:', calling(codeqlCall({ extra: '    name: Scan\n' })), R(/writes name:/)],
     [1435, 'the call writing secrets: inherit', calling(codeqlCall({ extra: '    secrets: inherit\n' })), R(/writes secrets:/)],
@@ -1613,7 +1604,7 @@ test('parity: every refusal of dazzer\'s gate is carried, or named in Left out b
   ]);
 });
 
-test('parity: every refusal of dazzer-app\'s verdict test is carried, or named in Left out by its decision (verdict.test.ts at 4b236f2e)', async () => {
+test('parity: every refusal of the older verdict test is carried, or named in Left out', async () => {
   const OFF = "@{{ needs.plan.outputs.machine || 'ubuntu-latest' }}";
   const CHECKOUT = '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        with:\n          persist-credentials: false\n';
   const ci = (extra = '', steps = `    steps:\n${CHECKOUT}`, top = READ) => `name: CI\non: pull_request\n${top}jobs:\n  plan:\n    runs-on: ubuntu-latest\n    outputs:\n      machine: @{{ steps.p.outputs.machine }}\n    steps:\n      - id: p\n        env:\n          M: @{{ vars.CHECKS_RUNNER_2 }}\n        run: echo made-up\n  quick:\n    needs: plan\n    runs-on: ${OFF}\n${extra}${steps}`;
@@ -1622,14 +1613,14 @@ test('parity: every refusal of dazzer-app\'s verdict test is carried, or named i
   const appCall = (opts, top = READ) => calling(codeqlCall(opts), '[pull_request, push, schedule]', top, { 'ci.yml': ci() });
   const sweep = (runsOn, extra) => ({ 'nightly.yml': workflow('schedule', READ, job('sweep', runsOn, extra)), 'ci.yml': ci() });
   const keptSweep = keptIn(APP, PLAN, { workflow: 'nightly.yml', jobs: ['sweep'], effect: 'stay' });
-  await parity('verdict.test.ts', [
+  await parity('the older verdict test', [
     // The one call of the shared scan (SHARED_SCAN_JOB, 1213; holdsMoreThanTheCode, 1251).
-    [1251, 'the call of the shared scan with languages other than the pin\'s', appCall({ languages: `'["actions"]'` }), L('line-for-line pin', 153, 'languages other than the pin\'s'), app],
-    [1251, 'the call of the shared scan granting less than the pin', appCall({ grant: '      contents: read\n      security-events: write\n' }), L('line-for-line pin', 153, 'a grant less than the pin\'s'), app],
-    [1251, 'the call of the shared scan at refs/heads/main', appCall({ uses: 'dazzer-io/.github/.github/workflows/codeql.yml@refs/heads/main' }), L('narrower call admissions', 171, 'a call at `refs/heads/main`, which dazzer\'s gate and dazzer-app\'s verdict test refused'), app],
+    [1251, 'the call of the shared scan with languages other than the pin\'s', appCall({ languages: `'["actions"]'` }), L('line-for-line pin', 'languages other than the pin\'s'), app],
+    [1251, 'the call of the shared scan granting less than the pin', appCall({ grant: '      contents: read\n      security-events: write\n' }), L('line-for-line pin', 'a grant less than the pin\'s'), app],
+    [1251, 'the call of the shared scan at refs/heads/main', appCall({ uses: 'dazzer-io/.github/.github/workflows/codeql.yml@refs/heads/main' }), L('narrower call admissions', 'a call at `refs/heads/main`, which two older copies refused'), app],
     // A job off the literal ubuntu-latest (1253).
     ['1253, 1256', 'a kept job on ubuntu-24.04 handing on the workflow\'s token', sweep('ubuntu-24.04', '    env:\n      T: @{{ github.token }}\n'), R(/hands on the workflow's token/, 'sweep'), keptSweep],
-    ['1253, 1255', 'a kept job on a quoted ubuntu-latest naming a secret', sweep('"ubuntu-latest"', '    env:\n      K: @{{ secrets.MADE_UP }}\n'), L('reads alike', 42, 'a quoted `ubuntu-latest`'), keptSweep],
+    ['1253, 1255', 'a kept job on a quoted ubuntu-latest naming a secret', sweep('"ubuntu-latest"', '    env:\n      K: @{{ secrets.MADE_UP }}\n'), L('reads alike', 'a quoted `ubuntu-latest`'), keptSweep],
     [1255, 'a job naming a secret in an expression', ci('    env:\n      K: @{{ secrets.MADE_UP }}\n'), R(/names a secret/), app],
     [1255, 'a job naming the word secrets on a plain line', ci('', `    steps:\n${CHECKOUT}      - run: echo secrets\n`), R(/names a secret/), app],
     [1255, 'a job naming a secret in an expression on a comment line', ci('    # @{{ secrets.MADE_UP }}\n'), R(/names a secret/), app],
@@ -1648,7 +1639,7 @@ test('parity: every refusal of dazzer-app\'s verdict test is carried, or named i
     ['1248, 1258, 1673', 'the call of the shared scan from another file', { 'scan.yml': `name: Scan\non: [pull_request, push]\n${READ}jobs:\n${codeqlCall()}`, 'ci.yml': ci() }, R(/is a call in a repository strict\.json names, and asks for a permission of its own/, 'codeql', 'scan.yml'), app],
     ['1251, 1661', 'a call of security-scan.yml at main', { 'codeql.yml': `name: CodeQL\non: [pull_request, push]\n${READ}jobs:\n  codeql:\n    uses: dazzer-io/.github/.github/workflows/security-scan.yml@main\n`, 'ci.yml': ci() }, R(/which declares no workflow_call/, 'codeql', 'codeql.yml'), app],
     ['1248, 1258', 'a call of engineer-review.yml asking for its own grant, outside codeql.yml\'s job codeql', { 'review.yml': reviewCall, 'ci.yml': ci() }, R(/asks for a permission of its own/, 'engineer-review', 'review.yml'), { ...app, compare: behind }],
-    ['1248, 1258', 'engineer-review.yml\'s job engineer-review calling engineer-review.yml with exactly its three grants', { 'engineer-review.yml': reviewCall.replace('    permissions:\n      statuses', '    permissions:\n      contents: read\n      statuses'), 'ci.yml': ci() }, L('narrower call admissions', 'soc2-remediation D154', 'a call of `engineer-review.yml` from `engineer-review.yml`\'s job `engineer-review` in a repository strict.json names, at a commit with exactly its three grants, which dazzer-app\'s verdict test refused'), { ...app, compare: behind }],
+    ['1248, 1258', 'engineer-review.yml\'s job engineer-review calling engineer-review.yml with exactly its three grants', { 'engineer-review.yml': reviewCall.replace('    permissions:\n      statuses', '    permissions:\n      contents: read\n      statuses'), 'ci.yml': ci() }, L('narrower call admissions', 'a call of `engineer-review.yml` from `engineer-review.yml`\'s job `engineer-review` in a repository strict.json names, at a commit with exactly its three grants, which an older copy refused'), { ...app, compare: behind }],
     [1267, 'a job checking out with its credential kept', ci('', '    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n'), R(/keeps a git credential/), app],
     [1278, 'a workflow holding such a job with no top-level permissions', ci('', undefined, ''), R(/no top-level permissions written/), app],
     [1278, 'a workflow holding such a job under read-all', ci('', undefined, 'permissions: read-all\n'), R(/grants its token more than reading the code/), app],
@@ -1661,16 +1652,16 @@ test('parity: every refusal of dazzer-app\'s verdict test is carried, or named i
     [706, 'a tag', SP.tag, R(/YAML tag/), APP],
     [826, 'a quoted value not closed on its line', SP.unclosedQuote, R(/Missing closing "quote/), APP],
     [854, 'a flow collection not closed on its line', SP.unclosedFlow, R(/Flow map in block collection must be sufficiently indented and end with a \}/), APP],
-    [863, 'a flow collection holding a collection', SP.flowNested, L('reads alike', 42, 'a flow collection inside another'), APP],
+    [863, 'a flow collection holding a collection', SP.flowNested, L('reads alike', 'a flow collection inside another'), APP],
     [1016, 'a line neither a plain key, a - item nor a comment', SP.neither, R(/MULTILINE_IMPLICIT_KEY, 'Implicit keys need to be on a single line'/), APP],
-    [1123, 'a line indented under a value', SP.runOn, L('reads alike', 42, 'a plain value continued on a line indented under it'), APP],
+    [1123, 'a line indented under a value', SP.runOn, L('reads alike', 'a plain value continued on a line indented under it'), APP],
     [1095, 'a line broken other than by a line feed', SP.carriageReturn, R(/carriage return/), APP],
     [1095, 'a control character', SP.control, R(/control character U\+0080/), APP],
-    [1095, 'a byte order mark opening the file', SP.bomFirst, L('reads alike', 42, 'a byte order mark opening the file'), APP],
+    [1095, 'a byte order mark opening the file', SP.bomFirst, L('reads alike', 'a byte order mark opening the file'), APP],
     [1148, 'a tab in the indent', SP.tabIndent, R(/TAB_AS_INDENT/), APP],
-    [1148, 'a tab between a key and its value', SP.tabBetween, L('reads alike', 42, 'a tab between a key and its value'), APP],
+    [1148, 'a tab between a key and its value', SP.tabBetween, L('reads alike', 'a tab between a key and its value'), APP],
     [1110, 'a line at the top that is no key', SP.topNotKey, R(/MULTILINE_IMPLICIT_KEY, 'Implicit keys need to be on a single line'/), APP],
-    [1110, 'a quoted top-level key', SP.quotedTopKey, L('reads alike', 42, 'a quoted top-level key'), APP],
+    [1110, 'a quoted top-level key', SP.quotedTopKey, L('reads alike', 'a quoted top-level key'), APP],
     [1108, 'jobs spelled in another case', SP.jobsOtherCase, R(/in another letter case|holds no job/), APP],
     [1117, 'a job id that is not plain', SP.quotedId, R(/is not a plain job id/), APP],
     [1120, 'a line under jobs before any job id', SP.deepId, R(/is not a plain job id/), APP],
@@ -1678,9 +1669,9 @@ test('parity: every refusal of dazzer-app\'s verdict test is carried, or named i
     [1136, 'a top-level key written twice in another case', SP.keyTwiceCase, R(/in another letter case/), APP],
     [1140, 'a job id written twice', SP.repeatedJob, R(/DUPLICATE_KEY/), APP],
     [1144, 'a job key written twice', SP.duplicate, R(/DUPLICATE_KEY/), APP],
-    [832, 'a doubled quote', SP.doubledQuote, L('reads alike', 42, 'a doubled quote'), APP],
-    [842, 'a double-quoted value holding a backslash', SP.dqBackslash, L('reads alike', 42, 'a double-quoted value holding a backslash'), APP],
-    [903, 'a block header with an indentation digit', SP.blockDigit, L('reads alike', 42, 'a block header with an indentation digit'), APP],
+    [832, 'a doubled quote', SP.doubledQuote, L('reads alike', 'a doubled quote'), APP],
+    [842, 'a double-quoted value holding a backslash', SP.dqBackslash, L('reads alike', 'a double-quoted value holding a backslash'), APP],
+    [903, 'a block header with an indentation digit', SP.blockDigit, L('reads alike', 'a block header with an indentation digit'), APP],
     [913, 'text after a quoted value', SP.textAfterQuote, R(/UNEXPECTED_TOKEN, 'Unexpected scalar at node end'/), APP],
     [922, 'text after a flow collection', SP.textAfterFlow, R(/UNEXPECTED_TOKEN, 'Unexpected scalar at node end'/), APP],
     [936, 'a value starting with an indicator', SP.valueAt, R(/Plain value cannot start with reserved character @/), APP],
@@ -1688,17 +1679,17 @@ test('parity: every refusal of dazzer-app\'s verdict test is carried, or named i
     [953, 'an explicit key', SP.explicitKey, R(/explicit key/), APP],
     [959, 'an explicit key given its value', SP.explicitKey, R(/explicit key/), APP],
     [965, 'a merge key', SP.mergeKey, R(/merge key/), APP],
-    [970, 'a document marker opening the file', SP.leadingDashes, L('reads alike', 42, 'a leading `---`'), APP],
-    [970, 'a document end marker closing the file', SP.docEnd, L('reads alike', 42, 'a closing `...`'), APP],
+    [970, 'a document marker opening the file', SP.leadingDashes, L('reads alike', 'a leading `---`'), APP],
+    [970, 'a document end marker closing the file', SP.docEnd, L('reads alike', 'a closing `...`'), APP],
     [972, 'a directive', SP.directive, R(/YAML directive/), APP],
-    [976, 'a quoted key', SP.quotedKey, L('reads alike', 42, 'a quoted key'), APP],
-    [985, 'a space before a key\'s colon', SP.spacedKey, L('reads alike', 42, 'a space before a key\'s colon'), APP],
-    [991, 'a key that is not a plain name', SP.keyNotPlain, L('reads alike', 42, 'a key that is not a plain name'), APP],
-    [1008, 'a - item with nothing after it', SP.emptyItem, L('reads alike', 42, 'an empty `-` item'), APP],
+    [976, 'a quoted key', SP.quotedKey, L('reads alike', 'a quoted key'), APP],
+    [985, 'a space before a key\'s colon', SP.spacedKey, L('reads alike', 'a space before a key\'s colon'), APP],
+    [991, 'a key that is not a plain name', SP.keyNotPlain, L('reads alike', 'a key that is not a plain name'), APP],
+    [1008, 'a - item with nothing after it', SP.emptyItem, L('reads alike', 'an empty `-` item'), APP],
   ]);
 });
 
-test('parity: every refusal of this repository\'s runs-on test is carried, or named in Left out by its decision (at dca1d18)', async () => {
+test('parity: every refusal of this repository\'s runs-on test is carried, or named in Left out', async () => {
   const scanJob = (runsOn = SCAN, extra = '', steps = STEPS) => `  semgrep:\n    runs-on: ${runsOn}\n${extra}${steps}`;
   const scanFile = (top, ...jobs) => `name: made up\non:\n  pull_request:\n  merge_group:\n${top}jobs:\n${jobs.join('')}`;
   const FINAL = '  complete:\n    name: CodeQL complete\n    needs: [semgrep]\n    if: @{{ always() }}\n    runs-on: ubuntu-latest\n    permissions: {}\n    steps:\n      - run: exit 0\n';
@@ -1709,7 +1700,7 @@ test('parity: every refusal of this repository\'s runs-on test is carried, or na
     // Its judge (judge, 503-571), in dazzer-io/.github.
     [532, 'a call of a workflow in another repository', shared('  shared:\n    uses: dazzer-io/dazzer/.github/workflows/made-up.yml@main\n    permissions:\n      contents: read\n'), R(/a workflow outside dazzer-io\/\.github's shared workflows/), SHARED],
     [532, 'a call written as a block', shared('  shared:\n    uses: >-\n      dazzer-io/dazzer/.github/workflows/made-up.yml@main\n    permissions:\n      contents: read\n'), R(/a workflow outside dazzer-io\/\.github's shared workflows/), SHARED],
-    [532, 'a call of engineer-review.yml at main from another workflow here', shared('  review:\n    uses: dazzer-io/.github/.github/workflows/engineer-review.yml@main\n    permissions:\n      statuses: write\n      pull-requests: read\n'), L('narrower call admissions', 171, 'a call of `engineer-review.yml` from another workflow of dazzer-io/.github, which the runs-on test refused'), SHARED],
+    [532, 'a call of engineer-review.yml at main from another workflow here', shared('  review:\n    uses: dazzer-io/.github/.github/workflows/engineer-review.yml@main\n    permissions:\n      statuses: write\n      pull-requests: read\n'), L('narrower call admissions', 'a call of `engineer-review.yml` from another workflow of dazzer-io/.github, which the runs-on test refused'), SHARED],
     [534, 'a call of the security scan from outside the scans', shared('  shared:\n    uses: dazzer-io/.github/.github/workflows/security-scan.yml@main\n    permissions:\n      contents: read\n'), R(/outside the two scans/), SHARED],
     [541, 'a write-token job off GitHub\'s standard labels', workflow('workflow_call', 'permissions:\n  statuses: write\n', job('decide-tests', CHECKS2)), R(/holds a write token/), SHARED],
     [541, 'a read-only job outside the scans off GitHub\'s standard labels', outside(CHECKS2), R(/a public repository/), SHARED],
@@ -1724,14 +1715,14 @@ test('parity: every refusal of this repository\'s runs-on test is carried, or na
     [563, 'a final check reading a setting', { 'codeql.yml': codeql(scanJob(), `${FINAL}        env:\n          RUNNER: @{{ vars.CHECKS_RUNNER_2 }}\n`) }, R(/reads CHECKS_RUNNER_2/), SHARED],
     [563, 'a final check reading vars.SCAN_DIR, a name in a setting family\'s spelling', { 'codeql.yml': codeql(scanJob(), `${FINAL}        env:\n          D: @{{ vars.SCAN_DIR }}\n`) }, R(/reads vars\.SCAN_DIR/), SHARED],
     [567, 'a read-only scan job not on the scan setting exactly', { 'security-scan.yml': scanFile(READ, scanJob("@{{ vars.SCAN_RUNNER_2 || 'ubuntu-24.04' }}")) }, R(/not \$\{\{ vars\.SCAN_RUNNER_2 \|\| 'ubuntu-latest' \}\}/), SHARED],
-    // Its reader, a closed plain subset (decision 99).
+    // Its reader, a closed plain subset.
     [430, 'a carriage return mid-line', SP.carriageReturn, R(/carriage return/)],
     [430, 'a control character', SP.control, R(/control character U\+0080/)],
-    [430, 'a byte order mark opening the file', SP.bomFirst, L('reads alike', 42, 'a byte order mark opening the file')],
+    [430, 'a byte order mark opening the file', SP.bomFirst, L('reads alike', 'a byte order mark opening the file')],
     [261, 'a tab in the indent', SP.tabIndent, R(/TAB_AS_INDENT/)],
-    [261, 'a tab between a key and its value', SP.tabBetween, L('reads alike', 42, 'a tab between a key and its value')],
-    [265, 'a line indented under a value', SP.runOn, L('reads alike', 42, 'a plain value continued on a line indented under it')],
-    [274, 'an empty - item', SP.emptyItem, L('reads alike', 42, 'an empty `-` item')],
+    [261, 'a tab between a key and its value', SP.tabBetween, L('reads alike', 'a tab between a key and its value')],
+    [265, 'a line indented under a value', SP.runOn, L('reads alike', 'a plain value continued on a line indented under it')],
+    [274, 'an empty - item', SP.emptyItem, L('reads alike', 'an empty `-` item')],
     [238, 'a key line starting with an anchor', SP.anchor, R(/YAML anchor/)],
     [239, 'a key line starting with an alias', SP.alias, R(/YAML alias/)],
     [240, 'a key line starting with a tag', SP.tag, R(/YAML tag/)],
@@ -1741,13 +1732,13 @@ test('parity: every refusal of this repository\'s runs-on test is carried, or na
     [244, 'a directive', SP.directive, R(/YAML directive/)],
     [245, 'a quoted key holding a backslash', SP.escapedKey, R(/quoted key with a backslash/)],
     [246, 'a line neither a key, an item nor a comment', SP.topNotKey, R(/MULTILINE_IMPLICIT_KEY, 'Implicit keys need to be on a single line'/)],
-    [183, 'a block header with an indentation digit', SP.blockDigit, L('reads alike', 42, 'a block header with an indentation digit')],
+    [183, 'a block header with an indentation digit', SP.blockDigit, L('reads alike', 'a block header with an indentation digit')],
     [188, 'a single-quoted value not closed on its line', SP.unclosedSingle, R(/Missing closing 'quote/)],
-    [192, 'a double-quoted value holding a backslash', SP.dqBackslash, L('reads alike', 42, 'a double-quoted value holding a backslash')],
+    [192, 'a double-quoted value holding a backslash', SP.dqBackslash, L('reads alike', 'a double-quoted value holding a backslash')],
     [197, 'text after a quoted value', SP.textAfterQuote, R(/UNEXPECTED_TOKEN, 'Unexpected scalar at node end'/)],
-    [201, 'a flow mapping', SP.flowMapPermissions, L('reads alike', 42, 'a flow mapping, `on:` and `permissions:` included')],
+    [201, 'a flow mapping', SP.flowMapPermissions, L('reads alike', 'a flow mapping, `on:` and `permissions:` included')],
     [216, 'a flow list holding an item that is not plain', SP.pipeInFlow, R(/Plain value cannot start with block scalar indicator \|/)],
-    [223, 'a flow list not closed on its line', SP.flowListOpen, L('reads alike', 42, 'a flow list over lines, `on:` included')],
+    [223, 'a flow list not closed on its line', SP.flowListOpen, L('reads alike', 'a flow list over lines, `on:` included')],
     [225, 'text after a flow list', SP.textAfterFlow, R(/UNEXPECTED_TOKEN, 'Unexpected scalar at node end'/)],
     [228, 'a value holding an anchor, an alias or a tag', SP.tag, R(/YAML tag/)],
     [229, 'a value starting with an indicator', SP.valueBacktick, R(/Plain value cannot start with reserved character `/)],
@@ -1756,8 +1747,8 @@ test('parity: every refusal of this repository\'s runs-on test is carried, or na
     [342, 'a key written twice in another case', SP.keyTwiceCase, R(/in another letter case/)],
     [344, 'a key it reads written in another case', SP.keyOtherCase, R(/in another letter case/)],
     [352, 'a stray item where a key goes', SP.keyValueItem, R(/A block sequence may not be used as an implicit map key/)],
-    [362, 'on: written as a flow mapping', SP.flowMapOn, L('reads alike', 42, 'a flow mapping, `on:` and `permissions:` included')],
-    [366, 'on: written as a flow list over two lines', SP.flowListOpen, L('reads alike', 42, 'a flow list over lines, `on:` included')],
+    [362, 'on: written as a flow mapping', SP.flowMapOn, L('reads alike', 'a flow mapping, `on:` and `permissions:` included')],
+    [366, 'on: written as a flow list over two lines', SP.flowListOpen, L('reads alike', 'a flow list over lines, `on:` included')],
     [370, 'on: holding a value and lines below it', SP.onValueAndLines, R(/Nested mappings are not allowed in compact mappings/)],
     [381, 'a line under on: that is no trigger', SP.onItemsAndKey, R(/All mapping items must start at the same column/)],
     [452, 'a workflow with no on: key, in a private repository that reads no setting', `name: made up\n${READ}jobs:\n${job('report', 'ubuntu-latest')}`, R(/names no trigger/), QUIET],
@@ -1767,13 +1758,13 @@ test('parity: every refusal of this repository\'s runs-on test is carried, or na
     [455, 'jobs: written on one line', SP.jobsFlow, R(/not jobs: at column zero|holds no job/)],
     [455, 'no jobs: key', SP.noJobs, R(/holds no job this rule can read/)],
     ['406, 472', 'a job\'s permissions: with a line below it at another indent', SP.lesserIndentPerm, R(/All mapping items must start at the same column/)],
-    ['406, 460', 'a permissions: written as a list at the workflow\'s top, counted as a write', workflow('pull_request', 'permissions:\n  - contents\n', job('decide-tests', 'ubuntu-latest')), L('reads alike', 42, '`permissions:` written as a list, which they counted as a write'), SHARED],
+    ['406, 460', 'a permissions: written as a list at the workflow\'s top, counted as a write', workflow('pull_request', 'permissions:\n  - contents\n', job('decide-tests', 'ubuntu-latest')), L('reads alike', '`permissions:` written as a list, which they counted as a write'), SHARED],
     [465, 'a job id that is not plain', SP.quotedId, R(/is not a plain job id/)],
     [478, 'a jobs: key holding no job', SP.emptyJobs, R(/holds no job this rule can read/)],
   ]);
 });
 
-test('parity: every refusal of runners\' reader and its gate S6 is carried, or named in Left out by its decision (check-repos-read-setting.mjs, switch-on.mjs at 789b335)', async () => {
+test('parity: every refusal of the older reader and its gate is carried, or named in Left out', async () => {
   const runsOn = (value, extra = '') => workflow('pull_request', READ, job('check', value, extra));
   const callee = (on, inputs = '      machine:\n        type: string\n') => `on:\n${on}${on.includes('workflow_call') ? `    inputs:\n${inputs}` : ''}jobs:\n  reused:\n    runs-on: @{{ inputs.machine }}\n${STEPS}`;
   const callerOf = (withText = '') => workflow('pull_request', READ, `  hand-off:\n    uses: ./.github/workflows/reused.yml\n${withText}`);
@@ -1792,7 +1783,7 @@ test('parity: every refusal of runners\' reader and its gate S6 is carried, or n
   const f3Case = nested('Dazzer-IO/.github/.github/workflows/codeql.yml@main');
   const SHA = '0123456789abcdef0123456789abcdef01234567';
   const entry = (e) => [{ repository: 'dazzer-io/dazzer', workflow: 'x.yml', jobs: ['a'], effect: 'stay', reason: 'made up', decision: 1, source: 'made up', ...e }];
-  await parity('check-repos-read-setting.mjs', [
+  await parity('the older reader', [
     // Each job (Judge.job, 910-930).
     [911, 'a job that is not a mapping', SP.notMapping, R(/is not a mapping/)],
     [913, 'a job reading a SCAN_ setting', check('    env:\n      K: @{{ vars.SCAN_RUNNER_2 }}\n'), R(/a scan setting/)],
@@ -1801,11 +1792,11 @@ test('parity: every refusal of runners\' reader and its gate S6 is carried, or n
     [923, 'a call of the shared scan in another letter case', calling(codeqlCall({ uses: 'Dazzer-IO/.github/.github/workflows/codeql.yml@main' })), R(/spelled in another letter case/)],
     [924, 'a call of the shared scan at a branch', calling(codeqlCall({ uses: 'dazzer-io/.github/.github/workflows/codeql.yml@made-up-branch' })), R(/at made-up-branch, not at main/)],
     [926, 'a call of a workflow outside its five repositories', calling('  c:\n    uses: made-up-org/made-up/.github/workflows/made-up.yml@main\n'), R(/a workflow outside dazzer-io\/\.github's shared workflows/)],
-    [926, 'a call of engineer-review.yml, outside its five repositories', { 'review.yml': reviewCall, 'ci.yml': check() }, L('narrower call admissions', 171, 'a call from a repository outside runners\' five, which runners\' reader refused'), { ...DAZZER, compare: behind }],
+    [926, 'a call of engineer-review.yml, outside its five repositories', { 'review.yml': reviewCall, 'ci.yml': check() }, L('narrower call admissions', 'a call from a repository outside an older copy\'s list of five, which that copy refused'), { ...DAZZER, compare: behind }],
     [928, 'a job with no runs-on', workflow('pull_request', READ, `  check:\n${STEPS}`), R(/names no machine/)],
     // A job's machine (runsOn, expression, routesOf, leaf, matrix, input; 932-1080).
     [935, 'a literal label in dazzer, whose workflows read a setting', { 'ci.yml': workflow('pull_request', READ, job('check', CHECKS2), job('report', 'ubuntu-latest')) }, R(/names the literal label 'ubuntu-latest'/, 'report')],
-    [935, 'a literal label in a private repository whose workflows read no setting', workflow('pull_request', READ, job('report', 'ubuntu-latest')), L('allowed list', 16, 'a literal-label job of a private repository that reads no setting, named by no entry'), QUIET],
+    [935, 'a literal label in a private repository whose workflows read no setting', workflow('pull_request', READ, job('report', 'ubuntu-latest')), L('allowed list', 'a literal-label job of a private repository that reads no setting, named by no entry'), QUIET],
     [936, 'text outside the expression', runsOn('prefix-@{{ vars.CHECKS_RUNNER_2 }}'), R(/names text outside its expression/)],
     [939, 'a list of labels', runsOn('[self-hosted, linux]'), R(/lists labels/)],
     [940, 'a runner group', runsOn('\n      group: made-up-group'), R(/runner group or labels/)],
@@ -1863,19 +1854,18 @@ test('parity: every refusal of runners\' reader and its gate S6 is carried, or n
     [575, 'an entry with no source', null, keptSays(entry({ source: '' }), /names no source/)],
     [583, 'an entry outside its five repositories', null, async (name) => {
       const problems = J.checkKept({ about: 'made up', entries: entry({ repository: 'dazzer-io/made-up-tools' }) });
-      assert.ok(!problems.length && leftOutNames('allowed list', 121, 'an entry outside its five repositories'), `Could not find ${name} admitted by kept.json's check with Left out naming 'an entry outside its five repositories' under runners' allowed list by decision 121: ${JSON.stringify(problems)}`);
+      assert.ok(!problems.length && leftOutNames('allowed list', 'an entry outside its five repositories'), `Could not find ${name} admitted by kept.json's check with Left out naming 'an entry outside its five repositories' under an older copy's allowed list: ${JSON.stringify(problems)}`);
     }],
     [588, 'an entry named twice', null, keptSays([...entry({}), ...entry({})], /twice/)],
-    ['593, 595, 596, 598', 'a built-in label', null, async (name) => assert.ok(leftOutNames('built-in labels', 24, 'a built-in label'), `Could not find machine-rule/README.md's Left out naming 'a built-in label' under runners' list of built-in labels by decision 24, so dropping ${name} is a dropped refusal`)],
+    ['593, 595, 596, 598', 'a built-in label', null, async (name) => assert.ok(leftOutNames('built-in labels', 'a built-in label'), `Could not find machine-rule/README.md's Left out naming 'a built-in label' under an older copy's list of built-in labels, so dropping ${name} is a dropped refusal`)],
   ]);
 });
 
-// ================================================================ kept.json's names (decision 182)
+// ================================================================ kept.json's names
 // A stay entry carries the fixed name GitHub shows, which the readings match, so it holds no
-// expression; a checks entry carries its job's name: as written, a matrix expression included, as
-// dazzer-app's split-trial.yml browser does, since the readings leave checks entries out
-// (decisions 142, 154, 182).
-test('kept.json\'s names: a stay entry\'s name holds no expression, a checks entry carries its job\'s name: as written, a matrix expression included (decision 182)', async () => {
+// expression; a checks entry carries its job's name: as written, a matrix expression included,
+// since the readings leave checks entries out.
+test('kept.json\'s names: a stay entry\'s name holds no expression, a checks entry carries its job\'s name: as written, a matrix expression included', async () => {
   need();
   const entry = (effect, name) => ({ repository: 'dazzer-io/dazzer', workflow: 'trial.yml', job: 'browser', name, effect, reason: 'made up', decision: 1, source: 'made up' });
   const MATRIX_NAME = 'browser ${{ matrix.machine }}';
@@ -1895,13 +1885,13 @@ test('kept.json\'s names: a stay entry\'s name holds no expression, a checks ent
   });
 });
 
-// ================================================================ tool downloads retry (decision 181)
+// ================================================================ tool downloads retry
 // Every curl in a workflow here fetches a pinned tool, and each one retries: --retry <N> retries a
 // timeout and an HTTP 408, 429, 500, 502, 503 or 504, and --retry-all-errors every other failure
 // too, a dropped connection (curl's exit 56) among them, removing a partial file written by -o before
 // each retry (curl(1), --retry and --retry-all-errors, the latter added in 7.71.0). The required
 // check failed four times on 8 Nov on such downloads: 504, 504, curl 56 and 503.
-test('every tool a workflow here downloads is fetched with retries, so a passing hiccup at GitHub fails no required check (decision 181)', () => {
+test('every tool a workflow here downloads is fetched with retries, so a passing hiccup at GitHub fails no required check', () => {
   need();
   const dir = join(ROOT, '.github/workflows');
   const misses = [];
@@ -1924,14 +1914,13 @@ test('every tool a workflow here downloads is fetched with retries, so a passing
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-// ================================================================ every class refusal, in every shape a job takes (decision 184)
+// ================================================================ every class refusal, in every shape a job takes
 // A class rule is one about what a job reads, holds, signs in for or where it runs. Every case
 // above in which a class rule refuses a job is run again, built from its own text, in the two other
 // shapes a job takes: the job made a call of the shared scan, the rest of the file as it was; and
 // the job kept by a kept.json checks entry naming its writes. Each shape is refused in the case's
 // own words (its says). A refusal that is no class rule is named in NOT_A_CLASS; a shape in which a
-// decided admission applies is skipped only by a line of DECIDED, citing its Left out line and its
-// decision. So a class refusal added later is run in both shapes too, with no line written here.
+// decided admission applies is skipped only by a line of DECIDED, citing its Left out line. So a class refusal added later is run in both shapes too, with no line written here.
 const NOT_A_CLASS = [
   [/is not among the jobs kept\.json's whole-file entry/, "a whole-file entry's job list, which each shape rewrites"],
   [/is kept by kept\.json's (?:stay|checks) entry carrying the name|holds an expression other than one trailing parenthetical/, "a kept.json entry's name, which each shape rewrites"],
@@ -1940,10 +1929,10 @@ const NOT_A_CLASS = [
   [/unless its kept\.json entry has the effect checks and names that write/, "a checks entry's own list of writes, which the checks shape names in full"],
 ];
 const DECIDED = [
-  { shape: 'call', left: "A call's machine and steps", decision: 129, spelling: "a refusal of the job's runs-on, or of its having none", skips: (h, j) => (j.runsOnLine !== null && h.line === j.runsOnLine) || /names no machine/.test(h.why) },
-  { shape: 'call', left: "A call's machine and steps", decision: 171, spelling: "a refusal of a step, a checkout keeping its credential or CodeQL's own scan steps", skips: (h) => /checks out without persist-credentials|runs CodeQL's scan/.test(h.why) },
-  { shape: 'call', left: "A change check's secrets list, for a call", decision: 93, spelling: "a change check's secret that secrets.json does not name", skips: (h) => /^is a change check and (?:reads secrets\.|reads the whole secrets context|looks a secret up)/.test(h.why) },
-  { shape: 'checks', left: 'for a job a checks entry keeps', decision: 47, spelling: 'a refusal that kept.json names no entry for the job', skips: (h) => /kept\.json names no entry for it/.test(h.why) },
+  { shape: 'call', left: "A call's machine and steps", spelling: "a refusal of the job's runs-on, or of its having none", skips: (h, j) => (j.runsOnLine !== null && h.line === j.runsOnLine) || /names no machine/.test(h.why) },
+  { shape: 'call', left: "A call's machine and steps", spelling: "a refusal of a step, a checkout keeping its credential or CodeQL's own scan steps", skips: (h) => /checks out without persist-credentials|runs CodeQL's scan/.test(h.why) },
+  { shape: 'call', left: "A change check's secrets list, for a call", spelling: "a change check's secret that secrets.json does not name", skips: (h) => /^is a change check and (?:reads secrets\.|reads the whole secrets context|looks a secret up)/.test(h.why) },
+  { shape: 'checks', left: 'for a job a checks entry keeps', spelling: 'a refusal that kept.json names no entry for the job', skips: (h) => /kept\.json names no entry for it/.test(h.why) },
 ];
 const isMap = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 // Every string a job holds, a bare if: as the expression GitHub reads it as.
@@ -1991,7 +1980,7 @@ function keptFor(ctx, file, read, j, checks) {
   }
   return { ...ctx, kept: { about: 'made up', entries } };
 }
-test('every class refusal of a job holds in the two other shapes a job takes, a call and a job a checks entry keeps, each built from the case\'s own text (decision 184)', async (t) => {
+test('every class refusal of a job holds in the two other shapes a job takes, a call and a job a checks entry keeps, each built from the case\'s own text', async (t) => {
   need();
   assert.ok(RECORDED.length >= 300, `Could not find the refusal cases above recorded to run again (${RECORDED.length} recorded): this test runs after them, in the same file`);
   const misses = [];
@@ -2000,7 +1989,7 @@ test('every class refusal of a job holds in the two other shapes a job takes, a 
   const used = new Set();
   const seen = new Set();
   let cases = 0;
-  for (const d of DECIDED) if (!leftOutNames(d.left, d.decision, d.spelling)) misses.push(`Could not find machine-rule/README.md's Left out naming '${d.spelling}' under its bullet on ${d.left} by decision ${d.decision}, so skipping the ${d.shape} shape there is a dropped refusal`);
+  for (const d of DECIDED) if (!leftOutNames(d.left, d.spelling)) misses.push(`Could not find machine-rule/README.md's Left out naming '${d.spelling}' under its bullet on ${d.left}, so skipping the ${d.shape} shape there is a dropped refusal`);
   for (const rc of RECORDED) {
     const text = rc.files[rc.file];
     if (typeof text !== 'string') continue;
@@ -2045,7 +2034,7 @@ test('every class refusal of a job holds in the two other shapes a job takes, a 
 });
 
 // Every line under a Left out bullet is cited by a case, so a line no case needs is found.
-test('Left out names no spelling or refusal that no case cites (decisions 181, 184)', () => {
+test('Left out names no spelling or refusal that no case cites', () => {
   need();
   const all = LEFT_OUT.flatMap((b) => b.spellings.map((sp) => `${b.head}\n${sp}`));
   assert.ok(all.length >= 20, `Could not find machine-rule/README.md's Left out lines, one spelling or refusal a line: ${all.length} found`);
@@ -2053,16 +2042,16 @@ test('Left out names no spelling or refusal that no case cites (decisions 181, 1
   assert.ok(!loose.length, `Could not find a case citing each line of machine-rule/README.md's Left out:\n${loose.map((x) => x.split('\n')[1]).join('\n')}`);
 });
 
-// ================================================================ the locked settings' new names (decision 253)
+// ================================================================ the locked settings' new names
 // Every commit before the rename reads vars.LOCKED_RUNNER_2 and _8, so once those were written a
 // re-run, a queued job or a deployment at any such commit would take a locked machine.
-// LOCKED_MACHINE_2 and _8 are names no commit held before the rename, which runners' switch is to
-// write from its rename (r-2.20) on. The rule holds them exactly as it holds the old names, which
+// LOCKED_MACHINE_2 and _8 are names no commit held before the rename, which the switch writes
+// from its rename on. The rule holds them exactly as it holds the old names, which
 // it still judges as it did; the five refusals of how a job reads the locked setting (read unheld,
 // outside its runs-on, with a fallback not GitHub's or of another width, or by a workflow that does
 // not sign in) say where a name it reads is old and give its new name, and no other refusal does.
 const MACHINE2 = "@{{ github.ref == 'refs/heads/main' && vars.LOCKED_MACHINE_2 || 'ubuntu-latest' }}";
-test('LOCKED_MACHINE_2 and LOCKED_MACHINE_8 are read only held to main, as the locked settings are, and an unheld read of either is refused (decision 253)', async () => {
+test('LOCKED_MACHINE_2 and LOCKED_MACHINE_8 are read only held to main, as the locked settings are, and an unheld read of either is refused', async () => {
   need();
   const ID = 'permissions:\n  contents: read\n  id-token: write\n';
   const signing = (...jobs) => workflow(PUSH, ID, ...jobs);
@@ -2084,7 +2073,7 @@ test('LOCKED_MACHINE_2 and LOCKED_MACHINE_8 are read only held to main, as the l
     await c(() => mustRefuse('a change check naming LOCKED_MACHINE_X in an expression the grammar cannot read', { 'ci.yml': check('    env:\n      K: @{{ vars.LOCKED_MACHINE_X == }}\n') }, DAZZER, { file: 'ci.yml', job: 'check', says: /does not sign in, and it reads LOCKED_MACHINE_X/ }));
     await c(() => mustRefuse('a change check whose runs-on reads LOCKED_MACHINE_2 held to main', { 'ci.yml': workflow('pull_request', READ, job('check', MACHINE2)) }, DAZZER, { file: 'ci.yml', job: 'check', says: /does not sign in, and it reads LOCKED_MACHINE_2/ }));
     await c(() => mustRefuse('a job of a public repository reading LOCKED_MACHINE_2', { 'ci.yml': workflow('pull_request', READ, job('check', 'ubuntu-latest', '    env:\n      K: @{{ vars.LOCKED_MACHINE_2 }}\n')) }, PUBLIC, { file: 'ci.yml', job: 'check', says: /a public repository, and reads LOCKED_MACHINE_2/ }));
-    // dazzer-app's stricter class exempts the new name held to main as it exempts the old (decision 190).
+    // The stricter class exempts the new name held to main as it exempts the old.
     const TOP = 'permissions:\n  contents: read\n';
     const ACT = '    environment: release\n    permissions:\n      contents: read\n      issues: write\n    env:\n      K: @{{ secrets.MADE_UP_TOKEN }}\n';
     const release = (runsOn) => ({ 'made-up-release.yml': workflow("\n  schedule:\n    - cron: '23 */2 * * *'\n  workflow_dispatch:", TOP, job('act', runsOn, ACT)) });
@@ -2093,7 +2082,7 @@ test('LOCKED_MACHINE_2 and LOCKED_MACHINE_8 are read only held to main, as the l
   });
 });
 
-test('LOCKED_RUNNER_2 or _8 read unheld, outside its runs-on, with a fallback of another width or of ours, or by a change check is refused saying the name is old and giving its new name of the same width after its own fix, which each case pins; held to main it is judged as it was, and a refusal of the new name names no old setting (decision 253)', async () => {
+test('LOCKED_RUNNER_2 or _8 read unheld, outside its runs-on, with a fallback of another width or of ours, or by a change check is refused saying the name is old and giving its new name of the same width after its own fix, which each case pins; held to main it is judged as it was, and a refusal of the new name names no old setting', async () => {
   need();
   const ID = 'permissions:\n  contents: read\n  id-token: write\n';
   const signing = (...jobs) => workflow(PUSH, ID, ...jobs);
@@ -2120,7 +2109,7 @@ test('LOCKED_RUNNER_2 or _8 read unheld, outside its runs-on, with a fallback of
 const toMachine = (text) => String(text).replace(/locked_runner_/gi, (m) => (m[7] === 'R' ? 'LOCKED_MACHINE_' : 'locked_machine_'));
 // A refusal line with both names read as one, and the old name's own words taken out.
 const asOneName = (line) => line.replace(/ It reads an old locked setting, [^;]*; its new name, of the same width, is [^;]*?, which no commit before the rename reads \(decision 253\)\./g, '').replace(/locked_(?:runner|machine)_/gi, 'LOCKED_<NAME>_');
-// A case's files in one of the shapes a job takes (decision 184): as written, or its job id of
+// A case's files in one of the shapes a job takes: as written, or its job id of
 // file made a call of the shared scan, or kept by a kept.json checks entry, each built as the
 // shapes above build it. Null where the job is not one the shapes above rewrite.
 function inShape(files, ctx, shape, file, id) {
@@ -2135,7 +2124,7 @@ function inShape(files, ctx, shape, file, id) {
   return { files: shaped, ctx: keptFor(ctx, file, read, j, shape === 'checks') };
 }
 const SHAPE_WORDS = { direct: 'as written', call: 'made a call of the shared scan', checks: 'kept by a kept.json checks entry' };
-test('every case above reading LOCKED_RUNNER_2 or _8 reads the same with LOCKED_MACHINE_2 or _8 in its place, as written and in the two other shapes a job takes, a call and a job a checks entry keeps: the same refusals, or none, line for line but for the words calling a name old (decisions 184, 253)', async (t) => {
+test('every case above reading LOCKED_RUNNER_2 or _8 reads the same with LOCKED_MACHINE_2 or _8 in its place, as written and in the two other shapes a job takes, a call and a job a checks entry keeps: the same refusals, or none, line for line but for the words calling a name old', async (t) => {
   need();
   const cases = [...RECORDED.map((rc) => ({ ...rc, refused: true })), ...PASSED.map((pc) => ({ ...pc, refused: false }))]
     .filter((x) => Object.values(x.files).some((t) => /locked_runner_/i.test(String(t ?? ''))));

@@ -2,7 +2,7 @@
 // Engineer review: settles whether a person who may merge to the repository has
 // recorded a review of a pull request's head commit, and sets the commit status
 // "Engineer review" on that commit: pending with the reason, or success with who,
-// when and the commit (D83, D86).
+// when and the commit.
 //
 // A review counts when it is either
 //   - a pull-request conversation comment whose first line is exactly "reviewed"
@@ -101,8 +101,8 @@ export function decide(input) {
       continue;
     }
     if (wasEdited(c)) {
-      // GitHub does not say who made an edit, and D89 counts no comment edited after the
-      // last push; one edited before it is already too early. Either way: post a new one.
+      // GitHub does not say who made an edit, so no comment edited after the last push
+      // counts; one edited before it is already too early. Either way: post a new one.
       considered.push({ ...row, counted: false, why: `edited at ${c.updated_at}; an edited comment does not count, post a new one` });
       continue;
     }
@@ -186,7 +186,7 @@ export function prNumberFromMergeGroup(headRef) {
   return m ? Number(m[1]) : null;
 }
 
-// ---------- the status (D86) ----------
+// ---------- the status ----------
 
 export const CONTEXT = 'Engineer review';
 

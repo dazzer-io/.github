@@ -24,7 +24,7 @@
 // Exit codes: 0 dealt or counted; 1 refused, saying why (among them `a file was discovered
 // twice: <file>`); 2 `plan.mjs: <what is wrong>` for arguments it does not take.
 //
-// The spec is work/release-stays-fast/spec-split.md in dev-cycle, "The planner, shared".
+// README.md beside this file describes the planner ("Dealing tests into parts").
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -140,10 +140,10 @@ export function hashDiscovered(files) {
 // It runs no checkDeal of its own: the placement puts each discovered file into exactly one
 // part by construction, after normalise has refused a file discovered twice, so such a check
 // could never fire. checkDeal is the planner's test oracle: the tests prove the placement
-// against it at every count. CI Gate, not built yet, is not to call it. It is to hold the
-// shares' records, not the discovered list checkDeal takes, and is to make its own check from
-// them, in its own words: their `discovered` and `history` hashes, their file lists and
-// `discovered_count` (spec-split.md in dev-cycle, "CI Gate checks every file ran exactly once").
+// against it at every count. A gate that checks every file ran exactly once is not to call it.
+// It is to hold the shares' records, not the discovered list checkDeal takes, and is to make its
+// own check from them, in its own words: their `discovered` and `history` hashes, their file
+// lists and `discovered_count`.
 export function deal({ files, history, parts, lane = null }) {
   if (!Number.isInteger(parts) || parts < 1) throw new PlanError(`parts is a whole number above 0, not ${parts}`);
   if (Array.isArray(files) && !files.length) throw new PlanError(NONE_DISCOVERED);
@@ -177,7 +177,7 @@ function heaviest(weighed) {
   return [...weighed].sort((a, b) => b.weight - a.weight || byPath(a, b))[0] ?? null;
 }
 
-// The count, by one rule from recorded figures only (D15, spec-split.md "How many parts"),
+// The count, by one rule from recorded figures only,
 // counting no higher than GitHub's matrix limit. The first of these that some count meets
 // decides, and the count is the smallest that meets it:
 //   1. its slowest part, set-up included where it is recorded, is no longer than the figure;
@@ -309,7 +309,7 @@ export function loadHistory(where, attempt) {
   return newest[0];
 }
 
-// The record's deal line for part i (spec-record.md): its files, one per dealt file in the line
+// The record's deal line for part i (README.md, the format): its files, one per dealt file in the line
 // form of --files (its path, and a tab and its group when it has one), the hash of everything
 // discovered and of the history file the deal was made from.
 export function dealLine({ dealt, part, files, historyHash }) {

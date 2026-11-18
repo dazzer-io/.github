@@ -1,4 +1,4 @@
-# Machine rule (decision 121): judges a change's .github/workflows folder by the organisation's
+# Machine rule: judges a change's .github/workflows folder by the organisation's
 # one rule on which job may use which of our machines, machine-rule/judge.mjs, then lints the same
 # folder with linters. The organisation ruleset machine-rule-required (machine-rule/ruleset.json)
 # runs this file on the default branch of every repository; here it also runs on this repository's
@@ -11,32 +11,34 @@
 #
 # It runs on GitHub's ubuntu-latest, written as a literal label, a job of under a minute: reading
 # no setting keeps it off our machines in public repositories, where the fallback watcher does not
-# read the runs (decision 104); kept.json names it. Its token reads the code alone, and it holds no
+# read the runs; kept.json names it. Its token reads the code alone, and it holds no
 # secret. actionlint is a pinned release, checked by its SHA-256 before it runs, with shellcheck and
 # pyflakes off. Its two ignores are narrow. actionlint 1.7.12's job context lacks workflow_repository
 # and workflow_sha, which GitHub's job context gives and this repository's engineer-review.yml,
 # security-scan.yml and this file read, so without the first this repository's own folder is never
 # clean. actionlint knows GitHub's labels alone, so it calls each of our own sets unknown, while the
-# judge alone rules where our names may stand: it admits them literally in runners' canary alone
-# (decision 50). So the second drops actionlint's unknown-label error for exactly a name judge.mjs's
-# OUR_MACHINE matches, and any other label actionlint does not know is still reported (decision 198).
+# judge alone rules where our names may stand. So the second drops actionlint's unknown-label error
+# for exactly a name judge.mjs's OUR_MACHINE matches, and any other label actionlint does not know
+# is still reported.
 # zizmor is pinned and checked the same way, reads .github offline, honouring no ignore comment, by
 # machine-rule/zizmor.yml: it refuses only an action not pinned by commit (the organisation's own
 # workflows may be called on a branch), and counts every other finding without refusing it.
+# The workflow's own token grants nothing; the one job reads the code alone.
 name: Machine rule
 
 on:
   pull_request:
   merge_group:
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   machine-rule:
     name: Machine rule
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - name: Name this workflow's own repository and commit
         id: source

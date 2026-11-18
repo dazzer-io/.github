@@ -33,16 +33,16 @@
 # The organisation and repositories come from the run's own context, never from this file.
 #
 # Every job runs where the setting SCAN_RUNNER_2 points, GitHub's own computers while it is
-# empty: the scan machines (decision 93). On the machines that run each change's own checks, a
+# empty: the scan machines. On the machines that run each change's own checks, a
 # job of the change could reach a scan beside it on the same machine and quiet it. The scan
 # machines hold no change's own code only while the scan runner group admits only the scan
-# workflows (decision 98): a workflow lives in the repository it checks, so a pull request in a
+# workflows: a workflow lives in the repository it checks, so a pull request in a
 # repository the group admits can add a workflow of its own naming the scan label, and only the
 # group's workflow list keeps that job off the scan machines; nothing in this file can. No job
-# here holds a write token today (each, person-tokens too, takes the workflow's contents: read and
-# sets no permissions of its own), so none has to stay on GitHub's computers by the repository's
-# rule for write tokens. machine-rule/judge.mjs, the shared machine rule, holds each read-only job
-# here to running on ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }} exactly, holding no secret and
+# here holds a write token today (the workflow's own token grants nothing, permissions: {}, and
+# each job, person-tokens too, grants itself contents: read alone), so none has to stay on
+# GitHub's computers by the repository's rule for write tokens. machine-rule/judge.mjs, the
+# shared machine rule, holds each read-only job here to running on ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }} exactly, holding no secret and
 # checking out with persist-credentials: false; each write-token job (one granted a write, or left
 # with the repository's default token) to reading no CHECKS_, SCAN_ or LOCKED_ setting, to one of
 # GitHub's standard labels written as a literal label and to an entry of machine-rule/kept.json;
@@ -65,8 +65,7 @@ on:
   pull_request:
   merge_group:
 
-permissions:
-  contents: read
+permissions: {}
 
 # A newer push to a pull request cancels the scan of its older head, which no one reads once the
 # head has moved on. Only a pull_request run is ever cancelled: each pull request is one group,
@@ -85,6 +84,8 @@ jobs:
     name: Read the switches
     runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
+    permissions:
+      contents: read
     # Advisory only when the variable reads advisory (GitHub compares without case); the
     # final job still runs and counts every output this leaves missing.
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
@@ -139,6 +140,8 @@ jobs:
     if: needs.plan.outputs.native == 'true'
     runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 10
+    permissions:
+      contents: read
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     steps:
       - name: Review the dependencies the change adds
@@ -178,6 +181,8 @@ jobs:
     if: needs.plan.outputs.native != 'true'
     runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 15
+    permissions:
+      contents: read
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
       OSV_SCANNER_VERSION: v2.7.0
@@ -248,6 +253,8 @@ jobs:
     if: needs.plan.outputs.native != 'true'
     runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 10
+    permissions:
+      contents: read
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
       GITLEAKS_VERSION: 8.30.1
@@ -316,6 +323,8 @@ jobs:
     if: needs.plan.outputs.native != 'true'
     runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 20
+    permissions:
+      contents: read
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     env:
       # Semgrep's open-source engine, by version and image checksum.
@@ -380,6 +389,8 @@ jobs:
     name: Person tokens in workflows
     runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
+    permissions:
+      contents: read
     continue-on-error: ${{ vars.SECURITY_SCAN_MODE == 'advisory' }}
     steps:
       - name: Name this workflow's own repository and commit
@@ -437,6 +448,8 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - name: Name this workflow's own repository and commit
         id: source

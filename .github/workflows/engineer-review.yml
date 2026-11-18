@@ -1,4 +1,4 @@
-# Engineer review (D83, D86): sets the commit status "Engineer review" on a pull
+# Engineer review: sets the commit status "Engineer review" on a pull
 # request's head commit, pending until a person who may merge has recorded a review
 # of that commit, then success with who, when and the commit (engineer-review/README.md).
 #
@@ -19,8 +19,8 @@ on:
   pull_request_review:
     types: [submitted]
 
-permissions:
-  contents: read
+# The workflow's own token grants nothing; the one job grants exactly what it uses.
+permissions: {}
 
 jobs:
   engineer-review:

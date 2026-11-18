@@ -206,7 +206,7 @@ test('a long reason is cut to the 140 characters a status keeps', () => {
 const callerPath = fileURLToPath(new URL('../engineer-review/caller.yml', import.meta.url));
 // The three grants the run needs: statuses: write to set the status, pull-requests: read to read
 // the pull request and its reviews, and contents: read, without which GitHub answers 403 to a
-// private repository's activity, the record of the last push (compliance run 43770855381).
+// private repository's activity, the record of the last push.
 const GRANTS = { contents: 'read', statuses: 'write', 'pull-requests': 'read' };
 // Said only when a check goes red on a run that could not read a private repository's activity.
 const PRIVATE = "the Engineer review job is not granted exactly contents: read, statuses: write and pull-requests: read, so in a private repository GitHub answers 403 to the activity it reads the last push from";
@@ -228,7 +228,7 @@ test('the caller file pins its reusable workflow to a commit and names nothing o
   // The calling job holds uses and permissions alone, the shape the machine rule admits
   // (machine-rule/README.md, "Calls"): its own grant, contents: read, statuses: write and
   // pull-requests: read, is what it hands the called workflow, under a top that reads the code
-  // alone (decision 178).
+  // alone.
   assert.match(caller, /\npermissions:\n  contents: read\n\njobs:\n/, 'Could not find the caller\'s top granting contents: read alone');
   assert.match(caller, /\n {2}engineer-review:\n {4}uses: <owner>\/<repo>\/\.github\/workflows\/engineer-review\.yml@<commit>\n {4}permissions:\n {6}contents: read\n {6}statuses: write\n {6}pull-requests: read\n$/, `Could not find the calling job holding uses and its own grant alone: ${PRIVATE}`);
   assert.deepEqual(parse(caller).jobs['engineer-review'].permissions, GRANTS, PRIVATE);
@@ -275,26 +275,26 @@ test('the README moves a caller to a newer version by making it again, never by 
   assert.doesNotMatch(section, /against `engineer-review\/caller\.yml`/, CHECKOUT);
 });
 
-// Said only when a check goes red on a README whose account of DZ-33 parts from compliance's
-// policy (policies/change-management.md: "the status is the gate only, not the evidence") and
-// from scheduler's DZ-33 line, which reads no status, its creator or its link.
-const DZ33 = 'the README takes the Engineer review status, its creator or its link as DZ-33\'s evidence, where compliance\'s policy makes the status the merge gate only and DZ-33 reads the review itself';
+// Said only when a check goes red on a README whose account of checking a merged change takes the
+// Engineer review status, its creator or its link as the evidence: a workflow of the repository
+// can set the status too, so the status is the merge gate only and the review itself is the
+// evidence.
+const EVIDENCE = 'the README takes the Engineer review status, its creator or its link as the evidence of a review, where the status is the merge gate only and whoever checks a merged change reads the review itself';
 
-test('the README gives DZ-33 the review itself as evidence and the status as the merge gate only', () => {
+test('the README gives the review itself as evidence and the status as the merge gate only', () => {
   const readme = fs.readFileSync(readmePath, 'utf8');
   const flat = readme.replace(/\s+/g, ' ');
-  // Each sentence naming DZ-33: the ruleset's own words around it (from the GitHub Actions app
-  // alone) describe the gate, not DZ-33.
-  const sentences = flat.split(/(?<=\.)\s+/).filter((b) => /DZ-33/.test(b));
-  assert.ok(sentences.length > 0, `Could not find DZ-33 named in the README: ${DZ33}`);
+  // Each sentence calling the status the merge gate only: the ruleset's own words around it (from
+  // the GitHub Actions app alone) describe the gate, not the evidence.
+  const sentences = flat.split(/(?<=\.)\s+/).filter((b) => /merge gate only/.test(b));
+  assert.ok(sentences.length > 0, `Could not find the status called the merge gate only in the README: ${EVIDENCE}`);
   for (const b of sentences) {
-    // compliance test/controls.test.mjs refuses these words in DZ-33's own text.
-    assert.doesNotMatch(b, /created by GitHub Actions|from the GitHub Actions app|link(s|ing)? to an Engineer review run/, DZ33);
-    assert.doesNotMatch(b, /checks each status's creator|link opens an Engineer review run/, DZ33);
-    assert.match(b, /merge gate only, never the evidence/, DZ33);
-    assert.match(b, /reads no status, its creator or its link/, DZ33);
+    assert.doesNotMatch(b, /created by GitHub Actions|from the GitHub Actions app|link(s|ing)? to an Engineer review run/, EVIDENCE);
+    assert.doesNotMatch(b, /checks each status's creator|link opens an Engineer review run/, EVIDENCE);
+    assert.match(b, /merge gate only, never the evidence/, EVIDENCE);
+    assert.match(b, /reads no status, its creator or its link/, EVIDENCE);
   }
-  assert.doesNotMatch(flat, /The status itself carries the evidence/, DZ33);
+  assert.doesNotMatch(flat, /The status itself carries the evidence/, EVIDENCE);
 });
 
 // Said only when a check goes red on a README that, anywhere it describes the status, says the
@@ -345,9 +345,9 @@ test('the README makes a first caller from a checkout of the shared workflow rep
 test('the reusable workflow answers to calls and to this repository\'s own events, pinned and with its least rights', () => {
   const wf = parse(fs.readFileSync(workflowPath, 'utf8'));
   for (const trigger of ['workflow_call', 'pull_request', 'issue_comment', 'pull_request_review']) assert.ok(trigger in wf.on, trigger);
-  // The top reads the code alone; the one job holds the three grants it uses, the most a caller
-  // may hand it (machine-rule/README.md, "Calls").
-  assert.deepEqual(wf.permissions, { contents: 'read' }, `the workflow's top grants more than contents: read: ${JSON.stringify(wf.permissions)}`);
+  // The top grants nothing; the one job holds the three grants it uses, the most a caller may
+  // hand it (machine-rule/README.md, "Calls").
+  assert.deepEqual(wf.permissions, {}, `the workflow's top grants a token: ${JSON.stringify(wf.permissions)}`);
   assert.deepEqual(Object.keys(wf.jobs), ['engineer-review']);
   assert.deepEqual(wf.jobs['engineer-review'].permissions, GRANTS, `${PRIVATE}: the job grants ${JSON.stringify(wf.jobs['engineer-review'].permissions)}`);
   for (const u of Object.values(wf.jobs).flatMap((job) => (job.steps ?? []).map((s) => s.uses)).filter(Boolean)) assert.match(u, /@[0-9a-f]{40}$/, `every uses: is pinned to a commit: ${u}`);

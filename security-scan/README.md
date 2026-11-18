@@ -197,11 +197,11 @@ that accepts a finding is not blocked by it:
   for gitleaks (`<commit>:<file>:<rule>:<line>`), and `<rule id>:<path>` for Semgrep. A
   Semgrep entry naming only a rule id accepts nothing, so one entry never accepts a rule on
   every path, and the summary says so.
-- `record` names the approved risk-acceptance record in the records repository. An entry
-  without one under `records/risk-acceptance/` accepts nothing, and the summary says so.
+- `record` names the approved risk-acceptance record behind the entry, as a path under
+  `records/risk-acceptance/`. An entry without one accepts nothing, and the summary says so.
 - The file is absent until someone needs it and changes only through a reviewed pull request.
-  The scan cannot read the private records repository, so the daily reading checks every
-  entry against an approved, unexpired record there.
+  The scan cannot read those records itself, so a separate check holds every entry to an
+  approved record that has not expired.
 
 ## Known limits
 

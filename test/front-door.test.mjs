@@ -63,7 +63,7 @@ test('the community files are present and say what they promise: licence, securi
     const urls = (c.contact_links ?? []).map((l) => l.url);
     if (c.blank_issues_enabled !== false) misses.push(`Could not find blank issues turned off in config.yml: blank_issues_enabled reads ${JSON.stringify(c.blank_issues_enabled ?? null)}`);
     if (!urls.some((u) => /SECURITY\.md$|\/security\b/.test(u ?? ''))) misses.push(`Could not find config.yml sending security reports to the security policy: ${JSON.stringify(urls)}`);
-    if (!urls.includes('https://dazzer.io')) misses.push(`Could not find config.yml sending questions to https://dazzer.io: ${JSON.stringify(urls)}`);
+    if (!urls.some((u) => u === 'https://dazzer.io')) misses.push(`Could not find config.yml sending questions to https://dazzer.io: ${JSON.stringify(urls)}`);
   }
   const deps = text('.github/dependabot.yml');
   if (deps === null) misses.push('Could not find .github/dependabot.yml');
@@ -87,6 +87,7 @@ const FAULTS = [
   ['a person', /\bBen\b|\boperator\b/i],
   ['a compliance programme', /\bSOC ?2\b|\bsoc2\b/i],
   ['a promise of an AI review', /\bAI review/i],
+  ['the private records repository', /\brecords repository\b/i],
   ['a private path', /(?:^|[\s(`'"])(?:~\/(?:Dev|Desktop|Documents)\b|\/Users\/|work\/[a-z])|\.claude\//],
   ['a commit id', /(?<![\w@./-])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![\w-])/],
 ];
@@ -97,6 +98,8 @@ const privateNames = () => {
   for (const f of readdirSync(at('machine-rule')).filter((x) => x.endsWith('.json'))) {
     for (const m of readFileSync(at(join('machine-rule', f)), 'utf8').matchAll(/dazzer-io\/([A-Za-z0-9_.-]+)/g)) if (!PUBLIC.has(m[1])) names.add(m[1]);
   }
+  // The repositories the machine rule's ruleset leaves out are private too.
+  for (const n of JSON.parse(readFileSync(at(join('machine-rule', 'ruleset.json')), 'utf8')).conditions?.repository_name?.exclude ?? []) if (!PUBLIC.has(n)) names.add(n);
   // A name that is also an ordinary word is matched only as an owner's name or a full one.
   return [...names].map((n) => [n, new RegExp(/-/.test(n) || n === 'dazzer' ? `(?<![\\w./-])${escape(n)}(?![\\w-]|\\.\\w)` : `(?<![\\w./-])${escape(n)}'|dazzer-io/${escape(n)}(?![\\w.-])`)]);
 };

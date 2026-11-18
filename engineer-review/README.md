@@ -25,7 +25,7 @@ What never counts:
 - a comment or review by a bot;
 - a comment posted through an App (GitHub marks it with the App, `performed_via_github_app`);
 - a comment edited after it was posted. It is judged by its edit time: an edit after the last push
-  does not count (D89), because GitHub's comment answer does not say who made the edit, and an edit before the last
+  does not count, because GitHub's comment answer does not say who made the edit, and an edit before the last
   push is too early anyway. Post a new comment instead;
 - a comment by someone who cannot merge to the repository (write or admin permission);
 - a comment made before the last push;
@@ -34,16 +34,14 @@ What never counts:
 
 ## Why
 
-The audit firm asked for "documented review of the change by the engineer" as a compensating
-control in place of a second person's approval (decision D81). Every change to a gated repository
-carries that review before it merges, checked by this gate and listed in the weekly list, so the
-audit window holds the evidence; it costs one act per change (decision D83).
+Every change to a gated repository carries a recorded review by an engineer who read its final
+diff before it merges, checked by this gate. It costs one act per change.
 
 It is a commit status set by a reusable workflow, not a workflow the ruleset runs, because GitHub
 runs a ruleset-required workflow only on `pull_request`, `pull_request_target` and `merge_group`,
-so a review comment could never start it (decision D86). The status is the merge gate, which the
-ruleset requires from the GitHub Actions app alone (decision D89); a workflow of the repository
-itself could also set it, so the status is never the evidence: the review itself, kept on the pull
+so a review comment could never start it. The status is the merge gate, which the ruleset
+requires from the GitHub Actions app alone; a workflow of the repository itself could also set
+it, so the status is never the evidence: the review itself, kept on the pull
 request, is the evidence (see "The evidence" and "Known gap").
 
 ## Adopting it in a repository
@@ -73,12 +71,12 @@ request, is the evidence (see "The evidence" and "Known gap").
    `.github/workflows/engineer-review.yml` in the shared workflow repository. `contents: read` is
    there because GitHub reads a private repository's activity only with it, and the decision reads
    the activity to find the last push. The organisation's machine rule admits the caller in every
-   repository, the stricter class of `machine-rule/strict.json` (dazzer-app) included, where it is
-   admitted only as made: this file, its job `engineer-review`, the shared workflow at a commit,
-   exactly these three grants and no `secrets:` or `with:` (soc2-remediation D154).
+   repository, the stricter class of `machine-rule/strict.json` included, where it is admitted
+   only as made: this file, its job `engineer-review`, the shared workflow at a commit, exactly
+   these three grants and no `secrets:` or `with:`.
 3. The organisation ruleset requires the status check `Engineer review` on the repository's
    default branch, from the GitHub Actions app only (set by the ruleset files, not here). Before
-   the ruleset requires it, one live run from a real caller proves the workflow end to end (D89).
+   the ruleset requires it, one live run from a real caller proves the workflow end to end.
 
 The shared workflow repository needs no caller: the workflow's own `pull_request`,
 `issue_comment` and `pull_request_review` triggers serve its pull requests.
@@ -86,7 +84,7 @@ The shared workflow repository needs no caller: the workflow's own `pull_request
 To move a repository to a newer version, make the caller again with the newer commit id and change
 it through a reviewed pull request. A caller is rebuilt with `decide.mjs caller` at the new commit,
 never by editing only the commit in its `uses:` line: the called job may ask a grant the old caller
-does not hand (as `contents: read` did from d55b0f3 on), and GitHub then refuses to start it, so no
+does not hand (as `contents: read` once did), and GitHub then refuses to start it, so no
 status is set and, once the ruleset requires it, every merge is blocked. Run it from a checkout of
 the shared workflow repository, `dazzer-io/.github`, at the new commit (`git -C <checkout> fetch`,
 `git -C <checkout> checkout <new commit>`, then `node <checkout>/engineer-review/decide.mjs caller
@@ -117,7 +115,7 @@ approving review. The status is the gate and points to it: its description reads
 `Reviewed by <login> at <time> (<comment | approving review>) on <commit>`, and its link opens the
 run whose summary adds the review's own link, the head commit, when that commit was pushed, and the
 reviews it did not count and why. The run also prints one `Engineer review` notice line with the
-same facts as JSON (ids, logins and times only) for the readings to collect.
+same facts as JSON (ids, logins and times only), so the reviews can be listed later.
 
 The push time is read from the head repository's activity (pushes, force pushes and branch
 creations of the head commit to the pull request's branch); the latest one is used. With no record
@@ -137,19 +135,19 @@ comment again.
 
 ## Known gap
 
-- **A comment in the engineer's name is taken as his.** An agent or script holding the engineer's
-  own GitHub sign-in can post `reviewed` in his name, and GitHub cannot tell that comment from one
-  he typed (a comment through an App is told apart and refused; one through his own token is not).
-  This is a recorded limit (D86); a machine guard refusing such a post is proposed separately.
+- **A comment in the engineer's name is taken as theirs.** An agent or script holding the
+  engineer's own GitHub sign-in can post `reviewed` in their name, and GitHub cannot tell that
+  comment from one they typed (a comment through an App is told apart and refused; one through
+  their own token is not). This is a known limit.
 - **The status can be forged by anyone who may write statuses.** A commit status is set through
   the API by any holder of `statuses: write` on the repository: another workflow, an App, or a
   person with write access using `gh api`, all with no review. The ruleset therefore requires the
   status from the GitHub Actions app alone, which shuts out Apps and people. A workflow of the
   repository itself still runs as GitHub Actions and can set the status with a link of its choosing,
-  so for DZ-33 the status is the merge gate only, never the evidence: its daily line reads no status,
-  its creator or its link, and judges each merged change by the review itself, a `reviewed` comment
-  or an approving review of the head commit by a person with write or admin permission, after the
-  last push and at or before the merge, by the rule `decide.mjs` applies (D89, D91, D96).
+  so the status is the merge gate only, never the evidence: whoever checks a merged change reads
+  no status, its creator or its link, and judges the change by the review itself, a `reviewed`
+  comment or an approving review of the head commit by a person with write or admin permission,
+  after the last push and at or before the merge, by the rule `decide.mjs` applies.
 - **Withdrawing a review does not withdraw the status.** Deleting the `reviewed` comment or
   dismissing the approval leaves the success standing until the next push; dismissals are not among
   the caller's triggers.

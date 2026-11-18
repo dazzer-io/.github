@@ -9,26 +9,28 @@
 # It runs on GitHub's ubuntu-latest, written as a literal label, and reads no CHECKS_, SCAN_ or
 # LOCKED_ setting: the fallback watcher, which sends a job waiting on our machines back to
 # GitHub's, does not read this repository's runs, so a job here on the change-check machines
-# would never be sent back if they stalled (decision 104; machine-rule/judge.mjs holds the machine
-# line, and test/machine-rule.test.mjs runs it over this folder). Once the watcher reads this
+# would never be sent back if they stalled (machine-rule/judge.mjs holds the machine line, and
+# test/machine-rule.test.mjs runs it over this folder). Once the watcher reads this
 # repository's runs, it may read CHECKS_RUNNER_2 like the other repositories' checks. It asks
 # setup-node for Node 24, then installs the one package the tests read, the YAML reader the
 # machine rule reads workflows with, pinned in package-lock.json, with npm ci --ignore-scripts, so
-# no package's install script runs.
+# no package's install script runs. The workflow's own token grants nothing; the one job reads
+# the code alone.
 name: Decide tests
 
 on:
   pull_request:
   merge_group:
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   decide-tests:
     name: decide-tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Check out this repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

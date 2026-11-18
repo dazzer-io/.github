@@ -2,14 +2,14 @@
 //
 // Every other reader of records imports these, so the format is held in one place. Pure
 // functions over bytes and text, using only what Node 22 has. The format is written out in
-// README.md beside this file; work/release-stays-fast/spec-record.md in dev-cycle is its spec.
+// README.md beside this file.
 //
 // A record never holds a host, address, port, connection string or argument: the kinds are
 // four fixed words, and the run's facts are the GitHub and runner fields setup.mjs wrote.
 //
-// It also holds the readers' contract (spec-record.md, "Readers' contract"): pairing a record
-// with its job, attempts, "ran no test" and job groups, so read.mjs, the scheduler's weekly
-// reading and the main product's share check read GitHub's job listing one way.
+// It also holds the readers' contract: pairing a record with its job, attempts, "ran no test"
+// and job groups, so read.mjs and every other reader of records read GitHub's job listing one
+// way.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -479,7 +479,7 @@ export function compareRecords(expectedText, actualText) {
   return diffs;
 }
 
-// ---- The readers' contract (spec-record.md, "Readers' contract") ----
+// ---- The readers' contract ----
 //
 // Pure functions over GitHub's job listing and parsed records, so every reader pairs, counts
 // attempts and groups jobs the same way:
@@ -525,7 +525,7 @@ export function pairRecords(jobs, records) {
 }
 
 // A job that succeeded and whose record says the runner never started ran no test, as when
-// the main product's unit tests are answered from turbo's cache. The same words in a job that
+// a repository's unit tests are answered from a build cache. The same words in a job that
 // failed or was cancelled mean it stopped before its tests.
 export function ranNoTest(job) {
   return !!job?.record?.neverStarted && job.conclusion === 'success';

@@ -9,9 +9,8 @@
 # called workflow (contents: read, which a private repository's activity needs, statuses: write
 # and pull-requests: read), and the top grants reading the code alone. It needs no if: of its own: the
 # called workflow's job skips a comment on an issue that is not a pull request, reading this
-# run's event. A repository machine-rule/strict.json names (dazzer-app) admits this caller only
-# as it is: this file name, job and target at a commit, exactly these three grants
-# (soc2-remediation D154).
+# run's event. A repository machine-rule/strict.json names admits this caller only as it is:
+# this file name, job and target at a commit, exactly these three grants.
 name: Engineer review
 
 on:

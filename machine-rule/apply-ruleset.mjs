@@ -1,18 +1,19 @@
 #!/usr/bin/env node
-// The organisation rulesets this repository keeps as files, each written by Ben's hand alone:
+// The organisation rulesets this repository keeps as files, each written by an organisation
+// owner's hand alone:
 //   machine-rule-required (machine-rule/ruleset.json): the workflows rule that runs
 //     .github/workflows/machine-rule.yml, read from dazzer-io/.github (named by its repository id)
 //     at refs/heads/main, on the default branch of every repository but the two
-//     EXCLUDED_REPOSITORIES names, each with its reason, not on create, written active since r-3.37:
+//     EXCLUDED_REPOSITORIES names, each with its reason, not on create, written active:
 //     GitHub blocks a merge until that workflow has passed;
-//   main-spelling-refused (machine-rule/main-spelling.json): in dazzer, dazzer-app and runners, the
-//     repositories the locked runner group google-locked admits (runners for its locked canary,
-//     r-3.45), creating a branch spelled main in other letters is refused, with no bypass
-//     (decisions 188, 192);
-//   codeql-complete-required (machine-rule/codeql-complete.json): in dazzer and dazzer-app alone, the
-//     shared scan's codeql / CodeQL complete from GitHub Actions (integration 15368) on the default
-//     branch, not on create, written active since r-3.27: GitHub blocks a merge until that check
-//     has passed (decisions 188, 192, 210).
+//   main-spelling-refused (machine-rule/main-spelling.json): in the repositories
+//     MAIN_SPELLING_REPOSITORIES names, those the locked runner group google-locked admits (one of
+//     them for its locked canary alone), creating a branch spelled main in other letters is
+//     refused, with no bypass;
+//   codeql-complete-required (machine-rule/codeql-complete.json): in the repositories
+//     CODEQL_REPOSITORIES names alone, the shared scan's codeql / CodeQL complete from GitHub
+//     Actions (integration 15368) on the default branch, not on create, written active: GitHub
+//     blocks a merge until that check has passed.
 //
 //   node machine-rule/apply-ruleset.mjs              reads each live ruleset with gh and says, for
 //                                                    each, how it differs from its file and exactly
@@ -20,7 +21,7 @@
 //                                                    write again as it is, or hold back
 //   node machine-rule/apply-ruleset.mjs --apply      writes each file's version, and only those
 //                                                    rulesets: they are security settings, so this is
-//                                                    Ben's own command (decisions 121, 177, 192);
+//                                                    an organisation owner's own command;
 //                                                    nothing else runs it
 //   node machine-rule/apply-ruleset.mjs --readings [--moving <a,b>] [--only <a,b>] [--class production]
 //                                                    runs machine-rule/judge.mjs over every private,
@@ -37,10 +38,9 @@
 //
 // --moving treats the named repositories as moving (their literal-label jobs need kept.json
 // entries) even where they read no setting; --only reads just those repositories; --class
-// production lists only the refusals of jobs in workflows that sign in, so each milestone's
-// finish check reads exactly what that milestone delivers.
+// production lists only the refusals of jobs in workflows that sign in.
 //
-// Each kept ruleset stands alone (decisions 210, 212): its file, read and checked; its own check on
+// Each kept ruleset stands alone: its file, read and checked; its own check on
 // GitHub, which for machine-rule-required is that dazzer-io/.github's live repository id is the one
 // its file names; its live version, found by name and read by the id the list names; its write; and
 // its read-back. Every GitHub call about it sits inside its own containment. A refusal of one, a
@@ -64,10 +64,10 @@ export const RULESET_NAME = 'machine-rule-required';
 export const RULE_PATH = '.github/workflows/machine-rule.yml';
 export const RULE_REF = 'refs/heads/main';
 export const SHARED_REPOSITORY_ID = 1433582766;
-// GitHub's own words when a repository name condition pairs protected: true with ~ALL (decision 187).
+// GitHub's own words when a repository name condition pairs protected: true with ~ALL.
 export const GITHUB_ALL_REFUSAL = 'Protected repository name conditions cannot include `~ALL`';
-// The repositories machine-rule-required leaves out, each by name with its reason, held here alone
-// (r-3.37): its check admits exactly these as the exclude beside ~ALL, and refuses any other
+// The repositories machine-rule-required leaves out, each by name with its reason, held here
+// alone: its check admits exactly these as the exclude beside ~ALL, and refuses any other
 // exclude. A direct push to a default branch has not run the workflow, so an active workflows rule
 // is taken to refuse it; these two land their default branch by a direct push, by design.
 export const EXCLUDED_REPOSITORIES = [
@@ -85,7 +85,7 @@ export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID, excluded 
   if (r.name !== RULESET_NAME) problems.push(`it is named ${JSON.stringify(r.name)}, not ${RULESET_NAME}`);
   if (r.target !== 'branch') problems.push(`its target is ${JSON.stringify(r.target)}, not branch`);
   // active blocks; evaluate is the way back an organisation owner may take, and the file is held
-  // to active by its test (r-3.37).
+  // to active by its test.
   if (!['evaluate', 'active'].includes(r.enforcement)) problems.push(`its enforcement is ${JSON.stringify(r.enforcement)}, neither evaluate nor active`);
   if (!Array.isArray(r.bypass_actors) || r.bypass_actors.length) problems.push('it names bypass actors, so someone could merge past the rule');
   const ref = r.conditions?.ref_name;
@@ -109,7 +109,7 @@ export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID, excluded 
     if (!Array.isArray(exclude) || !same([...exclude].sort(), [...names].sort())) problems.push(`its repository condition excludes ${JSON.stringify(repo.exclude)}, not exactly ${names.length ? inWords(names) : 'nothing'}, the repositories EXCLUDED_REPOSITORIES leaves out, each with its reason`);
   }
   // protected blocks renaming the repositories a list of names targets; GitHub refuses it beside
-  // ~ALL, as it refused Ben's --apply of 8 Nov, and a renamed repository stays in ~ALL anyway.
+  // ~ALL, as it refused an --apply once, and a renamed repository stays in ~ALL anyway.
   if (isObj(repo) && repo.protected === true && Array.isArray(repo.include) && repo.include.includes('~ALL')) problems.push(`its repository condition sets protected: true beside include ~ALL, which GitHub refuses with 422: "${GITHUB_ALL_REFUSAL}" (decision 187)`);
   for (const k of Object.keys(r.conditions ?? {})) if (!['ref_name', 'repository_name'].includes(k)) problems.push(`it holds the condition ${k}, which narrows the repositories it runs in`);
   if (!Array.isArray(r.rules) || r.rules.length !== 1) problems.push(`it holds ${Array.isArray(r.rules) ? r.rules.length : 'no'} rules, not one workflows rule`);
@@ -129,7 +129,7 @@ export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID, excluded 
   return problems;
 }
 
-// ---------------------------------------------------------------- the two rules on main (decision 192)
+// ---------------------------------------------------------------- the two rules on main
 // Field by field, as docs.github.com's REST reference for organisation rulesets
 // (rest/orgs/rules, "Create an organization repository ruleset") gives them:
 // conditions.ref_name and conditions.repository_name each hold include and exclude, arrays of
@@ -141,16 +141,16 @@ export function checkRuleset(r, { repositoryId = SHARED_REPOSITORY_ID, excluded 
 // branches to be created if a check would otherwise prohibit it".
 export const MAIN_SPELLING_NAME = 'main-spelling-refused';
 export const CODEQL_COMPLETE_NAME = 'codeql-complete-required';
-// main-spelling-refused reaches every repository the locked runner group google-locked admits:
-// dazzer and dazzer-app, and runners, whose one dispatch-only locked-canary.yml the group admits at
+// main-spelling-refused reaches every repository the locked runner group google-locked admits,
+// one of them for its one dispatch-only locked-canary.yml, which the group admits at
 // refs/heads/main alone; held to main only within the existing-branch bound, since a creation rule
-// never touches a branch that is already there (r-3.45). codeql-complete-required stays in dazzer
-// and dazzer-app alone.
+// never touches a branch that is already there. codeql-complete-required stays in the repositories
+// CODEQL_REPOSITORIES names alone.
 export const MAIN_SPELLING_REPOSITORIES = ['dazzer', 'dazzer-app', 'runners'];
 export const CODEQL_REPOSITORIES = ['dazzer', 'dazzer-app'];
 export const CODEQL_CONTEXT = 'codeql / CodeQL complete';
-// GitHub Actions' integration id: every codeql / CodeQL complete on dazzer's and dazzer-app's pull
-// requests carries it (decision 192, read 8 Nov), as their main-protection rulesets name it.
+// GitHub Actions' integration id: every codeql / CodeQL complete on those repositories' pull
+// requests carries it, as their main-protection rulesets name it.
 export const ACTIONS_INTEGRATION_ID = 15368;
 // The sixteen spellings of main, each letter in either case, main itself first, and the fifteen
 // that are not main.
@@ -231,11 +231,11 @@ function checkOnMain(r, name, ruleType, enforcements, repositories) {
 }
 
 // Every way a ruleset differs from main-spelling-refused, each as a sentence. It is active, in
-// dazzer, dazzer-app and runners exactly, the repositories google-locked admits. Its
+// exactly the repositories MAIN_SPELLING_REPOSITORIES names, those google-locked admits. Its
 // patterns, matched case-sensitively, must match exactly the fifteen other spellings of main and
 // never main itself, with no exclude, and its one rule is creation: so among those sixteen it holds
 // whether GitHub folds case or not, and even folded it restricts only the creation of main, never a
-// push to it (decision 192).
+// push to it.
 export function checkMainSpelling(r) {
   const { problems, rule } = checkOnMain(r, MAIN_SPELLING_NAME, 'creation', ['active'], MAIN_SPELLING_REPOSITORIES);
   if (!isObj(r)) return problems;
@@ -257,10 +257,11 @@ export function checkMainSpelling(r) {
   return problems;
 }
 
-// Every way a ruleset differs from codeql-complete-required, each as a sentence: in dazzer and
-// dazzer-app exactly, runners never among them; active, as its file is written since r-3.27, or
-// evaluate, the way back an organisation owner may take, and nothing else (decision 210); the default branch alone, one required check, codeql /
-// CodeQL complete from integration 15368, not enforced on create, strict policy off.
+// Every way a ruleset differs from codeql-complete-required, each as a sentence: in exactly the
+// repositories CODEQL_REPOSITORIES names; active, as its file is written, or evaluate, the way
+// back an organisation owner may take, and nothing else; the default branch alone, one required
+// check, codeql / CodeQL complete from integration 15368, not enforced on create, strict policy
+// off.
 export function checkCodeqlComplete(r) {
   const { problems, rule } = checkOnMain(r, CODEQL_COMPLETE_NAME, 'required_status_checks', ['evaluate', 'active'], CODEQL_REPOSITORIES);
   if (!isObj(r)) return problems;
@@ -280,7 +281,7 @@ export function checkCodeqlComplete(r) {
 }
 
 // GitHub reads a repository name condition back with protected always there, false where the
-// write left it out (decision 187), so a protected left out and one set false mean the same.
+// write left it out, so a protected left out and one set false mean the same.
 const conditionsOf = (c) => {
   if (!isObj(c) || !isObj(c.repository_name)) return c;
   const repo = c.repository_name;
@@ -350,7 +351,7 @@ async function readPages(request, path, what) {
 }
 // Why an answer GitHub gave, said as whose, holds no object with an integer id, or null when it
 // does. Such an answer is unread, never absent: a ruleset GitHub answers for with nothing in it is
-// not known to be missing (D212).
+// not known to be missing.
 const idLeftOut = (x, whose) => {
   if (!isObj(x)) return `${whose} is ${String(JSON.stringify(x)).slice(0, 80)}, no object`;
   if (!Number.isInteger(x.id)) return `${whose} names ${x.id === undefined ? 'no id' : `the id ${JSON.stringify(x.id)}, no integer`}`;
@@ -421,7 +422,7 @@ async function planOne(request, f, found) {
 // it is not, then read back at once, an update by that id and a creation by the id in GitHub's
 // answer to it. Says what came of it, and returns whether it is now its file's. Every GitHub call
 // here is inside this one ruleset's containment, so gh getting no answer holds back this one alone
-// and the others are still tried (D212): before GitHub answers the write, the write may have
+// and the others are still tried: before GitHub answers the write, the write may have
 // landed; after, it was written and is not read back. A 5xx answer is GitHub failing after the
 // write may have landed, so it is said the same way; a 4xx is GitHub refusing it, so it did not.
 async function applyOne(request, s, out, err) {
@@ -516,7 +517,7 @@ export async function main(argv, { request = ghRequest, out = console.log, err =
   }
   // Each file is read and checked before GitHub is called; then the organisation's rulesets are
   // listed once, across every page, before any write, and that list alone failing is GitHub not
-  // read at all, exit 2. Everything after it is one ruleset's alone (D212).
+  // read at all, exit 2. Everything after it is one ruleset's alone.
   const filesRead = KEPT.map((k) => fileOf(k, files[k.name] ?? (k.name === RULESET_NAME ? file : undefined) ?? join(HERE, k.file)));
   let found;
   try {

@@ -1,11 +1,11 @@
 // The shared CodeQL scan, .github/workflows/codeql.yml: the one code scan every dazzer-io
-// repository calls (decisions 118 and 119), in place of a copy of its own. This test pins what it
+// repository calls, in place of a copy of its own. This test pins what it
 // scans and what it may hold, so a weakened scan goes red here, and a red line here shows up in
 // the change's diff beside the workflow's:
 //
 //   - it is started only by workflow_call, taking one input, languages, a JSON list as a string,
 //     and the analysis's first step, a guard written exactly as GUARD below and run here under
-//     bash, takes only actions, javascript-typescript and python (decision 133): a later language
+//     bash, takes only actions, javascript-typescript and python: a later language
 //     joins by its own decision;
 //   - no line outside a block's body holds a backslash inside a double-quoted value, where YAML
 //     decodes an escape, so a secret or a setting cannot be spelled past the rules below;
@@ -15,10 +15,10 @@
 //     evaluates an expression there;
 //   - it reads one setting, SCAN_RUNNER_2, as the analysis job's machine and nowhere else:
 //     ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }}, so an empty setting keeps it on GitHub's
-//     computers (decision 93). A called workflow reads its caller's variables (docs.github.com,
+//     computers. A called workflow reads its caller's variables (docs.github.com,
 //     Variables reference: "For reusable workflows, the variables from the caller workflow's
 //     repository are used."), so the setting resolves as the calling repository sees it;
-//   - its top holds exactly name, on, permissions (contents: read) and jobs; each job holds exactly
+//   - its top holds exactly name, on, permissions ({}, no token) and jobs; each job holds exactly
 //     the keys it holds today; each action step holds exactly name, uses and with, and each script
 //     step (the guard and the final check's) exactly name, env and run, each upload step exactly
 //     name, if, uses and with, its script a literal |
@@ -33,10 +33,9 @@
 //     security-extended suite, analyze with upload: never and the category /language:<language>,
 //     and the results kept as an artifact); upload, one job named Upload CodeQL results (the name
 //     machine-rule/kept.json carries) and no matrix, runs on GitHub's own ubuntu-latest, written as
-//     a literal label, is the only job holding security-events: write (decision 36 keeps the write
-//     off our machines), runs only when every language's analysis succeeded
-//     (if: needs.analyze.result == 'success'), so a partial scan never passes (decisions 101 and
-//     131), checks nothing out, and for each language the guard takes, in turn and only when the
+//     a literal label, is the only job holding security-events: write (which keeps the write
+//     off our own machines), runs only when every language's analysis succeeded
+//     (if: needs.analyze.result == 'success'), so a partial scan never passes, checks nothing out, and for each language the guard takes, in turn and only when the
 //     caller names it, fetches that language's results by name into a folder of its own and hands
 //     them to code scanning under the category /language:<language> and the matrix
 //     {"language":"<language>"}, the environment its analyses are stored under, so for every list a caller
@@ -44,10 +43,10 @@
 //     complete whatever languages
 //     a caller names, runs always after both on GitHub's ubuntu-latest with no token
 //     (permissions: {}), and its script, taking the two results through env alone and holding no
-//     ${{ }}, passes only when both succeeded: the one check a caller requires (decision 135);
+//     ${{ }}, passes only when both succeeded: the one check a caller requires;
 //   - every action is pinned by commit, and CodeQL's three actions share one pin, PIN below: the
-//     newer of the two the product copies held on 7 Nov 2026 (dazzer v4.39.3; dazzer-app v4.39.1);
-//   - dazzer-io is a trusted publisher for the analysis of actions alone (decisions 165 to 167):
+//     github/codeql-action v4.39.3;
+//   - dazzer-io is a trusted publisher for the analysis of actions alone:
 //     the analysis's second step, before the checkout, written exactly as TRUST below, runs only
 //     when the language is actions (if: ACTIONS_ONLY), holds exactly name, if and run, so it is
 //     handed no token and no input, and its script holds no ${{ }} and no token. Run here under
@@ -55,13 +54,13 @@
 //     writes, it leaves exactly two files there and nothing anywhere else: the model pack
 //     shared-scan/trusted-publishers in CodeQL's package cache (~/.codeql/packages/<scope>/<name>/
 //     <version>; its scope is a CodeQL pack scope, not the organisation's name, since the pack is
-//     no GitHub project and no workflow line names a project by hand, decision 167), library: true, extension target codeql/actions-all, and one data extension adding
+//     no GitHub project and no workflow line names a project by hand), library: true, extension target codeql/actions-all, and one data extension adding
 //     the one row ["dazzer-io"] to trustedActionsOwnerDataModel, the list actions/unpinned-tag reads.
 //     Its script's lines sit at one indent, so the script run here is the one GitHub runs. The
 //     analyze step's env holds exactly CODEQL_ACTION_EXTRA_OPTIONS, EXTRA_OPTIONS below, which
 //     gives database run-queries (github/codeql-action v4.39.3 src/codeql.ts:779-790) the options
 //     OPTION_FOR pins by their exact text: --model-packs naming that pack for actions, and
-//     --no-database-extension-packs for every language (decision 169); and no line names
+//     --no-database-extension-packs for every language; and no line names
 //     --additional-packs, which the action passes itself for a pull request's diff-informed
 //     analysis (src/analyze.ts:468-469, 515).
 //
@@ -90,15 +89,14 @@ const LANGUAGES = '${{ fromJSON(inputs.languages) }}';
 const LANGUAGE = '${{ matrix.language }}';
 const CATEGORY = '/language:${{ matrix.language }}';
 const ARTIFACT = 'codeql-sarif-${{ matrix.language }}';
-// github/codeql-action v4.39.3, dazzer's pin on 7 Nov 2026, newer than dazzer-app's v4.39.1.
+// github/codeql-action v4.39.3.
 const PIN = '33d7b85da1a04171e211befe2c739303b9a4c066';
 const CODEQL = 'github/codeql-action/';
 // The output and the results' path, by value: analyze writes there, upload-artifact keeps it,
 // download-artifact fetches into it and upload-sarif sends it.
 const RESULTS = '${{ runner.temp }}/codeql-results';
 const SARIF = '${{ runner.temp }}/codeql-sarif';
-// The languages the scan takes (decision 133): what dazzer and dazzer-app scan today, whose build
-// mode none is known to run no build tool. Any other is refused by the analysis's first step.
+// The languages the scan takes: those whose build mode none is known to run no build tool. Any other is refused by the analysis's first step.
 const ALLOWED = ['actions', 'javascript-typescript', 'python'];
 // Languages and spellings the guard must refuse, beside every one it takes.
 const OTHERS = ['go', 'csharp', 'java-kotlin', 'swift', 'c-cpp', 'ruby', 'rust', 'Python', 'python ', ' actions', 'actions|python', '*', ''];
@@ -118,7 +116,7 @@ const guardStatus = (script, language) => spawnSync('bash', ['--noprofile', '--n
   env: { PATH: process.env.PATH, LANGUAGE: language }, stdio: 'ignore',
 }).status;
 
-// The final job's script (decision 135), as GitHub reads its | block, and what it does with the
+// The final job's script, as GitHub reads its | block, and what it does with the
 // two jobs' results: its exit status under bash.
 const COMPLETE = [
   'if [ "$ANALYZE" = success ] && [ "$UPLOAD" = success ]; then',
@@ -143,7 +141,7 @@ function runHeaderOf(doc, text, name) {
 const GUARD_NAME = 'Refuse a language this scan does not take';
 const COMPLETE_NAME = 'Refuse unless every analysis and every upload succeeded';
 
-// The trusted publishers (decisions 165 to 167). The analysis of actions, and of no other
+// The trusted publishers. The analysis of actions, and of no other
 // language, adds dazzer-io to trustedActionsOwnerDataModel, the list github/codeql's
 // actions/unpinned-tag query reads (isTrustedOwner, on the segment before the first /), through a
 // model pack the analysis's second step writes into CodeQL's package cache, and the analyze step
@@ -186,8 +184,8 @@ const TRUST = [
 // text, as CODEQL_ACTION_EXTRA_OPTIONS gives them; the action reads the value with yaml.load
 // (github/codeql-action v4.39.3 src/util.ts:83) and puts the options after its own flags
 // (src/codeql.ts:779-790). The exact text is the guard. For every language,
-// --no-database-extension-packs (decision 169); for actions, beside it, --model-packs naming the
-// trusted-publisher pack (decision 166).
+// --no-database-extension-packs; for actions, beside it, --model-packs naming the
+// trusted-publisher pack.
 const NO_DATABASE_PACKS = '--no-database-extension-packs';
 const OPTION_FOR = {
   actions: '{"database":{"run-queries":["--model-packs=shared-scan/trusted-publishers@1.0.0","--no-database-extension-packs"]}}',
@@ -306,8 +304,8 @@ const SENT = (l) => `\${{ runner.temp }}/codeql-sarif-${l}`;
 // The matrix each upload-sarif step names, the environment its analysis is stored under. The
 // action's input defaults to ${{ toJson(matrix) }}, which in the old per-language upload jobs
 // gave {"language":"<l>"}; code scanning keeps one set of analyses per analysis key and
-// environment, and dazzer's analyses on main are stored under .github/workflows/codeql.yml:upload
-// with that environment (read 9 Nov 2026). In one job with no matrix the default is null, so each
+// environment, and a caller's analyses on main are stored under .github/workflows/codeql.yml:upload
+// with that environment. In one job with no matrix the default is null, so each
 // step names its language's matrix as the old job did, and each analysis carries on in its set.
 const MATRIX_FOR = (l) => `{"language":"${l}"}`;
 // Whether a step's if: runs it for a caller naming `list`, as GitHub evaluates
@@ -355,7 +353,7 @@ function judgeShared(text) {
   if (!exactly(input, ['description', 'required', 'type']) || input?.type !== 'string' || input?.required !== 'true') {
     no('languages as a required string input, holding description, required and type alone', `languages reads ${show(input)}, and a caller must name its languages, a JSON list in a string`);
   }
-  if (!same(top.permissions, { contents: 'read' })) no('contents: read as the workflow\'s token', `the workflow grants ${show(top.permissions)}`);
+  if (!same(top.permissions, {})) no('no token at the workflow\'s top (permissions: {}), each job naming its own grant', `the workflow grants ${show(top.permissions)}`);
   if (!exactly(top.jobs, ['analyze', 'upload', 'complete'])) {
     no('the three jobs analyze, upload and complete', `its jobs are ${show(keysOf(top.jobs))}`);
     return refusals;
@@ -372,8 +370,8 @@ function judgeShared(text) {
   // The analysis: one language per entry, read-only, on the scan machines, four steps.
   const a = top.jobs.analyze;
   if (!exactly(a, ANALYZE_KEYS)) no(`the analysis job holding exactly ${ANALYZE_KEYS.join(', ')}`, `it holds ${show(keysOf(a))}, and a key it does not name (an if:, an environment:, an env:) changes when or how it scans`);
-  if (a['runs-on'] !== SCAN) no(`${SCAN} as the analysis job's machine`, `it reads ${show(a['runs-on'])}, and the scan machines hold the analysis (decision 93), GitHub's while the setting is empty`);
-  if (!same(a.permissions, { contents: 'read', actions: 'read' })) no('a read-only token on the analysis job, contents: read and actions: read alone', `it grants ${show(a.permissions)}, and a write token on a machine of ours sits within reach of whatever ran there before it (decision 36), so the analysis uploads nothing`);
+  if (a['runs-on'] !== SCAN) no(`${SCAN} as the analysis job's machine`, `it reads ${show(a['runs-on'])}, and the scan machines hold the analysis, GitHub's while the setting is empty`);
+  if (!same(a.permissions, { contents: 'read', actions: 'read' })) no('a read-only token on the analysis job, contents: read and actions: read alone', `it grants ${show(a.permissions)}, and a write token on a machine of ours sits within reach of whatever ran there before it, so the analysis uploads nothing`);
   if (!same(a.strategy, MATRIX)) no(`one analysis per language, the strategy exactly fail-fast: false and the matrix ${LANGUAGES}`, `its strategy reads ${show(a.strategy)}`);
   // Its first step refuses any language but the three, its second trusts dazzer-io for actions
   // alone, then the four scan steps.
@@ -384,8 +382,8 @@ function judgeShared(text) {
   const guardHeader = runHeaderOf(doc, text, GUARD_NAME);
   if (guardHeader !== 'run: |') no('the language guard\'s script written as a literal block (run: |)', `its run: line reads ${show(guardHeader)}, and a folded > block is joined into one line, which turns exit 1 into words echo prints`);
   const takes = [...ALLOWED, ...OTHERS].filter((l) => typeof guard?.run === 'string' && guardStatus(guard.run, l) === 0);
-  if (!same(takes, ALLOWED)) no(`a guard taking exactly ${ALLOWED.join(', ')}`, `run under bash, the analysis's first step takes ${show(takes)}, and any other language joins by its own decision (decision 133), since build mode none for it may read the change's build files`);
-  // The trusted publishers (decisions 165 and 166): the second step, before the checkout, so it
+  if (!same(takes, ALLOWED)) no(`a guard taking exactly ${ALLOWED.join(', ')}`, `run under bash, the analysis's first step takes ${show(takes)}, and any other language joins by its own decision, since build mode none for it may read the change's build files`);
+  // The trusted publishers: the second step, before the checkout, so it
   // reads nothing the change wrote; for actions alone; handed no token; its script run here.
   if (!exactly(trust, TRUST_KEYS) || trust?.name !== TRUST_NAME) {
     no(`the trusted-publisher step as the analysis's second step, before the checkout, named ${TRUST_NAME} and holding exactly ${TRUST_KEYS.join(', ')}`, `the second step reads ${show(trust)}, and the step is handed no token, no secret and no input, and reads nothing the change wrote`);
@@ -417,10 +415,10 @@ function judgeShared(text) {
     if (!exactly(model, ['extensions']) || !exactly(ext, ['addsTo', 'data']) || !same(ext?.addsTo, { pack: PACK_TARGET, extensible: TRUSTED_LIST })) {
       no(`one data extension in ${MODEL_FILE}, adding to ${TRUSTED_LIST} of ${PACK_TARGET}`, `it reads ${show(ran.model)}`);
     }
-    if (!same(ext?.data, TRUSTED_ROWS)) no(`the one data row ${JSON.stringify(TRUSTED_ROWS[0])} in ${TRUSTED_LIST}`, `its data reads ${show(ext?.data)}, and the list names dazzer-io alone (decision 165): any other owner's call without a commit still raises the alert`);
+    if (!same(ext?.data, TRUSTED_ROWS)) no(`the one data row ${JSON.stringify(TRUSTED_ROWS[0])} in ${TRUSTED_LIST}`, `its data reads ${show(ext?.data)}, and the list names dazzer-io alone: any other owner's call without a commit still raises the alert`);
   }
   // No --additional-packs anywhere: the action passes its own for a pull request's diff-informed
-  // analysis (src/analyze.ts:468-469), and the scan leaves that option to it (decision 166).
+  // analysis (src/analyze.ts:468-469), and the scan leaves that option to it.
   for (const { n, line, parts } of live) {
     if (parts.some((p) => /additional-packs/.test(p.src))) no('a scan free of --additional-packs', `line ${n} reads ${line}, and the action passes its own --additional-packs for a pull request's diff-informed analysis`);
   }
@@ -429,7 +427,7 @@ function judgeShared(text) {
   const steps = stepsOf(rest, 'analysis', want, (st) => (actionOf(st) === `${CODEQL}analyze` ? ANALYZE_STEP_KEYS : STEP_KEYS));
   const [checkout, init, analyze, keep] = steps;
   // The options database run-queries takes, on the analyze step alone, by their exact text for
-  // each language (OPTION_FOR): --no-database-extension-packs for every language (decision 169),
+  // each language (OPTION_FOR): --no-database-extension-packs for every language,
   // and for actions --model-packs beside it.
   if (!same(analyze?.env, { CODEQL_ACTION_EXTRA_OPTIONS: EXTRA_OPTIONS })) {
     no(`the analyze step's env exactly CODEQL_ACTION_EXTRA_OPTIONS: ${EXTRA_OPTIONS}`, `its env reads ${show(analyze?.env)}`);
@@ -469,10 +467,10 @@ function judgeShared(text) {
   const u = top.jobs.upload;
   if (!exactly(u, UPLOAD_KEYS)) no(`the upload job holding exactly ${UPLOAD_KEYS.join(', ')}`, `it holds ${show(keysOf(u))}, and one upload job sends every language in turn, so it holds no strategy`);
   if (u.name !== UPLOAD_NAME) no(`${UPLOAD_NAME} as the upload job's name, one fixed name, the one machine-rule/kept.json carries`, `it is named ${show(u.name)}`);
-  if (u['runs-on'] !== 'ubuntu-latest') no('ubuntu-latest, written as a literal label, as the upload job\'s machine', `it reads ${show(u['runs-on'])}, and the one job holding security-events: write stays on GitHub's computers (decision 36)`);
+  if (u['runs-on'] !== 'ubuntu-latest') no('ubuntu-latest, written as a literal label, as the upload job\'s machine', `it reads ${show(u['runs-on'])}, and the one job holding security-events: write stays on GitHub's computers`);
   if (!same(u.permissions, { contents: 'read', actions: 'read', 'security-events': 'write' })) no('contents: read, actions: read and security-events: write as the upload job\'s token, and nothing else', `it grants ${show(u.permissions)}`);
   if (u.needs !== 'analyze') no('the upload waiting on the analysis', `its needs: reads ${show(u.needs)}`);
-  if (u.if !== ALL_SUCCEEDED) no(`the upload running only when every language's analysis succeeded (if: ${ALL_SUCCEEDED})`, `its if: reads ${show(u.if)}, and a partial scan never passes (decisions 101 and 131): a failed analysis uploads nothing and the run is red, a cancelled one uploads nothing and the run ends cancelled`);
+  if (u.if !== ALL_SUCCEEDED) no(`the upload running only when every language's analysis succeeded (if: ${ALL_SUCCEEDED})`, `its if: reads ${show(u.if)}, and a partial scan never passes: a failed analysis uploads nothing and the run is red, a cancelled one uploads nothing and the run ends cancelled`);
   const usteps = stepsOf(Array.isArray(u.steps) ? u.steps : [], 'upload', ALLOWED.flatMap(() => ['actions/download-artifact', `${CODEQL}upload-sarif`]), () => UPLOAD_STEP_KEYS);
   ALLOWED.forEach((l, k) => {
     const [fetch, send] = [usteps[2 * k], usteps[2 * k + 1]];
@@ -498,7 +496,7 @@ function judgeShared(text) {
   }
 
   // The final job: the one check a caller requires, on GitHub's machine, with no token, failing
-  // unless the analysis and the upload both succeeded (decision 135).
+  // unless the analysis and the upload both succeeded.
   const c = top.jobs.complete;
   if (!exactly(c, COMPLETE_KEYS)) no(`the final job complete holding exactly ${COMPLETE_KEYS.join(', ')}`, `it holds ${show(keysOf(c))}`);
   if (c.name !== 'CodeQL complete') no('CodeQL complete as the final job\'s name, the same whatever languages a caller names', `it is named ${show(c.name)}, and a caller requires that one check by name`);
@@ -528,7 +526,7 @@ function judgeShared(text) {
 }
 
 function readFile() {
-  assert.ok(fs.existsSync(FILE), `Could not find the shared scan ${WHERE}: every repository calls it in place of a CodeQL copy of its own (decision 118)`);
+  assert.ok(fs.existsSync(FILE), `Could not find the shared scan ${WHERE}: every repository calls it in place of a CodeQL copy of its own`);
   return fs.readFileSync(FILE, 'utf8');
 }
 
@@ -575,7 +573,7 @@ function replaceInJob(t, job, from, to) {
 }
 const ANALYZE_GRANT = '    permissions:\n      contents: read\n      actions: read\n';
 const KEEP_NO_CREDENTIAL = '          persist-credentials: false\n';
-const ATOP = (lines) => (t) => t.replace('\npermissions:\n', `\n${lines.join('\n')}\n\npermissions:\n`);
+const ATOP = (lines) => (t) => t.replace('\npermissions: {}\n', `\n${lines.join('\n')}\n\npermissions: {}\n`);
 const SECRET = '${{ secrets.SCAN_TOKEN }}';
 // Into the step whose uses: line starts with `action`, after its `with:` line, the given lines.
 const intoWith = (action, add) => (t) => {
@@ -591,7 +589,8 @@ const inJob = (job, from, to) => (t) => replaceInJob(t, job, from, to);
 plant('an env: at the top', ATOP(['env:', '  CODEQL_ACTION_EXTRA_OPTIONS: "{}"']), /the workflow's top holding exactly name, on, permissions, jobs/);
 plant('defaults: at the top', ATOP(['defaults:', '  run:', '    shell: bash']), /the workflow's top holding exactly/);
 plant('concurrency: at the top', ATOP(['concurrency:', '  group: codeql', '  cancel-in-progress: true']), /the workflow's top holding exactly/);
-plant('a write at the top', (t) => t.replace('\npermissions:\n  contents: read\n', '\npermissions: write-all\n'), /contents: read as the workflow's token/);
+plant('a write at the top', (t) => t.replace('\npermissions: {}\n', '\npermissions: write-all\n'), /no token at the workflow's top/);
+plant('a read at the top', (t) => t.replace('\npermissions: {}\n', '\npermissions:\n  contents: read\n'), /no token at the workflow's top/);
 plant('a fourth job', (t) => `${t.trimEnd()}\n\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n`, /the three jobs analyze, upload and complete/);
 // A trigger other than workflow_call, and workflow_call's shape.
 plant('a pull_request trigger beside workflow_call', (t) => t.replace('on:\n  workflow_call:\n', 'on:\n  pull_request:\n  workflow_call:\n'), /workflow_call as the only trigger/);
@@ -650,7 +649,7 @@ plant('every language fetched into one folder', (t) => { const all = t.split('\n
 // Pins.
 plant('an action by tag', (t) => t.replace('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/checkout@v7'), /a commit as the ref of actions\/checkout/);
 plant('an older CodeQL pin on one action', (t) => t.replace(`${CODEQL}init@${PIN}`, `${CODEQL}init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370`), /one pin, 33d7b85/);
-// The second review (decision 133): a secret spelled with a YAML escape in a double-quoted value.
+// The second review: a secret spelled with a YAML escape in a double-quoted value.
 const BS = String.fromCharCode(92);
 plant('a secret spelled with an escape in a double-quoted step name', (t) => t.replace('      - name: Check out the code\n', `      - name: "Check out \${{ ${BS}x73ecrets.SCAN_TOKEN }}"\n`), /a double-quoted value without a backslash in the shared scan \S+: line \d+ reads - name: "Check out/);
 // The languages: the guard first, exactly, taking the three alone.
@@ -673,7 +672,7 @@ plant('the results kept in the workspace (analyze and upload-artifact as a pair)
 plant('the output in the workspace', (t) => t.replace(`          output: ${RESULTS}\n`, '          output: ${{ github.workspace }}/codeql-results\n'), /the analyze step with the category .*its two outputs/);
 plant('the artifact kept from the workspace', ((t) => { const all = t.split('\n'); const at = all.findIndex((l) => l.trim().startsWith('uses: actions/upload-artifact@')); const k = all.findIndex((l, n) => n > at && l === `          path: ${SARIF}`); if (k < 0) return t; all[k] = `          path: ${WORKSPACE}`; return all.join('\n'); }), /the results kept as the artifact/);
 plant('the results fetched into and sent from the workspace (download and upload-sarif as a pair)', (t) => { const all = t.split('\n'); const u = all.indexOf('  upload:'); return all.map((l, n) => (n > u ? l.replace('${{ runner.temp }}/codeql-sarif-', '${{ github.workspace }}/codeql-sarif-') : l)).join('\n'); }, [/fetched by name and path alone, into \$\{\{ runner\.temp \}\}\/codeql-sarif-actions/, /upload-sarif sending actions's fetched results .*takes .*github\.workspace/]);
-// The third review (decision 135): the guard written as a folded block, every body line at one
+// The third review: the guard written as a folded block, every body line at one
 // indent, which GitHub joins into one line so exit 1 is echoed, and the header alone changed.
 const foldGuard = (t) => {
   const all = t.split('\n');
@@ -700,7 +699,7 @@ plant('the final job\'s header as |-', inJob('complete', '        run: |', '    
 // The fourth note: a double-quoted value never closed is refused by name.
 plant('a double-quoted value not closed on its line', (t) => t.replace('      - name: Check out the code\n', '      - name: "Check out the code\n'), /Could not find a reading of \S+: Missing closing "quote at line \d+/);
 
-// The trusted publishers (decisions 165 and 166): the step, its pack and the option naming it.
+// The trusted publishers: the step, its pack and the option naming it.
 const TRUST_HEAD = `      - name: ${TRUST_NAME}`;
 // The trusted-publisher step's lines, from its name line to the empty line after it: [start, end).
 const trustBlock = (all) => {
@@ -768,7 +767,7 @@ plant('the option empty for every language', extraAs("''"), [optionRefused('acti
 plant('the option naming another version', extraAs(EXTRA_OPTIONS.replace(`@${PACK_VERSION}`, '@1.0.1')), [optionRefused('actions', lit(EXTRA.replace(`@${PACK_VERSION}`, '@1.0.1'))), /the option naming the pack the trusted-publisher step writes, shared-scan\/trusted-publishers@1\.0\.0 in the shared scan \S+: for actions it names shared-scan\/trusted-publishers@1\.0\.1/]);
 plant('the option passing --additional-packs', extraAs(EXTRA_OPTIONS.replace('["--model-packs=', '["--additional-packs=/tmp/trusted","--model-packs=')), [/a scan free of --additional-packs in the shared scan \S+: line \d+ reads CODEQL_ACTION_EXTRA_OPTIONS/, /the analyze step's env exactly/]);
 plant('the option removed', (t) => t.replace(`        env:\n${EXTRA_LINE}\n`, ''), [/step github\/codeql-action\/analyze of the analysis holding exactly name, uses, env, with/, optionRefused('actions', 'an empty value'), optionRefused('python', `an empty value for python, so database run-queries takes \\[\\]${OMITS_NONE}`)]);
-// --no-database-extension-packs for every language (decision 169): each half of the option as it
+// --no-database-extension-packs for every language: each half of the option as it
 // stood before alone, and the option's other ways of losing it.
 const BEFORE_ACTIONS = `{"database":{"run-queries":["--model-packs=${PACK_NAME}@${PACK_VERSION}"]}}`;
 plant('the option for actions without --no-database-extension-packs, as before', extraAs(EXTRA_OPTIONS.replace(`,"${NO_DATABASE_PACKS}"`, '')), optionRefused('actions', `${lit(BEFORE_ACTIONS)} for actions, so database run-queries takes ${lit(`["--model-packs=${PACK_NAME}@${PACK_VERSION}"]`)}${OMITS_NONE}`));

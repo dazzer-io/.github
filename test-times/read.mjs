@@ -25,7 +25,7 @@ import { pathToFileURL } from 'node:url';
 import { KEEP_STEP, groupTimes, jobGroups, jobOf, jobsOfRun, median, pairRecords, readRunFile } from './record.mjs';
 
 export { KEEP_STEP };
-const WINDOW = 10; // the release door's own window (dev-cycle scripts/door-time.mjs)
+const WINDOW = 10; // the newest ten successful runs
 const AT_ONCE = 6;
 
 class Refused extends Error {}
@@ -236,7 +236,7 @@ async function requireComplete(o) {
   return 0;
 }
 
-// The history file (spec-split.md, "The history file"): per test file, one entry for each
+// The history file: per test file, one entry for each
 // group it was recorded under, ordered by group with null first, each the median over the
 // complete records of that file in that group; per job group, its median time and set-up.
 function historyFrom(o, perRun) {

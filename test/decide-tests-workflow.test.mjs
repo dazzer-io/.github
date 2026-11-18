@@ -1,14 +1,14 @@
 // The decide-tests workflow runs the check the repository ruleset requires.
-// The records repository's github/repo-rulesets.json requires the status check
-// context "decide-tests" (integration 15368, GitHub Actions) for this repository;
-// a test here cannot read that other repository, so the name is pinned below.
+// The repository ruleset requires the status check context "decide-tests"
+// (integration 15368, GitHub Actions) for this repository; a test here cannot
+// read the ruleset, so the name is pinned below.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 
-const REQUIRED_CHECK = 'decide-tests'; // github/repo-rulesets.json, required_status_checks
+const REQUIRED_CHECK = 'decide-tests'; // the repository ruleset's required_status_checks
 const file = fileURLToPath(new URL('../.github/workflows/decide-tests.yml', import.meta.url));
 const MISSING = 'no workflow runs the decide-tests check';
 
@@ -34,7 +34,8 @@ test('it runs on pull requests and the merge queue', () => {
 
 test('it holds a read-only token, keeps no credentials and names no secret', () => {
   const t = read();
-  assert.deepEqual(parse(t).permissions, { contents: 'read' }, 'the workflow token is wider than contents: read');
+  assert.deepEqual(parse(t).permissions, {}, 'the workflow\'s top grants a token');
+  for (const j of jobs(parse(t))) assert.deepEqual(j.permissions, { contents: 'read' }, `the job ${j.check} grants other than contents: read`);
   const checkouts = jobs(parse(t)).flatMap((j) => j.steps ?? []).filter((s) => s.uses?.startsWith('actions/checkout@'));
   assert.ok(checkouts.length && checkouts.every((s) => s.with?.['persist-credentials'] === false), 'the checkout keeps its credentials');
   assert.doesNotMatch(t, /secrets\./, 'the workflow reads a secret');

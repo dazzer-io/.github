@@ -149,7 +149,7 @@ for (let i = 0; i < 300; i++) SERIAL_300[`test/many-${String(i).padStart(3, '0')
 const held = (setup) => count({ history: { ...HISTORY, files: SERIAL_300,
   jobs: { 'unit-tests': { ms: 400000, setup_ms: setup, n: 3 }, 'docs-site': { ms: 50000, setup_ms: 5000, n: 3 } } }, lane: 'unit-tests' });
 
-// D15: where no count holds the slowest part under the figure, the count is the smallest whose
+// Where no count holds the slowest part under the figure, the count is the smallest whose
 // slowest part's own tests, the part less the lane's recorded set-up, are under it. Six parts of
 // fifty 1 s files hold the tests to 50 s, so 1 ms of set-up either side of the figure, or ten
 // seconds over it, gives the same count. Further below the figure it can still jump (next test).
@@ -163,7 +163,7 @@ test('where the set-up keeps a lane over, the count holds its slowest part\'s ow
   }
 });
 
-// D15 moves the jump rather than removing it (README.md, "Where no count gets under its
+// The rule moves the jump rather than removing it (README.md, "Where no count gets under its
 // figure"): it sits where the figure stops being reachable at any count up to 256, at a set-up
 // of the figure less the lowest slowest part's own tests, here 50 s less two 1 s files.
 test('where the figure stops being reachable, 1 ms of set-up still takes the count from 150 parts to 6, as the notes say', () => {

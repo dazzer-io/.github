@@ -392,8 +392,8 @@ test('an expired run file is a run file that cannot be opened', async () => {
   assert.equal(r.stdout, 'could not read: run file test-times-unit-1-gh-nu-1791021600000 expired\n', show(r));
 });
 
-// The readers' contract, held in record.mjs so the scheduler's weekly reading and the main
-// product's share check import it rather than rebuild it.
+// The readers' contract, held in record.mjs so every other reader of records imports it rather
+// than rebuilds it.
 test('pairing, attempts, ran no test and job groups are exported from record.mjs', async () => {
   const record = await import('../test-times/record.mjs');
   for (const name of ['jobOf', 'pairRecords', 'jobsOfRun', 'ranNoTest', 'jobGroups', 'groupTimes']) {

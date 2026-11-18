@@ -3,5 +3,168 @@
     "support@dazzer.io",
     "security@dazzer.io"
   ],
-  "findings": []
+  "findings": [
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/apply-ruleset.mjs",
+      "kind": "repositories",
+      "hash": "f05bc0fb306492ac8f4cf023e9b92f1797440984137526088c02b34a71ddaafe"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/apply-ruleset.mjs",
+      "kind": "repositories",
+      "hash": "908c0fb996a2f2736090c14f77bf2df60a2402e18723cc6d3e8d6693ae7b2402"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/apply-ruleset.mjs",
+      "kind": "repositories",
+      "hash": "a8279bec52be5a7675a332404b93624e04f17efe1216006451c4d35fb6fc464e"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/codeql-complete.json",
+      "kind": "repositories",
+      "hash": "a8279bec52be5a7675a332404b93624e04f17efe1216006451c4d35fb6fc464e"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/judge.mjs",
+      "kind": "repositories",
+      "hash": "a8279bec52be5a7675a332404b93624e04f17efe1216006451c4d35fb6fc464e"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/kept.json",
+      "kind": "repositories",
+      "hash": "9a42956e5d1c99e290df3912d99d76f22fd59dffd82bd92b92114658d375b2e7"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/kept.json",
+      "kind": "repositories",
+      "hash": "4c903afb213152c0627dfd171e2683371fda14f8c8b862102d9f8f6eeb0855f2"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/kept.json",
+      "kind": "repositories",
+      "hash": "a8279bec52be5a7675a332404b93624e04f17efe1216006451c4d35fb6fc464e"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/kept.json",
+      "kind": "repositories",
+      "hash": "7f097899bc3128507798cdef2d7910c2edf267c629eb478b2d0ef0e073dfbfb4"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/kept.json",
+      "kind": "repositories",
+      "hash": "588b6544bc680dc43b9a0e11457de77eb4df3c59482fc3240ca0ff86adc339c3"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/kept.json",
+      "kind": "repositories",
+      "hash": "7cf17c751a4e221717a1c31d689934bf608c35623484d1f54f274d03d7e74546"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/main-spelling.json",
+      "kind": "repositories",
+      "hash": "a8279bec52be5a7675a332404b93624e04f17efe1216006451c4d35fb6fc464e"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/ruleset.json",
+      "kind": "repositories",
+      "hash": "f05bc0fb306492ac8f4cf023e9b92f1797440984137526088c02b34a71ddaafe"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/ruleset.json",
+      "kind": "repositories",
+      "hash": "908c0fb996a2f2736090c14f77bf2df60a2402e18723cc6d3e8d6693ae7b2402"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/secrets.json",
+      "kind": "repositories",
+      "hash": "9a42956e5d1c99e290df3912d99d76f22fd59dffd82bd92b92114658d375b2e7"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/secrets.json",
+      "kind": "repositories",
+      "hash": "a8279bec52be5a7675a332404b93624e04f17efe1216006451c4d35fb6fc464e"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/strict.json",
+      "kind": "repositories",
+      "hash": "a8279bec52be5a7675a332404b93624e04f17efe1216006451c4d35fb6fc464e"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "machine-rule/strict.json",
+      "kind": "repositories",
+      "hash": "7f097899bc3128507798cdef2d7910c2edf267c629eb478b2d0ef0e073dfbfb4"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "test/machine-rule-ruleset.test.mjs",
+      "kind": "repositories",
+      "hash": "a8279bec52be5a7675a332404b93624e04f17efe1216006451c4d35fb6fc464e"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "test/machine-rule-ruleset.test.mjs",
+      "kind": "repositories",
+      "hash": "f05bc0fb306492ac8f4cf023e9b92f1797440984137526088c02b34a71ddaafe"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "test/machine-rule-ruleset.test.mjs",
+      "kind": "repositories",
+      "hash": "908c0fb996a2f2736090c14f77bf2df60a2402e18723cc6d3e8d6693ae7b2402"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "test/machine-rule.test.mjs",
+      "kind": "repositories",
+      "hash": "9a42956e5d1c99e290df3912d99d76f22fd59dffd82bd92b92114658d375b2e7"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "test/machine-rule.test.mjs",
+      "kind": "repositories",
+      "hash": "a8279bec52be5a7675a332404b93624e04f17efe1216006451c4d35fb6fc464e"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "test/machine-rule.test.mjs",
+      "kind": "repositories",
+      "hash": "7f097899bc3128507798cdef2d7910c2edf267c629eb478b2d0ef0e073dfbfb4"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "test/machine-rule.test.mjs",
+      "kind": "repositories",
+      "hash": "7cf17c751a4e221717a1c31d689934bf608c35623484d1f54f274d03d7e74546"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "test/machine-rule.test.mjs",
+      "kind": "repositories",
+      "hash": "4c903afb213152c0627dfd171e2683371fda14f8c8b862102d9f8f6eeb0855f2"
+    },
+    {
+      "repository": "dazzer-io/.github",
+      "path": "test/machine-rule.test.mjs",
+      "kind": "repositories",
+      "hash": "588b6544bc680dc43b9a0e11457de77eb4df3c59482fc3240ca0ff86adc339c3"
+    }
+  ]
 }

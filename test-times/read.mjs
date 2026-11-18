@@ -79,38 +79,73 @@ function token() {
   throw new Refused('no token: GITHUB_TOKEN and GH_TOKEN are unset and `gh auth token` answered none');
 }
 
-// Each GitHub request is tried up to TRIES times while the connection fails or GitHub answers
-// 5xx or 429, waiting WAITS between tries (a 429's Retry-After instead, up to RETRY_AFTER_CAP),
-// then refused with the last answer and the number of tries. Any other answer is final at once.
-// TEST_TIMES_RETRY_WAIT_MS, when set, is every wait instead (tests set 0).
+// Each GitHub request is tried up to TRIES times while the connection fails, no answer comes
+// within the try's time limit, the body breaks off, or GitHub answers 5xx or 429. Between tries it
+// waits WAITS (a 429's Retry-After instead, between 0 and RETRY_AFTER_CAP); then it is refused
+// with the last failure and the number of tries. Any other answer is final at once.
+//   TEST_TIMES_TRY_TIMEOUT_MS    digits: each try's time limit, body included (default 30000)
+//   TEST_TIMES_RETRY_WAIT_MS     digits: every wait slept instead of the chosen one (tests set 0)
+//   TEST_TIMES_RETRY_WAIT_LOG    a file: each chosen wait is added as `<request> wait <ms>`
 const TRIES = 3;
 const WAITS = [1000, 3000];
 const RETRY_AFTER_CAP = 10000;
+const TRY_TIMEOUT = 30000;
 
-function waitBefore(n, res) {
-  const fixed = process.env.TEST_TIMES_RETRY_WAIT_MS;
-  if (fixed !== undefined && /^\d+$/.test(fixed)) return Number(fixed);
-  const after = res?.status === 429 ? res.headers.get('retry-after') : null;
+const digits = (name) => {
+  const v = process.env[name];
+  return v !== undefined && /^\d+$/.test(v) ? Number(v) : null;
+};
+
+// The wait before try n + 1, after a failure whose answer (if any) carried `retryAfter`.
+function waitBefore(n, retryAfter) {
+  const after = retryAfter?.trim();
   if (after) {
-    const ms = /^\d+$/.test(after.trim()) ? Number(after.trim()) * 1000 : Date.parse(after) - Date.now();
+    const ms = /^\d+$/.test(after) ? Number(after) * 1000 : Date.parse(after) - Date.now();
     if (Number.isFinite(ms)) return Math.min(Math.max(ms, 0), RETRY_AFTER_CAP);
   }
   return WAITS[Math.min(n - 1, WAITS.length - 1)];
 }
 
-const again = (res) => res.status >= 500 || res.status === 429;
+// A failure worth another try; `retryAfter` from a 429's answer.
+class Again extends Error {
+  constructor(message, retryAfter = null) { super(message); this.retryAfter = retryAfter; }
+}
 
-// `once` makes one request; `what` names it in a refusal. Returns the first answer that is not
-// worth another try.
+// An answer worth another try becomes Again, its body let go.
+async function againIf(what, res) {
+  if (res.status < 500 && res.status !== 429) return;
+  const after = res.status === 429 ? res.headers.get('retry-after') : null;
+  try { await res.body?.cancel(); } catch { /* the answer is dropped either way */ }
+  throw new Again(`${what} answered ${res.status}`, after);
+}
+
+// `once(signal)` makes one whole try, reading its body too, under the try's time limit. It
+// throws Refused for an answer that is final, Again for one worth another try; anything else it
+// throws (a failed connection, a body that broke off, the time limit) is worth another try.
 async function tried(what, once) {
+  const limit = digits('TEST_TIMES_TRY_TIMEOUT_MS') ?? TRY_TIMEOUT;
   for (let n = 1; ; n++) {
-    let res; let err;
-    try { res = await once(); } catch (e) { err = e; }
-    if (res && !again(res)) return res;
-    const said = err ? `${what}: ${err.cause?.code ?? err.message}` : `${what} answered ${res.status}`;
-    if (n >= TRIES) throw new Refused(`${said} after ${n} tries`);
-    try { await res?.body?.cancel(); } catch { /* the answer is dropped either way */ }
-    await new Promise((resolve) => setTimeout(resolve, waitBefore(n, res)));
+    const signal = AbortSignal.timeout(limit);
+    let last;
+    try { return await once(signal); } catch (err) {
+      if (err instanceof Refused) throw err;
+      last = err instanceof Again ? err : new Again(signal.aborted
+        ? `${what}: no answer within ${limit} ms` : `${what}: ${err.cause?.code ?? err.message}`);
+    }
+    if (n >= TRIES) throw new Refused(`${last.message} after ${n} tries`);
+    const chosen = waitBefore(n, last.retryAfter);
+    const log = process.env.TEST_TIMES_RETRY_WAIT_LOG;
+    if (log) fs.appendFileSync(log, `${what} wait ${chosen}\n`);
+    await new Promise((resolve) => setTimeout(resolve, digits('TEST_TIMES_RETRY_WAIT_MS') ?? chosen));
+  }
+}
+
+// A body read in full, or the words of why it broke off: worth another try. One cut short by
+// the try's time limit is left to `tried` to name.
+async function body(what, res, read, signal) {
+  try { return await read(res); } catch (err) {
+    if (signal.aborted) throw err;
+    throw new Again(`${what} broke off: ${err.cause?.code ?? err.message}`);
   }
 }
 
@@ -119,30 +154,45 @@ function client() {
   const auth = token();
   const headers = { authorization: `Bearer ${auth}`, accept: 'application/vnd.github+json',
     'x-github-api-version': '2022-11-28', 'user-agent': 'dazzer-io-test-times' };
-  const call = (pathname, params = {}, opts = {}) => {
+  const urlOf = (pathname, params = {}) => {
     const url = new URL(base + pathname);
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
-    return tried(`GET ${pathname}`, () => fetch(url, { headers, redirect: opts.redirect ?? 'follow' }));
+    return url;
   };
   return {
-    async json(pathname, params) {
-      const res = await call(pathname, params);
-      if (!res.ok) throw new Refused(`GET ${pathname} answered ${res.status}`);
-      try { return await res.json(); } catch { throw new Refused(`GET ${pathname} answered no JSON`); }
+    json(pathname, params) {
+      const what = `GET ${pathname}`;
+      return tried(what, async (signal) => {
+        const res = await fetch(urlOf(pathname, params), { headers, signal });
+        await againIf(what, res);
+        if (!res.ok) throw new Refused(`${what} answered ${res.status}`);
+        const text = await body(what, res, (r) => r.text(), signal);
+        try { return JSON.parse(text); } catch { throw new Refused(`${what} answered no JSON`); }
+      });
     },
     // A run file's bytes. GitHub answers with a redirect to its storage, which is followed
-    // without the token, and tried again on its own.
+    // without the token and tried again on its own, its body included.
     async bytes(pathname) {
-      let res = await call(pathname, {}, { redirect: 'manual' });
-      if (res.status >= 300 && res.status < 400) {
-        const loc = res.headers.get('location');
-        if (!loc) throw new Refused(`GET ${pathname} answered ${res.status} with nowhere to go`);
-        res = await tried(`the run file behind ${pathname}`, () => fetch(loc));
-      }
-      if (!res.ok) throw new Refused(`GET ${pathname} answered ${res.status}`);
-      try { return Buffer.from(await res.arrayBuffer()); } catch (err) {
-        throw new Refused(`the run file behind ${pathname} broke off: ${err.cause?.code ?? err.message}`);
-      }
+      const what = `GET ${pathname}`;
+      const file = `the run file behind ${pathname}`;
+      const got = await tried(what, async (signal) => {
+        const res = await fetch(urlOf(pathname), { headers, redirect: 'manual', signal });
+        if (res.status >= 300 && res.status < 400) {
+          const loc = res.headers.get('location');
+          if (!loc) throw new Refused(`${what} answered ${res.status} with nowhere to go`);
+          return { loc };
+        }
+        await againIf(what, res);
+        if (!res.ok) throw new Refused(`${what} answered ${res.status}`);
+        return { bytes: Buffer.from(await body(file, res, (r) => r.arrayBuffer(), signal)) };
+      });
+      if (got.bytes) return got.bytes;
+      return tried(file, async (signal) => {
+        const res = await fetch(got.loc, { signal });
+        await againIf(file, res);
+        if (!res.ok) throw new Refused(`${what} answered ${res.status}`);
+        return Buffer.from(await body(file, res, (r) => r.arrayBuffer(), signal));
+      });
     },
   };
 }

@@ -79,19 +79,50 @@ function token() {
   throw new Refused('no token: GITHUB_TOKEN and GH_TOKEN are unset and `gh auth token` answered none');
 }
 
+// Each GitHub request is tried up to TRIES times while the connection fails or GitHub answers
+// 5xx or 429, waiting WAITS between tries (a 429's Retry-After instead, up to RETRY_AFTER_CAP),
+// then refused with the last answer and the number of tries. Any other answer is final at once.
+// TEST_TIMES_RETRY_WAIT_MS, when set, is every wait instead (tests set 0).
+const TRIES = 3;
+const WAITS = [1000, 3000];
+const RETRY_AFTER_CAP = 10000;
+
+function waitBefore(n, res) {
+  const fixed = process.env.TEST_TIMES_RETRY_WAIT_MS;
+  if (fixed !== undefined && /^\d+$/.test(fixed)) return Number(fixed);
+  const after = res?.status === 429 ? res.headers.get('retry-after') : null;
+  if (after) {
+    const ms = /^\d+$/.test(after.trim()) ? Number(after.trim()) * 1000 : Date.parse(after) - Date.now();
+    if (Number.isFinite(ms)) return Math.min(Math.max(ms, 0), RETRY_AFTER_CAP);
+  }
+  return WAITS[Math.min(n - 1, WAITS.length - 1)];
+}
+
+const again = (res) => res.status >= 500 || res.status === 429;
+
+// `once` makes one request; `what` names it in a refusal. Returns the first answer that is not
+// worth another try.
+async function tried(what, once) {
+  for (let n = 1; ; n++) {
+    let res; let err;
+    try { res = await once(); } catch (e) { err = e; }
+    if (res && !again(res)) return res;
+    const said = err ? `${what}: ${err.cause?.code ?? err.message}` : `${what} answered ${res.status}`;
+    if (n >= TRIES) throw new Refused(`${said} after ${n} tries`);
+    try { await res?.body?.cancel(); } catch { /* the answer is dropped either way */ }
+    await new Promise((resolve) => setTimeout(resolve, waitBefore(n, res)));
+  }
+}
+
 function client() {
   const base = (process.env.GITHUB_API_URL || 'https://api.github.com').replace(/\/+$/, '');
   const auth = token();
   const headers = { authorization: `Bearer ${auth}`, accept: 'application/vnd.github+json',
     'x-github-api-version': '2022-11-28', 'user-agent': 'dazzer-io-test-times' };
-  const call = async (pathname, params = {}, opts = {}) => {
+  const call = (pathname, params = {}, opts = {}) => {
     const url = new URL(base + pathname);
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
-    let res;
-    try { res = await fetch(url, { headers, redirect: opts.redirect ?? 'follow' }); } catch (err) {
-      throw new Refused(`GET ${pathname}: ${err.cause?.code ?? err.message}`);
-    }
-    return res;
+    return tried(`GET ${pathname}`, () => fetch(url, { headers, redirect: opts.redirect ?? 'follow' }));
   };
   return {
     async json(pathname, params) {
@@ -100,15 +131,13 @@ function client() {
       try { return await res.json(); } catch { throw new Refused(`GET ${pathname} answered no JSON`); }
     },
     // A run file's bytes. GitHub answers with a redirect to its storage, which is followed
-    // without the token.
+    // without the token, and tried again on its own.
     async bytes(pathname) {
       let res = await call(pathname, {}, { redirect: 'manual' });
       if (res.status >= 300 && res.status < 400) {
         const loc = res.headers.get('location');
         if (!loc) throw new Refused(`GET ${pathname} answered ${res.status} with nowhere to go`);
-        try { res = await fetch(loc); } catch (err) {
-          throw new Refused(`the run file behind ${pathname}: ${err.cause?.code ?? err.message}`);
-        }
+        res = await tried(`the run file behind ${pathname}`, () => fetch(loc));
       }
       if (!res.ok) throw new Refused(`GET ${pathname} answered ${res.status}`);
       try { return Buffer.from(await res.arrayBuffer()); } catch (err) {

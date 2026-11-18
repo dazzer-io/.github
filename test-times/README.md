@@ -235,7 +235,8 @@ node read.mjs --repo <owner/name> --workflow <file> --event <push|pull_request> 
   `<group> sets the wait: <x> min against <group> <y> min`.
   - A named group with no job in the runs read fails either mode: `<group> has no job in the N runs read`.
   - `--not-slowest` with no other group left, once the ignored ones are out, exits 1 with `<group> sets the wait: <x> min against no other group`, because a group alone is the longest.
-- **Exit 2** says `could not read: <what refused>`: GitHub refused a call, a run file could not
+- **Exit 2** says `could not read: <what refused>`: GitHub refused a call (after the retries
+  under "How it reads"), a run file could not
   be opened or broke off while downloading, a run file had expired
   (`could not read: run file <name> expired`), there was no token, or the arguments were wrong.
   A read that could not be made never passes.
@@ -263,6 +264,11 @@ node read.mjs --repo <owner/name> --workflow <file> --event <push|pull_request> 
 - **Token.** `GITHUB_TOKEN` or `GH_TOKEN`, else `gh auth token`. It only reads (`actions: read`).
   The API is `GITHUB_API_URL`, else `https://api.github.com`. A run file's storage redirect is
   followed without the token.
+- **Retries.** Each request, the storage download included, is tried up to 3 times while the
+  connection fails or the answer is 5xx or 429, waiting 1 s then 3 s (a 429's `Retry-After`
+  instead, up to 10 s); then it is refused with the last answer, `... answered 502 after 3 tries`.
+  Any other answer, a 404 or a 403, is refused at once. `TEST_TIMES_RETRY_WAIT_MS` sets every
+  wait (tests set `0`).
 
 ## Dealing tests into parts: `plan.mjs`
 

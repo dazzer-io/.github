@@ -49,6 +49,7 @@ function zipOf(entries) {
 }
 
 let server; let base;
+const hits = new Map(); // path -> the moments it was asked for
 before(async () => {
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://stand-in');
@@ -58,14 +59,32 @@ before(async () => {
       res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
     };
     if (!route) return send(404, { message: 'Not Found' });
+    // A route's `fails` answers its first requests, in order: a status; 'drop' to close the
+    // connection with no answer; 'hang' to never answer; 'cut' to break a 200's body off partway;
+    // or { status: 429, retryAfter } to send that Retry-After. A bare 429 says one second.
+    // Every request is counted by path, with when it came.
+    if (!hits.has(url.pathname)) hits.set(url.pathname, []);
+    const seen = hits.get(url.pathname);
+    seen.push(Date.now());
+    const fail = route.fails?.[seen.length - 1];
+    if (fail === 'drop') return req.socket.destroy();
+    if (fail === 'hang') return undefined;
+    if (fail === 'cut' || route.cut) {
+      res.writeHead(200, { 'content-type': 'application/zip', 'content-length': '4096' });
+      res.write(Buffer.alloc(64));
+      setTimeout(() => res.destroy(), 50);
+      return undefined;
+    }
+    if (fail === 429 || fail?.status === 429) {
+      const head = { 'content-type': 'application/json' };
+      const after = fail === 429 ? '1' : fail.retryAfter;
+      if (after !== undefined) head['retry-after'] = after;
+      res.writeHead(429, head);
+      return res.end(JSON.stringify({ message: 'slow down' }));
+    }
+    if (fail) return send(fail, { message: 'stand-in failure' });
     if (url.pathname.startsWith('/storage/')) {
       if (req.headers.authorization) return send(400, { message: 'storage refuses a token' });
-      if (route.cut) {
-        res.writeHead(200, { 'content-type': 'application/zip', 'content-length': '4096' });
-        res.write(Buffer.alloc(64));
-        setTimeout(() => res.destroy(), 50);
-        return undefined;
-      }
       if (route.bytes_base64) return send(200, Buffer.from(route.bytes_base64, 'base64'), 'application/zip');
       return send(200, zipOf(route.zip), 'application/zip');
     }
@@ -92,6 +111,7 @@ before(async () => {
 const made = [];
 after(() => {
   for (const d of made) fs.rmSync(d, { recursive: true, force: true });
+  server.closeAllConnections(); // the stand-in's hanging answers
   return new Promise((resolve) => server.close(resolve));
 });
 function outFile() {
@@ -107,7 +127,7 @@ function read(args, env = {}) {
   for (const k of KEEP_ENV) if (process.env[k] !== undefined) e[k] = process.env[k];
   return new Promise((resolve) => {
     execFile(process.execPath, [READ, ...args], {
-      env: { ...e, GITHUB_API_URL: base, GITHUB_TOKEN: 'stand-in-token', ...env }, encoding: 'utf8', timeout: 30000,
+      env: { ...e, GITHUB_API_URL: base, GITHUB_TOKEN: 'stand-in-token', TEST_TIMES_RETRY_WAIT_MS: '0', ...env }, encoding: 'utf8', timeout: 30000,
     }, (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
   });
 }
@@ -362,17 +382,18 @@ test('--history weighs a file only by the times its records hold, never by a num
   }
 });
 
-// acme-labs/bolt: its one run file's download breaks off partway through the body.
+// acme-labs/bolt: its one run file's download breaks off partway through the body, every time
+// it is tried, so the third break is refused.
 test('a run file whose download breaks off is a read that could not be made', async () => {
   const r = await read(['--repo', 'acme-labs/bolt', ...BASE, '--require-complete']);
   assert.equal(r.code, 2, show(r));
-  assert.match(r.stdout, /^could not read: the run file behind \/repos\/acme-labs\/bolt\/actions\/artifacts\/9201\/zip broke off: \S+$/m, show(r));
+  assert.match(r.stdout, /^could not read: the run file behind \/repos\/acme-labs\/bolt\/actions\/artifacts\/9201\/zip broke off: \S+ after 3 tries$/m, show(r));
   assert.equal(r.stdout.trim().split('\n').length, 1, show(r));
 });
 
 test('--history --allow-none writes none with why on any read error, and warns', async () => {
   for (const [repo, words] of [
-    ['acme-labs/bolt', /^could not read: the run file behind \/repos\/acme-labs\/bolt\/actions\/artifacts\/9201\/zip broke off: \S+$/],
+    ['acme-labs/bolt', /^could not read: the run file behind \/repos\/acme-labs\/bolt\/actions\/artifacts\/9201\/zip broke off: \S+ after 3 tries$/],
     ['acme-labs/nut', /^could not read: run file test-times-unit-1-gh-nu-1791021600000 expired$/],
   ]) {
     const out = outFile();
@@ -422,4 +443,153 @@ test('pairing, attempts, ran no test and job groups are exported from record.mjs
   const perRun = record.jobGroups([{ run: { id: 1 }, jobs: [unit] }]);
   assert.equal(perRun[0].jobs[0].group, 'unit');
   assert.deepEqual([...record.groupTimes(perRun)], [['unit', [60000]]], 'the newest attempt that ran sets the time');
+});
+
+// Retries. acme-labs/widget's stored answers, copied under another name, with `fails` put on
+// the routes a test names: the history read through brief failures must be the one read
+// without them, and a lasting failure is refused saying how many tries were made.
+const BRIEF = 'one brief GitHub error throws the whole history away';
+function widgetAs(name, fails = {}) {
+  const routes = {};
+  for (const [k, v] of Object.entries(ANSWERS.routes)) {
+    if (!k.startsWith('/repos/acme-labs/widget/')) continue;
+    const copy = structuredClone(v);
+    if (copy.location) {
+      routes[`/storage/${name}-${copy.location.slice('/storage/'.length)}`] = structuredClone(ANSWERS.routes[copy.location]);
+      copy.location = `/storage/${name}-${copy.location.slice('/storage/'.length)}`;
+    }
+    routes[k.replace('/acme-labs/widget/', `/acme-labs/${name}/`)] = copy;
+  }
+  for (const [k, f] of Object.entries(fails)) {
+    const key = k.startsWith('/storage/') ? `/storage/${name}-${k.slice('/storage/'.length)}` : `/repos/acme-labs/${name}${k}`;
+    assert.ok(routes[key], `${key} is a route of the copy`);
+    routes[key].fails = f;
+  }
+  for (const k of Object.keys(routes)) assert.equal(ANSWERS.routes[k], undefined, `${k} is built here, not stored`);
+  Object.assign(ANSWERS.routes, routes);
+  return () => { for (const k of Object.keys(routes)) delete ANSWERS.routes[k]; };
+}
+async function historyOf(repo, env) {
+  const out = outFile();
+  const r = await read(['--repo', repo, ...BASE, '--history', '--allow-none', '--out', out], env);
+  const h = JSON.parse(fs.readFileSync(out, 'utf8'));
+  delete h.read_at; delete h.repo;
+  return { r, h };
+}
+
+test('a 502, a 503 or a 429 that passes is tried again, and the history is the one read without it', async () => {
+  const done = widgetAs('flaky', {
+    '/actions/runs/3002/jobs': [502],
+    '/actions/workflows/checks.yml/runs': [429],
+    '/actions/artifacts/9010/zip': [503],
+    '/storage/9011': [502, 500],
+  });
+  try {
+    const want = await historyOf('acme-labs/widget');
+    const got = await historyOf('acme-labs/flaky');
+    assert.equal(got.r.code, 0, show(got.r));
+    assert.deepEqual(got.h, want.h, `${BRIEF}: ${got.r.stdout}`);
+    assert.equal(hits.get('/repos/acme-labs/flaky/actions/runs/3002/jobs').length, 2, 'the jobs list was asked for twice');
+    assert.equal(hits.get('/storage/flaky-9011').length, 3, 'the run file was asked for three times');
+  } finally { done(); }
+});
+
+test('a connection that drops with no answer is tried again, and the history is the one read without it', async () => {
+  const done = widgetAs('dropped', { '/actions/runs/3002/artifacts': ['drop'], '/storage/9012': ['drop', 'drop'] });
+  try {
+    const want = await historyOf('acme-labs/widget');
+    const got = await historyOf('acme-labs/dropped');
+    assert.equal(got.r.code, 0, show(got.r));
+    assert.deepEqual(got.h, want.h, `${BRIEF}: ${got.r.stdout}`);
+  } finally { done(); }
+});
+
+test('a failure that lasts is refused after three tries, saying so', async () => {
+  const done = widgetAs('down', { '/actions/runs/3002/jobs': [502, 502, 502] });
+  const gone = widgetAs('gone', { '/actions/runs/3002/artifacts': ['drop', 'drop', 'drop'] });
+  try {
+    const r = await read(['--repo', 'acme-labs/down', ...BASE, '--history', '--out', outFile()]);
+    assert.equal(r.code, 2, show(r));
+    assert.equal(r.stdout, 'could not read: GET /repos/acme-labs/down/actions/runs/3002/jobs answered 502 after 3 tries\n', show(r));
+    assert.equal(hits.get('/repos/acme-labs/down/actions/runs/3002/jobs').length, 3, show(r));
+    const d = await read(['--repo', 'acme-labs/gone', ...BASE, '--require-complete']);
+    assert.equal(d.code, 2, show(d));
+    assert.match(d.stdout, /^could not read: GET \/repos\/acme-labs\/gone\/actions\/runs\/3002\/artifacts: \S+ after 3 tries\n$/, show(d));
+  } finally { done(); gone(); }
+});
+
+test('a 404 is refused at once, after one try', async () => {
+  const done = widgetAs('missing', { '/actions/runs/3002/jobs': [404] });
+  try {
+    const r = await read(['--repo', 'acme-labs/missing', ...BASE, '--require-complete']);
+    assert.equal(r.code, 2, show(r));
+    assert.equal(r.stdout, 'could not read: GET /repos/acme-labs/missing/actions/runs/3002/jobs answered 404\n', show(r));
+    assert.equal(hits.get('/repos/acme-labs/missing/actions/runs/3002/jobs').length, 1, 'a 404 is asked for once');
+  } finally { done(); }
+});
+
+test('outside tests the reader waits about a second before its second try', async () => {
+  const done = widgetAs('patient', { '/actions/runs/3003/jobs': [502] });
+  try {
+    const r = await read(['--repo', 'acme-labs/patient', ...BASE, '--require-complete', '--runs', '1'], { TEST_TIMES_RETRY_WAIT_MS: '' });
+    assert.equal(r.code, 0, show(r));
+    const [first, second] = hits.get('/repos/acme-labs/patient/actions/runs/3003/jobs');
+    assert.ok(second - first >= 900, `the second try came ${second - first} ms after the first`);
+  } finally { done(); }
+});
+
+test('a run file whose body breaks off once is fetched again, and the history is the one read without it', async () => {
+  const done = widgetAs('snapped', { '/storage/9013': ['cut'] });
+  try {
+    const want = await historyOf('acme-labs/widget');
+    const got = await historyOf('acme-labs/snapped');
+    assert.equal(got.r.code, 0, show(got.r));
+    assert.deepEqual(got.h, want.h, `${BRIEF}: ${got.r.stdout}`);
+    assert.equal(hits.get('/storage/snapped-9013').length, 2, 'the run file was fetched twice');
+  } finally { done(); }
+});
+
+test('a request with no answer is given up after its time limit and tried again', async () => {
+  const done = widgetAs('stalled', { '/actions/runs/3002/jobs': ['hang'], '/storage/9014': ['hang'] });
+  const stuck = widgetAs('stuck', { '/actions/runs/3002/jobs': ['hang', 'hang', 'hang'] });
+  try {
+    const want = await historyOf('acme-labs/widget');
+    const got = await historyOf('acme-labs/stalled', { TEST_TIMES_TRY_TIMEOUT_MS: '1000' });
+    assert.equal(got.r.code, 0, show(got.r));
+    assert.deepEqual(got.h, want.h, `${BRIEF}: ${got.r.stdout}`);
+    const r = await read(['--repo', 'acme-labs/stuck', ...BASE, '--require-complete'], { TEST_TIMES_TRY_TIMEOUT_MS: '1000' });
+    assert.equal(r.code, 2, show(r));
+    assert.equal(r.stdout, 'could not read: GET /repos/acme-labs/stuck/actions/runs/3002/jobs: no answer within 1000 ms after 3 tries\n', show(r));
+  } finally { done(); stuck(); }
+});
+
+// The waits the rules choose, read from TEST_TIMES_RETRY_WAIT_LOG while TEST_TIMES_RETRY_WAIT_MS=0
+// keeps the test from sleeping them. A line is `<request> wait <ms>`.
+async function waitsFor(name, fails) {
+  const done = widgetAs(name, { '/actions/runs/3003/jobs': fails });
+  const log = path.join(path.dirname(outFile()), 'waits.log');
+  try {
+    const r = await read(['--repo', `acme-labs/${name}`, ...BASE, '--require-complete', '--runs', '1'], { TEST_TIMES_RETRY_WAIT_LOG: log });
+    assert.equal(r.code, 0, show(r));
+    assert.ok(fs.existsSync(log), `the reader logged no wait: ${show(r)}`);
+    return fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => {
+      const m = l.match(new RegExp(`^GET /repos/acme-labs/${name}/actions/runs/3003/jobs wait (\\d+)$`));
+      assert.ok(m, `a wait line names its request and ms: ${l}`);
+      return Number(m[1]);
+    });
+  } finally { done(); }
+}
+
+test('the waits are 1 s then 3 s, whatever answer failed', async () => {
+  assert.deepEqual(await waitsFor('slowly', [502, 'drop']), [1000, 3000]);
+});
+
+test('a 429 waits what its Retry-After says, in seconds or as a date, up to 10 s', async () => {
+  assert.deepEqual(await waitsFor('after-seconds', [{ status: 429, retryAfter: '7' }]), [7000]);
+  const [byDate] = await waitsFor('after-date', [{ status: 429, retryAfter: new Date(Date.now() + 6000).toUTCString() }]);
+  assert.ok(byDate > 3000 && byDate <= 6000, `a date six seconds ahead waits ${byDate} ms`);
+  assert.deepEqual(await waitsFor('after-past', [{ status: 429, retryAfter: new Date(Date.now() - 60000).toUTCString() }]), [0]);
+  assert.deepEqual(await waitsFor('after-long', [{ status: 429, retryAfter: '600' }]), [10000]);
+  assert.deepEqual(await waitsFor('after-junk', [{ status: 429, retryAfter: 'soon' }, { status: 429 }]), [1000, 3000],
+    'a Retry-After that is no time, or none, falls back to 1 s then 3 s');
 });

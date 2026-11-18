@@ -235,7 +235,8 @@ node read.mjs --repo <owner/name> --workflow <file> --event <push|pull_request> 
   `<group> sets the wait: <x> min against <group> <y> min`.
   - A named group with no job in the runs read fails either mode: `<group> has no job in the N runs read`.
   - `--not-slowest` with no other group left, once the ignored ones are out, exits 1 with `<group> sets the wait: <x> min against no other group`, because a group alone is the longest.
-- **Exit 2** says `could not read: <what refused>`: GitHub refused a call, a run file could not
+- **Exit 2** says `could not read: <what refused>`: GitHub refused a call (after the retries
+  under "How it reads"), a run file could not
   be opened or broke off while downloading, a run file had expired
   (`could not read: run file <name> expired`), there was no token, or the arguments were wrong.
   A read that could not be made never passes.
@@ -263,6 +264,20 @@ node read.mjs --repo <owner/name> --workflow <file> --event <push|pull_request> 
 - **Token.** `GITHUB_TOKEN` or `GH_TOKEN`, else `gh auth token`. It only reads (`actions: read`).
   The API is `GITHUB_API_URL`, else `https://api.github.com`. A run file's storage redirect is
   followed without the token.
+- **Retries.** Each request is tried up to 3 times while the connection fails, no answer comes
+  within the try's time limit, its body breaks off, or the answer is 5xx or 429. A run file's
+  storage download is tried again on its own, refetched and reread whole. Between tries it waits
+  1 s, then 3 s; after a 429, what its `Retry-After` says instead (seconds or a date, from 0 up
+  to 10 s; one that is no time falls back to 1 s then 3 s). Then it is refused with the last
+  failure: `... answered 502 after 3 tries`, `...: no answer within 30000 ms after 3 tries`,
+  `the run file behind ... broke off: <why> after 3 tries`. Any other answer, a 404 or a 403, is
+  refused at once.
+  - Each try has 30 s, its body included, so one request takes at most about 1.5 min, waits
+    included (3 x 30 s + 4 s, or + 20 s after two 429s).
+  - `TEST_TIMES_TRY_TIMEOUT_MS` sets each try's limit; `TEST_TIMES_RETRY_WAIT_MS` is slept
+    instead of every chosen wait (tests set `0`). Both take digits only; any other value is
+    ignored. `TEST_TIMES_RETRY_WAIT_LOG`, a file, gets one `<request> wait <ms>` line per chosen
+    wait.
 
 ## Dealing tests into parts: `plan.mjs`
 

@@ -16,6 +16,12 @@
 # machine rule reads workflows with, pinned in package-lock.json, with npm ci --ignore-scripts, so
 # no package's install script runs. The workflow's own token grants nothing; the one job reads
 # the code alone.
+#
+# Before the tests it runs the leak check (./leak-check, the change's own copy) over every tracked
+# file and every branch, tag and pull request ref, so the required check refuses a change that adds
+# a private name and carries the leak check's notice. The checkout brings every branch and tag
+# (fetch-depth: 0); the check fetches the pull request refs itself, reading the public remote
+# with no credential kept.
 name: Decide tests
 
 on:
@@ -36,6 +42,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Read every file and ref for private names
+        uses: ./leak-check
 
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

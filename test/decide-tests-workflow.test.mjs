@@ -72,3 +72,19 @@ test('the decide-tests check runs the leak check over every ref before the tests
   assert.ok(!steps[leak].with?.hashes, `${NO_LEAK} against its own list: the step reads ${steps[leak].with?.hashes} instead of leak-check/hashes.json`);
   assert.ok(steps[leak].if === undefined && steps[leak]['continue-on-error'] === undefined, `${NO_LEAK} as a refusal: the step carries ${JSON.stringify({ if: steps[leak].if, 'continue-on-error': steps[leak]['continue-on-error'] })}`);
 });
+
+// The machine rule's workflow lint did not move with these workflows, so the required check lints
+// them itself: scripts/actionlint.mjs runs over every workflow (no file named) before the tests.
+test('the decide-tests check lints every workflow with actionlint before the tests', () => {
+  const NO_LINT = 'decide-tests does not lint the workflows with scripts/actionlint.mjs';
+  const job = jobs(parse(read())).find((j) => j.check === REQUIRED_CHECK);
+  assert.ok(job, MISSING);
+  const steps = job.steps ?? [];
+  const lint = steps.findIndex((s) => s.run?.trim() === 'node scripts/actionlint.mjs');
+  const tests = steps.findIndex((s) => s.run?.trim() === 'node --test test/*.test.mjs');
+  const node = steps.findIndex((s) => s.uses?.startsWith('actions/setup-node@'));
+  assert.ok(lint !== -1, `${NO_LINT}: no step runs node scripts/actionlint.mjs; the steps run ${JSON.stringify(steps.map((s) => s.uses ?? s.run))}`);
+  assert.ok(tests !== -1 && lint < tests, `${NO_LINT} before the tests: it is step ${lint + 1}, the tests step ${tests + 1}`);
+  assert.ok(node !== -1 && node < lint, `${NO_LINT} after Node is set up: Node is step ${node + 1}, the lint step ${lint + 1}`);
+  assert.ok(steps[lint].if === undefined && steps[lint]['continue-on-error'] === undefined, `${NO_LINT} as a refusal: the step carries ${JSON.stringify({ if: steps[lint].if, 'continue-on-error': steps[lint]['continue-on-error'] })}`);
+});

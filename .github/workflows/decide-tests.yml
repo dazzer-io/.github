@@ -21,6 +21,11 @@
 # a private name and carries the leak check's notice. The checkout brings every branch and tag
 # (fetch-depth: 0); the check fetches the pull request refs itself, reading the public remote
 # with no credential kept.
+#
+# Before the tests it also lints every workflow with actionlint (scripts/actionlint.mjs), which
+# downloads a pinned release and refuses one whose SHA-256 is not the one written in the script:
+# the organisation's machine rule linted these workflows before they moved here, and nothing else
+# lints them now.
 name: Decide tests
 
 on:
@@ -53,6 +58,9 @@ jobs:
 
       - name: Install the pinned YAML reader
         run: npm ci --ignore-scripts
+
+      - name: Lint every workflow with the pinned actionlint
+        run: node scripts/actionlint.mjs
 
       - name: Run the tests
         run: node --test test/*.test.mjs

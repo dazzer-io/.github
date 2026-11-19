@@ -1,0 +1,8 @@
+{
+  "name": "dazzer-io-shared-workflows",
+  "private": true,
+  "description": "The organisation's shared workflows. Its one package is the YAML reader the tests read workflows with.",
+  "dependencies": {
+    "yaml": "2.9.1"
+  }
+}

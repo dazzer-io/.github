@@ -1,6 +1,6 @@
 # Shared CodeQL scan: GitHub's code scanning for every dazzer-io repository, as one workflow here
 # that each repository calls, in place of a copy of its own. A repository calls it from a short
-# caller file (README.md, "The shared CodeQL scan"), naming its languages; this file decides
+# caller file (README.md, "Calling the shared CodeQL scan"), naming its languages; this file decides
 # everything else, so a new repository needs no copy and no review of one, and a change in a
 # calling repository cannot edit the scan it is scanned by.
 #
@@ -122,7 +122,8 @@
 # never from the change being scanned; and the scan runner group is to admit only the shared
 # workflows at refs/heads/main, which this file cannot see. A change to this repository's own
 # copy is a pull request here, reviewed here; a pull request elsewhere runs this file as main
-# holds it. No workflow of this repository but the two scans may call it.
+# holds it. No workflow of this repository but the two scans may call it: the organisation's
+# required workflow rule, kept in a private repository, refuses any other caller.
 #
 # test/codeql-shared.test.mjs pins what is scanned and what each job holds, line for line where it
 # matters: a read-only job runs on ${{ vars.SCAN_RUNNER_2 || 'ubuntu-latest' }} exactly and holds no
@@ -168,7 +169,7 @@ jobs:
           case "$LANGUAGE" in
             actions | javascript-typescript | python) ;;
             *)
-              echo "::error::This scan takes only actions, javascript-typescript and python (decision 133)."
+              echo "::error::This scan takes only actions, javascript-typescript and python."
               exit 1
               ;;
           esac

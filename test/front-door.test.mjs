@@ -91,7 +91,9 @@ test('the community files are present and say what they promise: licence, securi
 // either folder, their workflow or their tests, or a line naming one of their files, is refused.
 const INTERNAL = ['mach' + 'ine-rule', 'test' + '-times'];
 const INTERNAL_FILE = new RegExp(`^(?:${INTERNAL.join('|')})/|^\\.github/workflows/(?:${INTERNAL.join('|')})\\.ya?ml$|^test/(?:fixtures/)?(?:${INTERNAL.join('|')})`);
-const INTERNAL_NAME = new RegExp(`\\b(?:${INTERNAL.join('|')})(?:/|\\.ya?ml\\b|\\.test\\.mjs\\b)`);
+// A name may carry on after a hyphen (an internal word, a hyphen, then more), so the word runs on through
+// letters, digits and hyphens before the ending is read.
+const INTERNAL_NAME = new RegExp(`\\b(?:${INTERNAL.join('|')})[\\w-]*(?:/|\\.ya?ml\\b|\\.test\\.mjs\\b)`);
 const INTERNAL_FAULT = 'the fresh repository holds an internal check file';
 
 test('no internal check is held, named or called: no folder, workflow or test of the machine line or the test times', () => {
@@ -108,6 +110,9 @@ test('no internal check is held, named or called: no folder, workflow or test of
   const [MR, TT] = INTERNAL;
   for (const [f, want] of [[`${MR}/judge.mjs`, true], [`${TT}/record.mjs`, true], [`.github/workflows/${MR}.yml`, true], [`test/${MR}.test.mjs`, true], [`test/fixtures/${TT}/history.json`, true], ['leak-check/scan.mjs', false], ['test/front-door.test.mjs', false]]) {
     if (INTERNAL_FILE.test(f) !== want) misses.push(`Could not find ${f} ${want ? 'refused' : 'admitted'} by the internal-file rule`);
+  }
+  for (const [l, want] of [[`  run: node --test test/${MR}-ruleset.test.mjs`, true], [`# see .github/workflows/${TT}-record.yml`, true], [`${MR}/judge.mjs`, true], ['  run: node --test test/front-door.test.mjs', false], [`the ${MR} word, with no file ending`, false]]) {
+    if (INTERNAL_NAME.test(l) !== want) misses.push(`Could not find "${l}" ${want ? 'refused' : 'admitted'} by the internal-name rule`);
   }
   assert.ok(!misses.length, `${misses.join('\n')}\n(${misses.length} lines)`);
 });
@@ -134,9 +139,18 @@ const privateNames = (file) => {
   const match = matcher({ salt, repositories, all: repositories }, { owner: 'dazzer-io' });
   return { size: repositories.size, match: (line) => match(line, '').map((f) => f.hash) };
 };
-// The prose of a file: all of a document or an issue form, the comments of code and workflows.
+// A workflow or an action: a YAML file whose top holds jobs (a workflow, a caller's included) or runs
+// (an action). What a user meets of one is not only its comments: its step and job names, input
+// descriptions, run scripts and the messages they print are read by every caller.
+const isWorkflow = (f, t) => {
+  if (!/\.ya?ml$/.test(f)) return false;
+  try { const y = parse(t); return isMap(y) && (isMap(y.jobs) || isMap(y.runs)); } catch { return /^\.github\/workflows\//.test(f); }
+};
+// The prose of a file: all of a document, an issue form, a workflow or an action, the comments of
+// code and of other YAML. An action pinned by its full commit id (uses: owner/repo@<40 hex>) is
+// not a commit id named in prose: the commit-id fault reads no id that follows an @.
 const proseOf = (f, t) => {
-  if (/\.md$/.test(f) || f.startsWith('.github/ISSUE_TEMPLATE/') || f === 'LICENSE') return t.split('\n');
+  if (/\.md$/.test(f) || f.startsWith('.github/ISSUE_TEMPLATE/') || f === 'LICENSE' || isWorkflow(f, t)) return t.split('\n');
   const marker = /\.(?:mjs|js)$/.test(f) ? /^\s*(?:\/\/|\/?\*)|\s\/\/\s/ : /\.ya?ml$|CODEOWNERS$/.test(f) ? /^\s*#|\s#\s/ : null;
   if (!marker) return [];
   return t.split('\n').map((l) => { const m = marker.exec(l); return m ? l.slice(m.index) : ''; });
@@ -161,6 +175,20 @@ test('no document or comment carries an internal reference: a decision number, a
     });
   }
   assert.ok(read >= 1000, `Could not find the documents and comments to read: ${read} lines read`);
+  // The reader reads a workflow whole: an invented workflow's printed message is refused, its
+  // pinned action is not, and a comment of other YAML is still read.
+  const wf = ['name: Invented', 'on: push', 'jobs:', '  check:', '    runs-on: ubuntu-latest', '    steps:',
+    '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
+    '      - run: |', '          echo "::error::refused (decision 12)."'].join('\n');
+  const faultsOf = (f, t) => proseOf(f, t).flatMap((l, i) => FAULTS.filter(([, re]) => l && re.test(l)).map(([what]) => `${i + 1} ${what}`));
+  for (const [f, t, want] of [
+    ['.github/workflows/invented.yml', wf, ['9 a decision number']],
+    ['invented/action.yml', 'name: Invented\ndescription: Says hello (decision 12).\nruns:\n  using: composite\n  steps: []', ['2 a decision number']],
+    ['.github/invented.yml', 'version: 2 # decision 12\nnote: decision 12', ['1 a decision number']],
+  ]) {
+    const got = faultsOf(f, t);
+    if (JSON.stringify(got) !== JSON.stringify(want)) misses.push(`Could not find the invented ${f} read with faults ${JSON.stringify(want)}: ${JSON.stringify(got)} found`);
+  }
   assert.ok(!misses.length, `${misses.join('\n')}\n(${misses.length} lines)`);
 });
 

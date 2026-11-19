@@ -101,7 +101,7 @@ const GUARD = [
   'case "$LANGUAGE" in',
   '  actions | javascript-typescript | python) ;;',
   '  *)',
-  '    echo "::error::This scan takes only actions, javascript-typescript and python (decision 133)."',
+  '    echo "::error::This scan takes only actions, javascript-typescript and python."',
   '    exit 1',
   '    ;;',
   'esac',

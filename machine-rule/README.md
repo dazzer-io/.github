@@ -21,17 +21,37 @@ its origin does not say so, or GitHub could not be asked about a commit.
   or merge queue entry's workflow folder. It runs on the literal `ubuntu-latest`, a job of under
   a minute that reads no setting, so it stays off our machines in public repositories, where the
   fallback watcher does not read the runs. Its token reads the code alone, it holds no secret,
-  and both checkouts keep no git credential. The rule is checked out of
-  `job.workflow_repository` at `job.workflow_sha`, its own commit, and the change at its head
-  commit. actionlint is a pinned release, checked by its SHA-256 before it runs, with shellcheck
-  and pyflakes off. Its two ignores are narrow. actionlint 1.7.12 does not know the job context's
-  `workflow_repository` and `workflow_sha`, which GitHub gives. And actionlint knows GitHub's
-  labels alone, so it calls each of our own sets unknown: the step drops its unknown-label error
-  for exactly a name `judge.mjs`'s `OUR_MACHINE` matches, anchored at the message's start, and
-  still reports any other label it does not know, so the judge alone rules where our names
-  stand. zizmor is pinned and checked the same way, run offline and honouring no ignore comment,
-  by `zizmor.yml`: it refuses only an action not pinned by commit, the organisation's own
-  workflows excepted, and counts its other findings without refusing them.
+  and its one checkout, the change at its head commit, keeps no git credential.
+- **`action.yml`** is the rule's building block: the workflow's steps, which the workflow calls
+  as `dazzer-io/.github/machine-rule@main`, the ref the organisation rule already runs the
+  workflow from (a second exception to pinning every call). GitHub fetches the
+  block itself, with the whole repository at that ref, so `judge.mjs`, its lists, the YAML
+  reader's package files and `zizmor.yml` stand beside it and the rule's own folder is never
+  checked out: a checkout with the caller's token cannot read a private repository, and the
+  internal checks are moving to a private home, `dazzer-io/checks`, the old repository renamed.
+  The judge admits that call from either home during the move, `dazzer-io/.github` and
+  `dazzer-io/checks`, exactly as `<home>/machine-rule@main`, and refuses it from anywhere else,
+  at another ref, in another letter case or as a folder of the change. The change checks,
+  `codeql.yml`, `security-scan.yml` and `engineer-review.yml`, stay public in dazzer-io/.github,
+  so a call of them is admitted from dazzer-io/.github alone, and one at
+  `dazzer-io/checks` is refused.
+- **The job keeps `contents: read`.** A live trial read a private repository's workflow granted
+  `permissions: {}` failing to fetch its own repository's action by `owner/repo/path@main` ("An
+  action could not be found at the URI ..."), while another repository, which the home shares
+  its actions with, fetched it. The likely reading is that the job's token held no contents
+  read. So the machine rule's job keeps at least `contents: read`, or its call of its own block
+  stops working once this repository is private; the private home must also share its actions
+  with the organisation's repositories.
+- **The linters** run in the block. actionlint is a pinned release, checked by its SHA-256
+  before it runs, with shellcheck and pyflakes off. Its two ignores are narrow. actionlint 1.7.12
+  does not know the job context's `workflow_repository` and `workflow_sha`, which GitHub gives
+  and this repository's other workflows read. And actionlint knows GitHub's labels alone, so it
+  calls each of our own sets unknown: the step drops its unknown-label error for exactly a name
+  `judge.mjs`'s `OUR_MACHINE` matches, anchored at the message's start, and still reports any
+  other label it does not know, so the judge alone rules where our names stand. zizmor is pinned
+  and checked the same way, run offline and honouring no ignore comment, by `zizmor.yml`: it
+  refuses only an action not pinned by commit, the organisation's own workflows and this block
+  excepted, and counts its other findings without refusing them.
 - **The ruleset `machine-rule-required`** (`ruleset.json`) is a workflows rule. It runs that
   file, read from dazzer-io/.github by its repository id at `refs/heads/main`, on the default
   branch of every repository but the two below, public ones included, and not when a branch is
@@ -332,6 +352,11 @@ A call of a workflow of its own repository (`./` or `$/`), of another repository
 owner is refused, since the machine its jobs run on cannot be read here. In dazzer-io/.github, no
 workflow but the two scans calls a scan.
 
+A call of `codeql.yml`, `security-scan.yml` or `engineer-review.yml` at `dazzer-io/checks` is a
+call of another repository and is refused: those three stay in dazzer-io/.github alone. A step calling the machine
+rule's building block is the one step whose `uses:` is judged here: it names `dazzer-io/.github/machine-rule@main` or `dazzer-io/checks/machine-rule@main`
+exactly, and nothing else.
+
 ## The lists
 
 The lists are read from this folder, never from the repository judged, so a repository cannot
@@ -444,7 +469,7 @@ of its own there.
   names no runs-on and holds no steps. The jobs it calls are judged in dazzer-io/.github, where
   they run. So no call is refused for what only a machine or a step holds:
   - a refusal of the job's runs-on, or of its having none
-  - a refusal of a step, a checkout keeping its credential or CodeQL's own scan steps
+  - a refusal of a step, a checkout keeping its credential, CodeQL's own scan steps or a call of the machine rule's building block
 - **A change check's secrets list, for a call**. A call hands on no secret at all, whatever
   secrets.json names for its repository, and a workflow's top-level env does not reach the
   workflow it calls. So secrets.json is not read for a call:

@@ -122,6 +122,24 @@ export const SHARED_SCANS = Object.freeze(['.github/workflows/codeql.yml', '.git
 export const CALLABLE = Object.freeze([...SHARED_SCANS, '.github/workflows/engineer-review.yml']);
 export const SHARED_HOLDING = Object.freeze([...CALLABLE, '.github/workflows/machine-rule.yml']);
 const PIN_ADMITTED = '.github/workflows/engineer-review.yml';
+// The machine rule's building block, machine-rule/action.yml, which machine-rule.yml's job calls as
+// a step and GitHub fetches itself at main, so the rule runs with no checkout of
+// its own folder, from a home the caller's token cannot read. During the move it is admitted from
+// either home: dazzer-io/.github today, dazzer-io/checks once the repository is renamed. The change
+// checks above stay in dazzer-io/.github alone, so judgeCall and sharedScanCall
+// keep SHARED as their one home.
+export const RULE_BLOCK = 'machine-rule';
+export const RULE_HOMES = Object.freeze([SHARED, `${ORG}/checks`]);
+// A step's uses: that names the building block, or null: any dazzer-io repository's machine-rule
+// folder in any letter case, or a ./machine-rule folder of the change. It is admitted only as
+// <home>/machine-rule@main, exactly.
+export function ruleBlockCall(uses) {
+  const u = String(uses ?? '').trim();
+  if (/^\.\/machine-rule\/?$/i.test(u)) return { uses: u, admitted: false };
+  const m = /^([A-Za-z0-9-]+)\/([A-Za-z0-9_.-]+)\/([^@]+?)\/?@(.+)$/.exec(u);
+  if (!m || m[1].toLowerCase() !== ORG || m[3].toLowerCase() !== RULE_BLOCK) return null;
+  return { uses: u, admitted: RULE_HOMES.includes(`${m[1]}/${m[2]}`) && m[3] === RULE_BLOCK && m[4] === 'main' };
+}
 // The one call beside the shared scan a repository strict.json names admits:
 // engineer-review.yml's job engineer-review calling dazzer-io/.github's engineer-review.yml
 // at a commit (40 lowercase hex characters, never main), its keys uses and permissions alone (so no
@@ -1443,6 +1461,12 @@ export async function judgeFiles({ repository, visibility, files, kept = { entri
       // A job running CodeQL's scan reads no CHECKS_ setting.
       if (Array.isArray(job.steps) && job.steps.some((s) => isObj(s) && typeof s.uses === 'string' && SCANNER_ACTIONS.test(s.uses.trim())) && families(['CHECKS']).length) no(`runs CodeQL's scan (github/codeql-action/init or analyze) and reads ${families(['CHECKS']).join(', ')}: on the change-check machines the change's own code can reach the scan (decision 91). Call the shared scan instead.`);
 
+      // A step calling the machine rule's building block names a home and main exactly.
+      for (const s of Array.isArray(job.steps) ? job.steps : []) {
+        const block = isObj(s) && typeof s.uses === 'string' ? ruleBlockCall(s.uses) : null;
+        if (block && !block.admitted) no(`calls the machine rule's building block as ${block.uses}: it is called as ${RULE_HOMES.map((h) => `${h}/${RULE_BLOCK}@main`).join(' or ')} alone, from a home of the rule at main, the ref the organisation rule runs it from.`);
+      }
+
       // codeql.yml's one final check is counted whatever keeps it, so a second is refused even
       // where kept.json names the first.
       const final = isScanFile && path === '.github/workflows/codeql.yml' && isObj(job.permissions) && Object.keys(job.permissions).length === 0;
@@ -1784,7 +1808,7 @@ export async function readAtDefaultBranch({ repo, call }) {
 // levels of them.
 const CALLED_PATH = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 export const CALL_LEVELS = 10;
-const sharedScanCall = (uses) => {
+export const sharedScanCall = (uses) => {
   const m = /^([A-Za-z0-9-]+)\/([A-Za-z0-9_.-]+)\/(.+?)@(.+)$/.exec(String(uses ?? ''));
   if (!m || m[1].toLowerCase() !== ORG || m[2].toLowerCase() !== '.github' || !SHARED_SCANS.includes(m[3])) return null;
   return { path: m[3], ref: m[4], exact: m[1] === ORG && m[2] === '.github' };

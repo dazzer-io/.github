@@ -100,8 +100,25 @@ name, result or record of any repository.
 
 ## Wiring a workflow
 
-There is no action of our own, so it works where a repository allows only GitHub's actions.
-Pin this repository's commit once, at the top of the workflow:
+Two ways in, each reading every script at the one commit the caller pins.
+
+**The action, `test-times/action.yml`.** In place of the fetch step below, a caller writes:
+
+```yaml
+      - name: Set up the test-time recorder
+        continue-on-error: true
+        timeout-minutes: <this repository's number, with the reading it rests on>
+        uses: dazzer-io/.github/test-times@<a full commit of dazzer-io/.github>
+        with:
+          label: <the runs-on label, or leave out for TEST_TIMES_LABEL, else the runner image>
+```
+
+It runs `setup.mjs` from the folder GitHub unpacked the action into, so `TEST_TIMES_DIR` names
+that folder and the finish, read and plan steps below run unchanged. It starts no other action,
+clones nothing and needs no Node of its own: like the clone, it runs the job's `node`. A
+repository that allows only GitHub's own actions keeps the clone.
+
+**The clone.** Pin this repository's commit once, at the top of the workflow:
 
 ```yaml
 env:

@@ -94,11 +94,15 @@ test('the decide-tests check lints every workflow with actionlint before the tes
 
 // The workflow and its lint script are public: their comments explain the check to a reader, and
 // name none of the organisation's internal machinery. The internal names are held as one-way hashes
-// (leak-check/hashes.mjs), so this list does not publish what it keeps out: eight internal phrases
-// and workflow file names, and three setting prefixes. Anyone can confirm a word they already guess;
-// none is written here.
+// (leak-check/hashes.mjs), so this list does not publish what it keeps out: six internal phrases
+// (MACHINERY), two workflow file names, and three setting prefixes. Anyone can confirm a word they
+// already guess; none is written here. The two workflow file names and the setting prefixes are also
+// this repository's own shared workflows and the settings their callers set, so only the comments of
+// the workflow and the lint script are read for them; every tracked file is read for MACHINERY.
 const NOT_REFUSED = 'a new leak finding was not refused';
-const PHRASES = new Set(["4aed456d4575dcd247082bb134c355e25a728321d63b5cea49e252fd9e545f57", "59774f2a630071a23cbaec6dbcc297d0f54e163dbe447a51298e5fddf3cc351a", "69b783ee9a87359fefc18c998e722659dd314126e1bf4864a9180c1118b5daf9", "780805137340a896d6cf94833cae5f64a13b20974a76407b6f6dda1a58403e6c", "80a8243eb4aa60736f612b2272664196ad29e5651f2c1f9d88d05e3207e5bfe4", "a0df506bafc745e05c325270fa56439e15e7de963e80616ca96dfcc681690903", "be5ad3553785b5a5603e1ff3ffc1d368fd1048e99bf408a7c0f2e7a564c7d828", "f33f7e98c933487118e1137c384ad6e18fb91896a64909044b7895437c6466c7"]);
+const MACHINERY = new Set(["4aed456d4575dcd247082bb134c355e25a728321d63b5cea49e252fd9e545f57", "69b783ee9a87359fefc18c998e722659dd314126e1bf4864a9180c1118b5daf9", "780805137340a896d6cf94833cae5f64a13b20974a76407b6f6dda1a58403e6c", "80a8243eb4aa60736f612b2272664196ad29e5651f2c1f9d88d05e3207e5bfe4", "a0df506bafc745e05c325270fa56439e15e7de963e80616ca96dfcc681690903", "be5ad3553785b5a5603e1ff3ffc1d368fd1048e99bf408a7c0f2e7a564c7d828"]);
+const WORKFLOW_FILES = ["59774f2a630071a23cbaec6dbcc297d0f54e163dbe447a51298e5fddf3cc351a", "f33f7e98c933487118e1137c384ad6e18fb91896a64909044b7895437c6466c7"];
+const PHRASES = new Set([...MACHINERY, ...WORKFLOW_FILES]);
 const PREFIXES = new Set(["a0e03d63fe942314951e1730f7abf5695fb14205029befc8b9278b814b093829", "bb582462fda42a722e06244d5d0e25042a2fb11ce74d8e5c3c5c13d2242aebde", "e780b3c53088c0da4ccb49b416a5cc246f62363e56a7ebe6e3eedd82e0dd0f7a"]);
 
 // Words as a phrase is held: lower-case, split at anything that is not a letter or digit (so a
@@ -145,7 +149,7 @@ test('no file the repository tracks names internal machinery in plain text', () 
   assert.equal(listed.status, 0, `git could not list the tracked files: ${listed.stderr}`);
   const files = listed.stdout.split('\0').filter(Boolean);
   assert.ok(files.length > 0, 'git lists no tracked file to read');
-  const named = files.filter((f) => fs.existsSync(path.join(root, f)) && internalIn(fs.readFileSync(path.join(root, f), 'utf8')).length);
+  const named = files.filter((f) => fs.existsSync(path.join(root, f)) && internalIn(fs.readFileSync(path.join(root, f), 'utf8'), MACHINERY, new Set()).length);
   assert.deepEqual(named, [], `${NOT_REFUSED}: tracked files name internal machinery in plain text: ${named.join(', ')}`);
 });
 

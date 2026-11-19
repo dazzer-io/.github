@@ -1,0 +1,51 @@
+name: Bug report
+description: Something does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report this. Please do not report security problems
+        here: follow the security policy and report them privately instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+      placeholder: When I run the install command, the tool says the marketplace cannot be found.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest steps that show the problem.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The version, release or commit you used, if you know it.
+    validations:
+      required: false
+  - type: input
+    id: environment
+    attributes:
+      label: Where you ran it
+      description: Your AI tool and its version, and your operating system.
+      placeholder: Claude Code 2.1, macOS 26
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Messages or logs
+      description: Any error text, with personal data and credentials removed.
+      render: text
+    validations:
+      required: false

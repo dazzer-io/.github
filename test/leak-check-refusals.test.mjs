@@ -16,6 +16,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(here, 'fixtures', 'leak-check');
 const SCAN = path.join(here, '..', 'leak-check', 'scan.mjs');
 const REFUSAL = /^no one-way hash list\b/;
+const NOT_REFUSED = 'a new leak finding was not refused';
 
 // Loaded by hand, so a scanner that is not there yet fails each test in words, not at import.
 const load = async (file) => {
@@ -177,4 +178,39 @@ test('a run that read no tracked file stops red saying it read nothing, never "0
   assert.doesNotMatch(noticeOf(out), /files: 0 read/, `the notice counts "0 read" as a reading: ${out}`);
   assert.equal(typeof scan.verdict, 'function', `leak-check/scan.mjs has no verdict: ${scan.missing ?? 'not exported'}`);
   assert.notEqual(scan.verdict({ files: { read: [], unread: [] }, fresh: [], known: [], refs: [] }).code, 0, 'verdict passes a run that read no file');
+});
+
+test('a missing object in git\'s blob batch is read as no text, and the blobs after it are still read', () => {
+  assert.equal(typeof scan.readBatch, 'function', `${NOT_REFUSED}: leak-check/scan.mjs has no readBatch: ${scan.missing ?? 'not exported'}`);
+  const a = 'a'.repeat(40);
+  const b = 'b'.repeat(40);
+  const c = 'c'.repeat(40);
+  const out = Buffer.from(`${a} blob 3\none\n${b} missing\n${c} blob 4\nfour\n`);
+  const texts = scan.readBatch(out);
+  assert.deepEqual(texts.get(a), ['one'], `the blob before the missing one was read as ${JSON.stringify(texts.get(a))}`);
+  assert.equal(texts.get(b), null, `${NOT_REFUSED}: the missing object was read as ${JSON.stringify(texts.get(b))}`);
+  assert.deepEqual(texts.get(c), ['four'], `${NOT_REFUSED}: the blob after the missing one was read as ${JSON.stringify(texts.get(c))}`);
+});
+
+test('a ref holding a file with no text is unknown, never read clean', async () => {
+  assert.equal(typeof scan.readRefs, 'function', `leak-check/scan.mjs has no readRefs: ${scan.missing ?? 'not exported'}`);
+  const serve = async (ref) => (ref === 'refs/heads/gap'
+    ? [{ path: 'a.md', blob: 'a'.repeat(40), texts: ['fine\n'] }, { path: 'b.md', blob: 'b'.repeat(40), texts: null }]
+    : [{ path: 'a.md', blob: 'a'.repeat(40), texts: ['fine\n'] }]);
+  const refs = await scan.readRefs(['refs/heads/main', 'refs/heads/gap'], serve, () => []);
+  const gap = refs.find((r) => r.ref === 'refs/heads/gap');
+  assert.equal(gap?.state, 'unknown', `${NOT_REFUSED}: a ref holding a file with no text was read as ${JSON.stringify(gap)}`);
+  assert.equal(gap.findings, null, `a ref holding a file with no text was given ${gap.findings} findings`);
+  assert.equal(refs.find((r) => r.ref === 'refs/heads/main')?.state, 'read', 'a whole ref was not read');
+  const said = scan.verdict({ files: { read: [{ path: 'x', texts: [''] }], unread: [] }, fresh: [], known: [], refs }).lines.join('\n');
+  assert.match(said, /^could not read refs\/heads\/gap: /m, `the run does not name the ref with a file it could not read: ${said}`);
+});
+
+test('a folder git cannot list is refused without printing its path or git\'s message', () => {
+  const root = path.join(tmp(), 'lantern-vault');
+  const r = spawnSync(process.execPath, [SCAN, '--hashes', path.join(FIXTURES, 'hashes.json'), '--root', root], { encoding: 'utf8' });
+  const out = `${r.stdout}${r.stderr}`;
+  assert.notEqual(r.status, 0, `a folder git could not list passed: ${out}`);
+  assert.match(out, /could not list the files git tracks/, `the run does not say it could not list the files: ${out}`);
+  assert.ok(!out.includes('lantern-vault'), `${NOT_REFUSED}: the run prints the folder's path, which holds a private name: ${out}`);
 });

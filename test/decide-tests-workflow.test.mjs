@@ -6,7 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { parse } from 'yaml';
+import { oneWay } from '../leak-check/hashes.mjs';
 
 const REQUIRED_CHECK = 'decide-tests'; // the repository ruleset's required_status_checks
 const file = fileURLToPath(new URL('../.github/workflows/decide-tests.yml', import.meta.url));
@@ -90,24 +93,59 @@ test('the decide-tests check lints every workflow with actionlint before the tes
 });
 
 // The workflow and its lint script are public: their comments explain the check to a reader, and
-// name none of the organisation's internal machinery.
-const INTERNAL = [[/fallback watcher/i, 'the fallback watcher'], [/\b(?:CHECKS|SCAN|LOCKED)_/, 'an internal setting'], [/change-check machines|our machines/i, 'internal machines'], [/machine rule/i, 'the machine rule'], [/CHECKS_RUNNER|runner name/i, 'a runner name'], [/security-scan\.yml|engineer-review\.yml/i, 'an internal workflow']];
+// name none of the organisation's internal machinery. The internal names are held as one-way hashes
+// (leak-check/hashes.mjs), so this list does not publish what it keeps out: eleven internal
+// phrases, setting prefixes and workflow file names. Anyone can confirm a word they already guess;
+// none is written here.
+const NOT_REFUSED = 'a new leak finding was not refused';
+const INTERNAL = new Set(["011dec21483a6f72b9420b6197c3f5f6d6d60548c20105a1c8ce9148becca299", "1064bbb0e3e8ccea425268b972ab21019f6e9bef1c5e42a0b0a69ffa9614dccb", "5d15dffb602ac53f8b448da8dc80943eedf614c2ef2324b2fb8753fa00b6afdf", "69b783ee9a87359fefc18c998e722659dd314126e1bf4864a9180c1118b5daf9", "8dcbdc78b95e4cac1050eedf00618cea2c05dbd8867de97f2029df8a92ad8fd5", "a0df506bafc745e05c325270fa56439e15e7de963e80616ca96dfcc681690903", "a0e03d63fe942314951e1730f7abf5695fb14205029befc8b9278b814b093829", "bb582462fda42a722e06244d5d0e25042a2fb11ce74d8e5c3c5c13d2242aebde", "be5ad3553785b5a5603e1ff3ffc1d368fd1048e99bf408a7c0f2e7a564c7d828", "e780b3c53088c0da4ccb49b416a5cc246f62363e56a7ebe6e3eedd82e0dd0f7a", "ec3007376f0c37a647e6301049833f23513ab0ef9098a50c305833f1364a51f3"]);
+
+// Every internal name in text, as its one-way hash: each run of one to three words (a word keeps
+// its - _ . inside it), and each word's part before and up to each underscore.
+const internalIn = (text, hashes = INTERNAL) => {
+  const words = text.toLowerCase().split(/[^a-z0-9_.-]+/).map((w) => w.replace(/^[.-]+|[.-]+$/g, '')).filter(Boolean);
+  const found = new Set();
+  const look = (s) => { const h = oneWay(s); if (hashes.has(h)) found.add(h); };
+  words.forEach((w, i) => {
+    for (let n = 1; n <= 3 && i + n <= words.length; n += 1) look(words.slice(i, i + n).join(' '));
+    for (let at = w.indexOf('_'); at !== -1; at = w.indexOf('_', at + 1)) { look(w.slice(0, at)); look(w.slice(0, at + 1)); }
+  });
+  return [...found];
+};
+// The comment text alone, its lines joined, so a phrase broken across two lines is still read.
+const commentsOf = (text, mark) => text.split('\n').filter((l) => mark.test(l)).map((l) => l.replace(mark, '')).join(' ');
 
 test('the workflow\'s comments describe no internal machinery', () => {
-  const comments = read().split('\n').filter((l) => /^\s*#/.test(l)).join('\n');
-  for (const [said, what] of INTERNAL) {
-    assert.doesNotMatch(comments, said, `the workflow's comments name ${what}`);
-  }
+  const comments = commentsOf(read(), /^\s*#\s?/);
+  assert.ok(comments.trim().length > 0, 'the workflow carries no comment to read');
+  const found = internalIn(comments);
+  assert.deepEqual(found, [], `${NOT_REFUSED}: the workflow's comments name internal machinery (one-way hashes ${found.join(', ')})`);
 });
 
 test('the lint script\'s comments describe no internal machinery', () => {
   const script = fileURLToPath(new URL('../scripts/actionlint.mjs', import.meta.url));
   assert.ok(fs.existsSync(script), 'scripts/actionlint.mjs is absent');
-  // The comment text alone, its lines joined, so a phrase broken across two lines is still read.
-  const comments = fs.readFileSync(script, 'utf8').split('\n').filter((l) => /^\s*\/\//.test(l))
-    .map((l) => l.replace(/^\s*\/\/\s?/, '')).join(' ').replace(/\s+/g, ' ').trim();
-  assert.ok(comments.length > 0, 'scripts/actionlint.mjs carries no comment to read');
-  for (const [said, what] of INTERNAL) {
-    assert.doesNotMatch(comments, said, `scripts/actionlint.mjs's comments name ${what}`);
-  }
+  const comments = commentsOf(fs.readFileSync(script, 'utf8'), /^\s*\/\/\s?/);
+  assert.ok(comments.trim().length > 0, 'scripts/actionlint.mjs carries no comment to read');
+  const found = internalIn(comments);
+  assert.deepEqual(found, [], `${NOT_REFUSED}: scripts/actionlint.mjs's comments name internal machinery (one-way hashes ${found.join(', ')})`);
+});
+
+test('no file the repository tracks names internal machinery in plain text', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' });
+  assert.equal(listed.status, 0, `git could not list the tracked files: ${listed.stderr}`);
+  const files = listed.stdout.split('\0').filter(Boolean);
+  assert.ok(files.length > 0, 'git lists no tracked file to read');
+  const named = files.filter((f) => fs.existsSync(path.join(root, f)) && internalIn(fs.readFileSync(path.join(root, f), 'utf8')).length);
+  assert.deepEqual(named, [], `${NOT_REFUSED}: tracked files name internal machinery in plain text: ${named.join(', ')}`);
+});
+
+test('the internal-names check finds a planted phrase split across lines, and a setting prefix', () => {
+  // Invented words, hashed the same way: the check's own reading, seen finding what it must.
+  const planted = new Set([oneWay('quiet lantern'), oneWay('zed_')]);
+  assert.equal(internalIn('a quiet\n# lantern here', planted).length, 1, 'a phrase broken across two lines was not found');
+  assert.equal(internalIn('reads ZED_RUNNER_2', planted).length, 1, 'a setting prefix was not found');
+  assert.equal(internalIn('reads no ZED_ setting', planted).length, 1, 'a bare setting prefix was not found');
+  assert.equal(internalIn('a quiet lamp and zedx', planted).length, 0, 'an ordinary phrase was found');
 });

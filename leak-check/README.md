@@ -53,7 +53,7 @@ name nobody guessed.
   read as bytes, matched as UTF-8, Latin-1 and UTF-16, and named in the log; a binary holding no
   name passes. A tracked file that cannot be opened is named, counted as not read, and fails the
   step. Paths and refs in the log are escaped, so a file name cannot start a command. A ref the fetch
-  did not bring is named and counted as not read. A remote that cannot be listed makes the refs unknown.
+  did not bring, or holding a file git could not give the text of, is named and counted as not read. A remote that cannot be listed makes the refs unknown.
 - Nothing it prints repeats a name it found: a finding is told by file, line, kind and the one-way
   hash it matched, and a path or ref name holding a private name is printed with that segment
   `[hidden]`.

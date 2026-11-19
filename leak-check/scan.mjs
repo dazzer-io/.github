@@ -232,7 +232,8 @@ export function classify(findings, known, repository) {
 
 // Reads each ref through `serve(ref)`, which returns its files as [{ path, texts | text, blob? }] or null,
 // or throws. A read ref is { ref, state: 'read', findings, found }; a ref it could not serve is
-// { ref, state: 'unknown', findings: null, why, named }. Files with the same blob id are matched once.
+// { ref, state: 'unknown', findings: null, why, named }, and so is a ref holding a file with no text
+// (a missing object), never read clean. Files with the same blob id are matched once.
 // The ref's own name is matched (a finding { path: null, in: 'ref name' }), and so is every file
 // and folder name in its tree (in: 'name').
 export async function readRefs(refs, serve, match) {
@@ -243,6 +244,8 @@ export async function readRefs(refs, serve, match) {
     let files;
     try { files = await serve(ref); } catch (e) { out.push({ ref, state: 'unknown', findings: null, why: e.message || 'the fetch failed', named }); continue; }
     if (!Array.isArray(files)) { out.push({ ref, state: 'unknown', findings: null, why: 'the fetch served nothing', named }); continue; }
+    const blind = files.filter((f) => !Array.isArray(f.texts) && typeof f.text !== 'string').length;
+    if (blind) { out.push({ ref, state: 'unknown', findings: null, why: `${blind} of its ${files.length} files gave no text to read`, named }); continue; }
     const found = [...named];
     const paths = new Set();
     for (const f of files) {
@@ -270,6 +273,23 @@ const git = (root, args, input) => {
 const SERVED = /^refs\/(?:heads|tags|pull)\//;
 const LOCAL = 'refs/leak-check/';
 
+// Reads the reply of git cat-file --batch: a Map of each object id to its texts (decodings), or
+// null for an object git answered "missing" or with no size it could read; reading goes on past it.
+export function readBatch(out) {
+  const texts = new Map();
+  let at = 0;
+  while (at < out.length) {
+    let nl = out.indexOf(10, at);
+    if (nl === -1) nl = out.length;
+    const [blob, type, size] = out.subarray(at, nl).toString().split(' ');
+    const n = Number(size);
+    if (type === 'missing' || !Number.isInteger(n) || n < 0 || nl + 1 + n > out.length) { if (blob) texts.set(blob, null); at = nl + 1; continue; }
+    texts.set(blob, decodings(out.subarray(nl + 1, nl + 1 + n)).texts);
+    at = nl + 1 + n + 1;
+  }
+  return texts;
+}
+
 // The refs `remote` serves, fetched at their tips under refs/leak-check/: { refs, serve } for
 // readRefs. Throws when the remote cannot be listed. A ref the fetch did not bring is unknown.
 export function remoteRefs(root, remote) {
@@ -292,18 +312,8 @@ export function remoteRefs(root, remote) {
       return { type, blob, path: p };
     }).filter((e) => e.type === 'blob');
     const wanted = [...new Set(blobs.map((b) => b.blob).filter((b) => !texts.has(b)))];
-    if (wanted.length) {
-      const out = git(root, ['cat-file', '--batch'], `${wanted.join('\n')}\n`);
-      let at = 0;
-      while (at < out.length) {
-        const nl = out.indexOf(10, at);
-        const [blob, , size] = out.subarray(at, nl).toString().split(' ');
-        const n = Number(size);
-        texts.set(blob, decodings(out.subarray(nl + 1, nl + 1 + n)).texts);
-        at = nl + 1 + n + 1;
-      }
-    }
-    return blobs.map((b) => ({ path: b.path, blob: b.blob, texts: texts.get(b.blob) }));
+    if (wanted.length) for (const [blob, t] of readBatch(git(root, ['cat-file', '--batch'], `${wanted.join('\n')}\n`))) texts.set(blob, t);
+    return blobs.map((b) => ({ path: b.path, blob: b.blob, texts: texts.get(b.blob) ?? null }));
   };
   return { refs, serve };
 }
@@ -381,7 +391,7 @@ async function main(argv) {
 
   let tracked = paths;
   if (!tracked.length) {
-    try { tracked = git(opt.root, ['ls-files', '-z']).split('\0').filter(Boolean); } catch (e) { console.error(data(`could not list the files git tracks under ${opt.root}: ${e.message}`)); return 1; }
+    try { tracked = git(opt.root, ['ls-files', '-z']).split('\0').filter(Boolean); } catch { console.error('could not list the files git tracks under the folder --root names (git ls-files failed)'); return 1; }
   }
   const match = matcher(list, { roles: known.roles, owner: opt.owner });
   const files = readFiles(opt.root, tracked);

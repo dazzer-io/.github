@@ -1,0 +1,52 @@
+# Leak check: reads every file the caller's checkout tracks and the tip of every branch, tag and
+# pull request ref the remote serves for private repository names, private people's names and
+# private addresses, held only as one-way hashes (hashes.json beside this file). A finding in the
+# files that known.json does not accept fails the step; findings on refs are counted apart and
+# fail nothing, since a change cannot remove them. Each run records one notice titled
+# "Leak check" with its counts. The step reads code alone: the calling job grants contents: read
+# and checks the repository out first; the action adds no grant and reads no secret.
+name: Leak check
+description: Refuses a change that adds a private name, held only as a one-way hash, and records the counts of files and refs read.
+inputs:
+  hashes:
+    description: The one-way hash list to match against. Empty reads hashes.json beside this action.
+    required: false
+    default: ''
+  known:
+    description: The accepted findings and role addresses. Empty reads known.json beside this action.
+    required: false
+    default: ''
+  remote:
+    description: The remote whose branches, tags and pull request refs are read.
+    required: false
+    default: origin
+  path:
+    description: The checkout to read. Empty reads the workspace.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+
+    - name: Read the files and refs for private names
+      shell: bash
+      env:
+        LEAK_HASHES: ${{ inputs.hashes }}
+        LEAK_KNOWN: ${{ inputs.known }}
+        LEAK_REMOTE: ${{ inputs.remote }}
+        LEAK_PATH: ${{ inputs.path }}
+        LEAK_ACTION: ${{ github.action_path }}
+        LEAK_REPOSITORY: ${{ github.repository }}
+        LEAK_OWNER: ${{ github.repository_owner }}
+      run: |
+        node "$LEAK_ACTION/scan.mjs" \
+          --hashes "${LEAK_HASHES:-$LEAK_ACTION/hashes.json}" \
+          --known "${LEAK_KNOWN:-$LEAK_ACTION/known.json}" \
+          --repository "$LEAK_REPOSITORY" \
+          --owner "$LEAK_OWNER" \
+          --root "${LEAK_PATH:-$GITHUB_WORKSPACE}" \
+          --refs "$LEAK_REMOTE"

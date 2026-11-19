@@ -1,0 +1,27 @@
+# The test-time recorder, as a composite action a caller pins by its full commit:
+#
+#   - uses: dazzer-io/.github/test-times@<a full commit of dazzer-io/.github>
+#
+# in place of the clone-and-setup step (README.md, "Wiring a workflow"). It runs setup.mjs from
+# the folder GitHub unpacked this action into, so TEST_TIMES_DIR names that folder and the steps
+# after it (finish.mjs, read.mjs, plan.mjs) read the scripts at the commit the caller pinned. It
+# starts no other action, clones nothing, holds no product code, adds no grant and reads no secret.
+# The script reads GITHUB_ACTION_PATH, the same folder, first: in a job run inside a container
+# GitHub's runner gives the expression the host's path but the variable the container's.
+name: test-times
+description: Sets up the test-time recorder from this action's own folder; TEST_TIMES_DIR names it for the steps after.
+inputs:
+  label:
+    description: The runner label the record names. Empty keeps TEST_TIMES_LABEL from the step's env, else the runner image.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Set up the test-time recorder
+      shell: bash
+      env:
+        TEST_TIMES_ACTION: ${{ github.action_path }}
+        TEST_TIMES_LABEL: ${{ inputs.label || env.TEST_TIMES_LABEL }}
+      run: |
+        node "${GITHUB_ACTION_PATH:-$TEST_TIMES_ACTION}/setup.mjs" >> "$GITHUB_ENV"

@@ -812,6 +812,71 @@ test('engineer-review.yml alone may be called at a commit, and only one GitHub\'
   });
 });
 
+// ================================================================ the move to a private home
+// The internal checks move to a private home, dazzer-io/checks (the old repository renamed), while
+// the change checks every repository runs, codeql.yml, security-scan.yml and engineer-review.yml, stay public in
+// dazzer-io/.github. So a call of any of the three is still admitted from
+// dazzer-io/.github alone, and one at dazzer-io/checks is refused; security-scan.yml declares no
+// workflow_call, so its call is refused for that and for nothing about its home.
+const FAULT = 'a public shared workflow call from dazzer-io/.github was refused';
+test('the three shared change checks are still admitted from dazzer-io/.github alone, never from dazzer-io/checks, the scan job reading SCAN_RUNNER_2 included', async () => {
+  need();
+  const CHANGE_CHECKS = {
+    'codeql.yml': ['  codeql:', '    uses: @HOME/.github/workflows/codeql.yml@main', '    permissions:', '      contents: read', '      actions: read', '      security-events: write', '    with:', `      languages: '["actions", "javascript-typescript"]'`],
+    'engineer-review.yml': ['  engineer-review:', '    uses: @HOME/.github/workflows/engineer-review.yml@main', '    permissions:', '      contents: read', '      statuses: write', '      pull-requests: read'],
+    'security-scan.yml': ['  security-scan:', '    uses: @HOME/.github/workflows/security-scan.yml@main', '    permissions:', '      contents: read'],
+  };
+  const calling = (file, home) => ({ [file]: `name: made up\non: [pull_request]\n${READ}jobs:\n${CHANGE_CHECKS[file].join('\n').replace('@HOME', home)}\n`, 'ci.yml': check() });
+  const ofFile = (r, file) => r.lines.filter((l) => l.startsWith(`.github/workflows/${file}:`));
+  await everyCase(async (c) => {
+    for (const file of Object.keys(CHANGE_CHECKS)) {
+      const r = await judgeOf(calling(file, 'dazzer-io/.github'), DAZZER);
+      const lines = ofFile(r, file);
+      const admitted = file === 'security-scan.yml' ? lines.every((l) => /declares no workflow_call/.test(l)) : !lines.length;
+      await c(() => assert.ok(admitted, `Could not find the call of ${file} at dazzer-io/.github admitted: ${FAULT}:\n${lines.join('\n')}`));
+      const moved = await judgeOf(calling(file, 'dazzer-io/checks'), DAZZER);
+      await c(() => assert.ok(ofFile(moved, file).some((l) => /a workflow outside dazzer-io\/\.github's shared workflows/.test(l)), `Could not find the call of ${file} at dazzer-io/checks refused, though the shared change checks stay in dazzer-io/.github alone:\n${said(moved)}`));
+    }
+    for (const path of J.SHARED_SCANS) {
+      const scan = J.sharedScanCall?.(`dazzer-io/.github/${path}@main`);
+      await c(() => assert.ok(scan && scan.exact && scan.path === path && scan.ref === 'main', `Could not find sharedScanCall reading dazzer-io/.github/${path}@main as the shared scan: ${FAULT}: ${JSON.stringify(scan)}`));
+      const moved = J.sharedScanCall?.(`dazzer-io/checks/${path}@main`);
+      await c(() => assert.equal(moved, null, `Could not find sharedScanCall reading dazzer-io/checks/${path}@main as no shared scan: ${JSON.stringify(moved)}`));
+    }
+    const own = (J.readFolder(ROOT) ?? []).filter((f) => f.path === '.github/workflows/security-scan.yml');
+    await c(() => assert.ok(own.length === 1 && /vars\.SCAN_RUNNER_2/.test(own[0].text), `Could not find this repository's security-scan.yml reading SCAN_RUNNER_2 to judge: ${own.length}`));
+    const home = await J.judgeFiles({ ...SHARED, ...lists(), files: own });
+    await c(() => assert.deepEqual(home.lines, [], `Could not find security-scan.yml's scan job, reading SCAN_RUNNER_2, admitted in dazzer-io/.github: ${FAULT}:\n${said(home)}`));
+    const elsewhere = await J.judgeFiles({ repository: 'dazzer-io/checks', visibility: 'private', ...lists(), files: own });
+    await c(() => assert.ok(elsewhere.lines.some((l) => /SCAN_RUNNER_2/.test(l)), `Could not find security-scan.yml's scan job refused for reading SCAN_RUNNER_2 in dazzer-io/checks, outside the shared scans' home:\n${said(elsewhere)}`));
+  });
+});
+
+// The machine rule's own job calls its building block, machine-rule/action.yml, which GitHub
+// fetches itself at main: from dazzer-io/.github today and from dazzer-io/checks
+// once the repository is renamed, each admitted during the move. Any other spelling of that call
+// is refused: another repository, another ref, another letter case, or a folder of the change.
+test('the machine rule\'s step calling its building block is admitted at main from dazzer-io/.github and dazzer-io/checks alone', async () => {
+  need();
+  const text = readFileSync(join(ROOT, '.github/workflows/machine-rule.yml'), 'utf8');
+  const BLOCK = 'uses: dazzer-io/.github/machine-rule@main';
+  assert.ok(text.includes(BLOCK), `Could not find machine-rule.yml calling its building block as ${BLOCK}`);
+  const as = (uses) => ({ 'machine-rule.yml': text.replace(BLOCK, `uses: ${uses}`) });
+  await everyCase(async (c) => {
+    for (const uses of ['dazzer-io/.github/machine-rule@main', 'dazzer-io/checks/machine-rule@main']) {
+      await c(() => mustPass(`the building block called as ${uses}`, as(uses), SHARED, { file: 'machine-rule.yml' }));
+    }
+    for (const [uses, says] of [
+      ['dazzer-io/made-up/machine-rule@main', /calls the machine rule's building block as dazzer-io\/made-up\/machine-rule@main/],
+      ['dazzer-io/.github/machine-rule@v1', /calls the machine rule's building block as dazzer-io\/\.github\/machine-rule@v1/],
+      ['dazzer-io/checks/machine-rule@0123456789abcdef0123456789abcdef01234567', /calls the machine rule's building block as dazzer-io\/checks\/machine-rule@0123/],
+      ['Dazzer-IO/checks/machine-rule@main', /calls the machine rule's building block as Dazzer-IO\/checks\/machine-rule@main/],
+      ['dazzer-io/.github/Machine-Rule@main', /calls the machine rule's building block as dazzer-io\/\.github\/Machine-Rule@main/],
+      ['./machine-rule', /calls the machine rule's building block as \.\/machine-rule/],
+    ]) await c(() => mustRefuse(`the building block called as ${uses}`, as(uses), SHARED, { file: 'machine-rule.yml', job: 'machine-rule', says }));
+  });
+});
+
 // engineer-review/caller.yml is the shape a repository copies to call engineer review
 // (engineer-review/README.md, "Adopting it"), so it passes the rule in every class of repository
 // that may copy it. It is filled as `node engineer-review/decide.mjs caller` fills
@@ -1023,7 +1088,13 @@ test('the judge reads this repository\'s own workflow folder clean, and refuses 
   });
 });
 
-test('machine-rule.yml runs the judge, then a pinned actionlint and zizmor, on the change\'s folder, read-only, on GitHub\'s machine, with no secret', () => {
+// The rule's steps live in its building block, machine-rule/action.yml, which GitHub fetches itself
+//; machine-rule.yml checks out the change alone and never its own folder, so the
+// rule runs in a private home the caller's token cannot read. A live trial read a private
+// repository's workflow granted no contents: read failing to fetch its own repository's action, so
+// the job keeps contents: read.
+const blockSteps = () => J.readWorkflow(readFileSync(join(ROOT, 'machine-rule/action.yml'), 'utf8')).js?.runs?.steps ?? [];
+test('machine-rule.yml runs its building block, which runs the judge, then a pinned actionlint and zizmor, on the change\'s folder, read-only, on GitHub\'s machine, with no secret', () => {
   need();
   const text = readFileSync(join(ROOT, '.github/workflows/machine-rule.yml'), 'utf8');
   const wfRead = J.readWorkflow(text);
@@ -1032,21 +1103,29 @@ test('machine-rule.yml runs the judge, then a pinned actionlint and zizmor, on t
   const jobs = Object.entries(js.jobs);
   const [, only] = jobs[0];
   const steps = only.steps;
-  const runs = steps.map((s) => s.run ?? '').join('\n');
+  const blockText = existsSync(join(ROOT, 'machine-rule/action.yml')) ? readFileSync(join(ROOT, 'machine-rule/action.yml'), 'utf8') : '';
+  const block = blockText ? J.readWorkflow(blockText) : { js: null, misread: [] };
+  const bsteps = block.js?.runs?.steps ?? [];
+  const runs = bsteps.map((s) => s.run ?? '').join('\n');
+  const theCall = steps.find((s) => s.uses === 'dazzer-io/.github/machine-rule@main');
   const checks = [
     [JSON.stringify(Object.keys(js.on)) === JSON.stringify(['pull_request', 'merge_group']), 'its triggers pull_request and merge_group alone'],
     [JSON.stringify(js.permissions) === JSON.stringify({}), 'no token at its top (permissions: {})'],
-    [JSON.stringify(only.permissions) === JSON.stringify({ contents: 'read' }), 'its one job\'s token reading the code alone'],
+    [JSON.stringify(only.permissions) === JSON.stringify({ contents: 'read' }), 'its one job\'s token reading the code alone, contents: read kept so GitHub can fetch the building block from a private home'],
     [jobs.length === 1 && only['runs-on'] === 'ubuntu-latest', 'one job on the literal ubuntu-latest'],
-    [!/secrets/i.test(text), 'no secret anywhere in it'],
-    [steps.filter((s) => /^actions\/checkout@[0-9a-f]{40}$/.test(String(s.uses).split(' ')[0])).length === 2 && steps.filter((s) => s.uses?.startsWith('actions/checkout@')).every((s) => s.with?.['persist-credentials'] === false), 'two checkouts pinned by commit, each with persist-credentials: false'],
-    [steps.some((s) => s.uses?.startsWith('actions/checkout@') && s.with?.repository === '${{ steps.source.outputs.repo }}' && s.with?.ref === '${{ steps.source.outputs.sha }}' && s.with?.path === '.machine-rule') && text.includes('${{ job.workflow_repository }}') && text.includes('${{ job.workflow_sha }}'), 'the rule checked out of job.workflow_repository at job.workflow_sha'],
-    [text.includes('${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}') && steps.some((s) => s.uses?.startsWith('actions/checkout@') && s.with?.path === '.change' && !('repository' in (s.with ?? {}))), 'the change checked out of the triggering repository at its head commit'],
-    [runs.includes('npm ci --ignore-scripts'), 'the YAML reader installed with npm ci --ignore-scripts'],
-    [runs.includes('node .machine-rule/machine-rule/judge.mjs --repository "$REPOSITORY" --visibility "$VISIBILITY" .change'), 'the judge run over the change'],
-    [steps.some((s) => s.env?.ACTIONLINT_VERSION === '1.7.12' && /^[0-9a-f]{64}$/.test(s.env?.ACTIONLINT_SHA256 ?? '')) && runs.includes('sha256sum -c -') && runs.includes('-shellcheck= -pyflakes='), 'actionlint 1.7.12 checked by its SHA-256, shellcheck and pyflakes off'],
+    [!/secrets/i.test(text) && !/secrets/i.test(blockText), 'no secret anywhere in it or its building block'],
+    [steps.filter((s) => /^actions\/checkout@[0-9a-f]{40}$/.test(String(s.uses).split(' ')[0])).length === 1 && steps.filter((s) => s.uses?.startsWith('actions/checkout@')).every((s) => s.with?.['persist-credentials'] === false && s.with?.path === '.change' && !('repository' in (s.with ?? {}))), 'one checkout, pinned by commit, of the change alone, with persist-credentials: false'],
+    [!text.includes('job.workflow_repository') && !text.includes('job.workflow_sha') && !text.includes('.machine-rule'), 'no checkout of its own folder (no job.workflow_repository, job.workflow_sha or .machine-rule)'],
+    [text.includes('${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}'), 'the change checked out at its head commit'],
+    [theCall && JSON.stringify(theCall.with) === JSON.stringify({ change: '.change' }) && steps.indexOf(theCall) === steps.length - 1, 'its last step the building block, dazzer-io/.github/machine-rule@main, handed the change\'s folder'],
+    [block.misread.length === 0 && block.js?.runs?.using === 'composite' && block.js?.inputs?.change?.required === true, 'machine-rule/action.yml a composite building block taking the change\'s folder'],
+    [bsteps.some((s) => /^actions\/setup-node@[0-9a-f]{40}$/.test(String(s.uses))), 'Node set up by a commit-pinned action'],
+    [runs.includes('cd "$GITHUB_ACTION_PATH/.."') && runs.includes('npm ci --ignore-scripts'), 'the YAML reader installed beside the block with npm ci --ignore-scripts'],
+    [runs.includes('node "$GITHUB_ACTION_PATH/judge.mjs" --repository "$REPOSITORY" --visibility "$VISIBILITY" "$CHANGE"'), 'the judge run over the change'],
+    [!/\$\{\{/.test(runs), 'no expression inside a run: line of the block, each handed in by env'],
+    [bsteps.some((s) => s.env?.ACTIONLINT_VERSION === '1.7.12' && /^[0-9a-f]{64}$/.test(s.env?.ACTIONLINT_SHA256 ?? '')) && runs.includes('sha256sum -c -') && runs.includes('-shellcheck= -pyflakes='), 'actionlint 1.7.12 checked by its SHA-256, shellcheck and pyflakes off'],
     [runs.indexOf('judge.mjs') < runs.indexOf('actionlint'), 'the judge before actionlint'],
-    [steps.some((s) => s.env?.ZIZMOR_VERSION === '1.31.1' && /^[0-9a-f]{64}$/.test(s.env?.ZIZMOR_SHA256 ?? '')) && runs.includes('--offline --no-progress --no-exit-codes --no-ignores --collect=all --strict-collection --config ../.machine-rule/machine-rule/zizmor.yml --format json .github ') && runs.includes('select(.ident == "unpinned-uses")'), 'zizmor 1.31.1 checked by its SHA-256, offline, honouring no ignore comment, refusing an action not pinned by commit'],
+    [bsteps.some((s) => s.env?.ZIZMOR_VERSION === '1.31.1' && /^[0-9a-f]{64}$/.test(s.env?.ZIZMOR_SHA256 ?? '')) && runs.includes('--offline --no-progress --no-exit-codes --no-ignores --collect=all --strict-collection --config "$GITHUB_ACTION_PATH/zizmor.yml" --format json .github ') && runs.includes('select(.ident == "unpinned-uses")'), 'zizmor 1.31.1 checked by its SHA-256, offline, honouring no ignore comment, refusing an action not pinned by commit'],
   ];
   const misses = checks.filter(([ok]) => !ok).map(([, what]) => `Could not find machine-rule.yml holding ${what}`);
   assert.ok(!misses.length, misses.join('\n'));
@@ -1059,10 +1138,9 @@ const ACTIONLINT_LABELS = ['windows-latest', 'windows-latest-8-cores', 'windows-
 const unknownLabel = (label) => `label "${label}" is unknown. available labels are ${ACTIONLINT_LABELS.map((l) => `"${l}"`).join(', ')}. if it is a custom label for self-hosted runner, set list of labels in actionlint.yaml config file`;
 const conflictingLabel = (label) => `label "${label}" conflicts with label "ubuntu-latest" defined at line:31,col:14. note: to run your job on each workers, use matrix`;
 
-test('machine-rule.yml\'s lint step ignores actionlint\'s unknown-label error for exactly the names OUR_MACHINE matches, and still reports every near miss', () => {
+test('machine-rule.yml\'s lint step, in its building block, ignores actionlint\'s unknown-label error for exactly the names OUR_MACHINE matches, and still reports every near miss', () => {
   need();
-  const text = readFileSync(join(ROOT, '.github/workflows/machine-rule.yml'), 'utf8');
-  const steps = Object.values(J.readWorkflow(text).js?.jobs ?? {})[0]?.steps ?? [];
+  const steps = blockSteps();
   const lint = steps.find((s) => /^Lint .*actionlint/.test(s.name ?? ''));
   const call = String(lint?.run ?? '').split('\n').find((l) => l.trim().startsWith('"$RUNNER_TEMP/actionlint"'));
   assert.ok(call, `Could not find machine-rule.yml's lint step calling actionlint: ${JSON.stringify(lint?.run ?? null)}`);
@@ -1896,9 +1974,11 @@ test('every tool a workflow here downloads is fetched with retries, so a passing
   const dir = join(ROOT, '.github/workflows');
   const misses = [];
   const found = [];
-  for (const f of J.readFolder(ROOT) ?? []) {
+  const block = { path: 'machine-rule/action.yml', text: readFileSync(join(ROOT, 'machine-rule/action.yml'), 'utf8') };
+  for (const f of [...(J.readFolder(ROOT) ?? []), block]) {
     const wfRead = J.readWorkflow(f.text);
-    for (const [id, jb] of Object.entries(wfRead.js?.jobs ?? {})) {
+    const jobsOf = f === block ? { 'runs': { steps: wfRead.js?.runs?.steps ?? [] } } : wfRead.js?.jobs ?? {};
+    for (const [id, jb] of Object.entries(jobsOf)) {
       for (const s of Array.isArray(jb?.steps) ? jb.steps : []) {
         if (typeof s?.run !== 'string') continue;
         const commands = s.run.replace(/\\\n\s*/g, ' ').split('\n');
@@ -1910,7 +1990,7 @@ test('every tool a workflow here downloads is fetched with retries, so a passing
       }
     }
   }
-  if (found.length < 3) misses.push(`Could not find the three tool downloads, actionlint in machine-rule.yml and osv-scanner and gitleaks in security-scan.yml, among the workflows in ${dir}: found ${found.length} (${found.join('; ')}), so this case would prove nothing`);
+  if (found.length < 3) misses.push(`Could not find the three tool downloads, actionlint in machine-rule/action.yml and osv-scanner and gitleaks in security-scan.yml, among the workflows in ${dir}: found ${found.length} (${found.join('; ')}), so this case would prove nothing`);
   assert.ok(!misses.length, misses.join('\n'));
 });
 
@@ -1930,7 +2010,7 @@ const NOT_A_CLASS = [
 ];
 const DECIDED = [
   { shape: 'call', left: "A call's machine and steps", spelling: "a refusal of the job's runs-on, or of its having none", skips: (h, j) => (j.runsOnLine !== null && h.line === j.runsOnLine) || /names no machine/.test(h.why) },
-  { shape: 'call', left: "A call's machine and steps", spelling: "a refusal of a step, a checkout keeping its credential or CodeQL's own scan steps", skips: (h) => /checks out without persist-credentials|runs CodeQL's scan/.test(h.why) },
+  { shape: 'call', left: "A call's machine and steps", spelling: "a refusal of a step, a checkout keeping its credential, CodeQL's own scan steps or a call of the machine rule's building block", skips: (h) => /checks out without persist-credentials|runs CodeQL's scan|calls the machine rule's building block/.test(h.why) },
   { shape: 'call', left: "A change check's secrets list, for a call", spelling: "a change check's secret that secrets.json does not name", skips: (h) => /^is a change check and (?:reads secrets\.|reads the whole secrets context|looks a secret up)/.test(h.why) },
   { shape: 'checks', left: 'for a job a checks entry keeps', spelling: 'a refusal that kept.json names no entry for the job', skips: (h) => /kept\.json names no entry for it/.test(h.why) },
 ];

@@ -19,6 +19,12 @@ const at = (f) => join(ROOT, f);
 const text = (f) => (existsSync(at(f)) ? readFileSync(at(f), 'utf8') : null);
 const isMap = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const PINNED = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+@[0-9a-f]{40}$/;
+// The one call not pinned by commit: machine-rule.yml's own step calling the machine rule's
+// building block at main from its home, dazzer-io/.github now and dazzer-io/checks once the
+// repository is renamed, the ref the organisation rule already runs that workflow from
+// (machine-rule/README.md). Any other uses: in any other file, at any other ref or home, is pinned.
+const BLOCK_CALLS = ['dazzer-io/.github/machine-rule@main', 'dazzer-io/checks/machine-rule@main'];
+const exempt = (file, u) => file === 'machine-rule.yml' && BLOCK_CALLS.includes(u);
 
 test('every workflow grants its token nothing at the top, each job names its own grant, and every action is pinned by its full commit id', () => {
   const dir = at('.github/workflows');
@@ -31,8 +37,11 @@ test('every workflow grants its token nothing at the top, each job names its own
     for (const [id, job] of Object.entries(wf.jobs ?? {})) {
       if (!isMap(job.permissions)) misses.push(`Could not find ${f}'s job ${id} naming its own grant as a map: it reads ${JSON.stringify(job.permissions ?? null)}`);
       const uses = [job.uses, ...(job.steps ?? []).map((s) => s.uses)].filter((u) => typeof u === 'string');
-      for (const u of uses) if (!u.startsWith('./') && !PINNED.test(u)) misses.push(`Could not find ${f}'s job ${id} pinning ${u} by its full commit id`);
+      for (const u of uses) if (!u.startsWith('./') && !PINNED.test(u) && !exempt(f, u)) misses.push(`Could not find ${f}'s job ${id} pinning ${u} by its full commit id`);
     }
+  }
+  for (const [file, u] of [['machine-rule.yml', 'dazzer-io/.github/machine-rule@v1'], ['machine-rule.yml', 'dazzer-io/made-up/machine-rule@main'], ['machine-rule.yml', 'Dazzer-IO/checks/machine-rule@main'], ['machine-rule.yml', 'dazzer-io/.github/.github/workflows/codeql.yml@main'], ['machine-rule.yml', 'actions/checkout@main'], ['codeql.yml', 'dazzer-io/.github/machine-rule@main']]) {
+    if (exempt(file, u) || PINNED.test(u)) misses.push(`Could not find ${u} in ${file} refused as not pinned by its full commit id: only machine-rule.yml's own building-block call at main from its home is exempt`);
   }
   assert.ok(!misses.length, misses.join('\n'));
 });

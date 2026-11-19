@@ -1,0 +1,58 @@
+# Decide tests: runs this repository's own tests (node --test test/*.test.mjs) on every pull
+# request and merge queue entry, so the decision logic of the shared workflows has CI.
+#
+# The repository ruleset requires a check named "decide-tests" from GitHub Actions; that
+# check is this job's check run, so the job's name must stay exactly "decide-tests"
+# (test/decide-tests-workflow.test.mjs holds it there). The tests read fixtures only:
+# no network, no secrets, read-only token.
+#
+# It runs on GitHub's ubuntu-latest, written as a literal label, and reads no CHECKS_, SCAN_ or
+# LOCKED_ setting: the fallback watcher, which sends a job waiting on our machines back to
+# GitHub's, does not read this repository's runs, so a job here on the change-check machines
+# would never be sent back if they stalled. Once the watcher reads this repository's runs, it may
+# read CHECKS_RUNNER_2 like the other repositories' checks. It asks setup-node for Node 24, then
+# installs the one package the tests read, the YAML reader they read workflows with, pinned in
+# package-lock.json, with npm ci --ignore-scripts, so
+# no package's install script runs. The workflow's own token grants nothing; the one job reads
+# the code alone.
+#
+# Before the tests it runs the leak check (./leak-check, the change's own copy) over every tracked
+# file and every branch, tag and pull request ref, so the required check refuses a change that adds
+# a private name and carries the leak check's notice. The checkout brings every branch and tag
+# (fetch-depth: 0); the check fetches the pull request refs itself, reading the public remote
+# with no credential kept.
+name: Decide tests
+
+on:
+  pull_request:
+  merge_group:
+
+permissions: {}
+
+jobs:
+  decide-tests:
+    name: decide-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Read every file and ref for private names
+        uses: ./leak-check
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Install the pinned YAML reader
+        run: npm ci --ignore-scripts
+
+      - name: Run the tests
+        run: node --test test/*.test.mjs

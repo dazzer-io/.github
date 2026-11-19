@@ -1,0 +1,32 @@
+# Engineer review caller: each gated repository keeps a copy of this file as
+# .github/workflows/engineer-review.yml (engineer-review/README.md, "Adopting it").
+# The copy is made by running decide.mjs caller from a checkout of the shared workflow repository
+# at the commit being pinned, since it copies the caller.yml beside it:
+#   node <checkout>/engineer-review/decide.mjs caller --owner <organisation> --repo <shared workflow repository> --commit <40-character commit id>
+# It fills the one "uses:" line below and refuses a branch, a tag or a commit not on main.
+# The calling job holds uses and permissions alone: its own permissions are what it hands the
+# called workflow (contents: read, which a private repository's activity needs, statuses: write
+# and pull-requests: read), and the top grants reading the code alone. It needs no if: of its own: the
+# called workflow's job skips a comment on an issue that is not a pull request, reading this
+# run's event. Keep this caller as it is: this file name, job and target at a commit, exactly
+# these three grants.
+name: Engineer review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+
+jobs:
+  engineer-review:
+    uses: <owner>/<repo>/.github/workflows/engineer-review.yml@<commit>
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: read

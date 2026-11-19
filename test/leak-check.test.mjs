@@ -1,0 +1,236 @@
+// The leak check (leak-check/action.yml, leak-check/scan.mjs): it reads every tracked file and the
+// tip of every branch, tag and pull request ref the remote serves, matches the names its one-way
+// hash list holds, refuses a finding in the files that leak-check/known.json does not accept, and
+// records its counts as one notice titled "Leak check". Every name here is invented, the hash list
+// is a fixture, and the refs come from a repository built in a temporary folder: no network.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { parse } from 'yaml';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(here, '..');
+const FIXTURES = path.join(here, 'fixtures', 'leak-check');
+const HASHES = path.join(FIXTURES, 'hashes.json');
+const NOTES = path.join(FIXTURES, 'repo', 'notes.md');
+const SCAN = path.join(ROOT, 'leak-check', 'scan.mjs');
+const NOT_REFUSED = 'a new leak finding was not refused';
+// The invented private names the fixture list holds, which no output may repeat.
+const PLAIN = ['lantern-vault', 'quill', 'Odalys', 'Fenwick', 'marlo@'];
+
+const load = async (file) => {
+  try { return await import(path.join(ROOT, 'leak-check', file)); } catch (e) { return { missing: e.message }; }
+};
+const hashes = await load('hashes.mjs');
+const scan = await load('scan.mjs');
+
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'leak-check-'));
+const GIT_ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: 'fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+  GIT_COMMITTER_NAME: 'fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+  GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+};
+const git = (cwd, ...args) => {
+  const r = spawnSync('git', ['-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...args], { cwd, env: GIT_ENV, encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+  return r.stdout.trim();
+};
+const commitAll = (cwd, message) => { git(cwd, 'add', '-A'); git(cwd, 'commit', '-q', '-m', message); return git(cwd, 'rev-parse', 'HEAD'); };
+
+// A git repository holding the fixture notes as its one tracked file.
+const notesRepo = () => {
+  const dir = tmp();
+  git(dir, 'init', '-q');
+  fs.copyFileSync(NOTES, path.join(dir, 'notes.md'));
+  commitAll(dir, 'notes');
+  return dir;
+};
+const run = (args) => {
+  const r = spawnSync(process.execPath, [SCAN, ...args], { encoding: 'utf8', env: GIT_ENV });
+  return { status: r.status, out: `${r.stdout}${r.stderr}` };
+};
+const writeKnown = (dir, known) => { const f = path.join(dir, 'known.json'); fs.writeFileSync(f, JSON.stringify(known)); return f; };
+const noticeOf = (out) => (out.match(/^::notice title=Leak check::(.*)$/m) ?? [])[1] ?? null;
+const NOTICE = /^files: (\d+) read, (\d+) new findings, (\d+) known; refs: (\d+) read, (\d+) findings on branches and tags, (\d+) on pull request refs/;
+const assertNoPlain = (out) => {
+  for (const p of PLAIN) assert.ok(!out.includes(p), `the run's output repeats the private name it found, which would publish it (${p}): ${out}`);
+};
+
+// What the fixture notes hold, by line: dazzer-io/quill (5), lantern-vault (6), Odalys Fenwick (7),
+// marlo@brightfen.example (8). The bare quill (5), the role address (8) and the public repository (9) are not findings.
+const EXPECTED = [
+  { line: 5, kind: 'repositories' },
+  { line: 6, kind: 'repositories' },
+  { line: 7, kind: 'people' },
+  { line: 8, kind: 'addresses' },
+];
+const ROLES = ['help@brightfen.example'];
+
+test('the matcher finds each kind of private name by line, and passes an ordinary word, a role address and a public repository', () => {
+  assert.equal(typeof scan.matcher, 'function', `${NOT_REFUSED}: leak-check/scan.mjs has no matcher (${scan.missing ?? 'not exported'})`);
+  assert.equal(typeof hashes.loadList, 'function', `${NOT_REFUSED}: leak-check/hashes.mjs has no loadList (${hashes.missing ?? 'not exported'})`);
+  const match = scan.matcher(hashes.loadList(HASHES), { roles: ROLES });
+  const found = match(fs.readFileSync(NOTES, 'utf8'), 'notes.md');
+  assert.deepEqual(found.map((f) => ({ line: f.line, kind: f.kind })), EXPECTED, `${NOT_REFUSED}: the matcher found ${JSON.stringify(found)}`);
+  for (const f of found) {
+    assert.equal(f.path, 'notes.md', `a finding does not name its file: ${JSON.stringify(f)}`);
+    assert.match(f.hash, /^[0-9a-f]{64}$/, `a finding does not carry the one-way hash it matched: ${JSON.stringify(f)}`);
+  }
+  assertNoPlain(JSON.stringify(found));
+});
+
+test('a name split over two lines, in capitals or as a possessive is still the person', () => {
+  assert.equal(typeof scan.matcher, 'function', `${NOT_REFUSED}: leak-check/scan.mjs has no matcher (${scan.missing ?? 'not exported'})`);
+  const match = scan.matcher(hashes.loadList(HASHES), { roles: ROLES });
+  const found = match('Thanks to ODALYS\nFENWICK, and to Odalys Fenwick\'s notes.\n', 'thanks.md');
+  assert.deepEqual(found.map((f) => [f.line, f.kind]), [[1, 'people'], [2, 'people']],`${NOT_REFUSED}: the matcher found ${JSON.stringify(found)}`);
+});
+
+test('a hash list with a salt is matched with that salt, and a list without one still loads as before', () => {
+  assert.equal(typeof hashes.loadList, 'function', `leak-check/hashes.mjs has no loadList (${hashes.missing ?? 'not exported'})`);
+  const list = hashes.loadList(HASHES);
+  assert.equal(list.salt, 'fixture-only-salt', `the list's salt was read as ${list.salt}`);
+  assert.ok(list.repositories.has(hashes.oneWay('Lantern-Vault ', list.salt)), 'a salted name was not found in its list');
+  assert.ok(!list.repositories.has(hashes.oneWay('lantern-vault')), 'an unsalted hash matched a salted list');
+  assert.equal(hashes.loadHashes(HASHES).size, 4, 'loadHashes does not hold every hash of the salted list');
+  const dir = tmp();
+  const bad = path.join(dir, 'salt.json');
+  fs.writeFileSync(bad, JSON.stringify({ salt: 7, repositories: ['a'.repeat(64)] }));
+  assert.throws(() => hashes.loadList(bad), /^Error: no one-way hash list\b.*salt/, 'a salt that is not a string was read');
+});
+
+test('the scan refuses a new finding in the tracked files, naming file, line and kind, never the name', () => {
+  const dir = notesRepo();
+  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
+  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
+  assert.notEqual(r.status, 0, `${NOT_REFUSED}: the scan passed four findings in notes.md: ${r.out}`);
+  for (const { line, kind } of EXPECTED) {
+    const said = new RegExp(`^::error file=notes\\.md,line=${line},title=Leak finding::.*${kind === 'repositories' ? 'repository' : kind === 'people' ? 'person' : 'address'}`, 'm');
+    assert.match(r.out, said, `${NOT_REFUSED}: no error names notes.md line ${line} (${kind}): ${r.out}`);
+  }
+  const notice = noticeOf(r.out);
+  assert.match(notice ?? '', NOTICE, `the run records no "Leak check" notice in its counted form: ${r.out}`);
+  const [, files, fresh, knownCount] = notice.match(NOTICE);
+  assert.deepEqual([files, fresh, knownCount], ['1', '4', '0'], `${NOT_REFUSED}: the notice reads ${notice}`);
+  assertNoPlain(r.out);
+});
+
+test('a finding known.json accepts is counted known and passes; the same name in another file is still new', () => {
+  const dir = notesRepo();
+  const match = scan.matcher(hashes.loadList(HASHES), { roles: ROLES });
+  const findings = match(fs.readFileSync(NOTES, 'utf8'), 'notes.md').map(({ path: p, kind, hash }) => ({ repository: 'dazzer-io/example', path: p, kind, hash }));
+  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings });
+  const clean = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
+  assert.equal(clean.status, 0, `four accepted findings were refused: ${clean.out}`);
+  assert.match(noticeOf(clean.out) ?? '', /^files: 1 read, 0 new findings, 4 known;/, `the notice does not count four known findings: ${clean.out}`);
+  // Another repository's acceptance does not carry over.
+  const other = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/elsewhere', '--root', dir]);
+  assert.notEqual(other.status, 0, `${NOT_REFUSED}: findings accepted for one repository passed in another: ${other.out}`);
+  fs.writeFileSync(path.join(dir, 'more.md'), 'A second mention of lantern-vault.\n');
+  commitAll(dir, 'more');
+  const more = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
+  assert.notEqual(more.status, 0, `${NOT_REFUSED}: a known name added to a new file passed: ${more.out}`);
+  assert.match(more.out, /^::error file=more\.md,line=1,title=Leak finding::/m, `${NOT_REFUSED}: no error names more.md: ${more.out}`);
+  assert.match(noticeOf(more.out) ?? '', /^files: 2 read, 1 new findings, 4 known;/, `the notice reads ${noticeOf(more.out)}`);
+  assertNoPlain(more.out);
+});
+
+test('an untracked file is not read; a tracked file that is not text is named, never clean', () => {
+  const dir = notesRepo();
+  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
+  fs.writeFileSync(path.join(dir, 'notes.md'), 'nothing private\n');
+  fs.writeFileSync(path.join(dir, 'logo.bin'), Buffer.from([0x89, 0x50, 0x00, 0xff]));
+  commitAll(dir, 'clean');
+  fs.writeFileSync(path.join(dir, 'scratch.md'), 'lantern-vault, not tracked\n');
+  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
+  assert.equal(r.status, 0, `a clean tracked tree was refused: ${r.out}`);
+  assert.match(noticeOf(r.out) ?? '', /^files: 1 read, 0 new findings, 0 known; .*; not read: 1 files, 0 refs$/, `the notice does not count the file it could not read: ${r.out}`);
+  assert.match(r.out, /logo\.bin: not text/, `the run does not name the file it could not read: ${r.out}`);
+});
+
+test('a known-findings list that is not readable stops the scan red, naming the entry by place', () => {
+  const dir = notesRepo();
+  const work = tmp();
+  for (const [name, body] of [['gone.json', null], ['broken.json', '{'], ['plain.json', JSON.stringify({ findings: [{ path: 'notes.md', kind: 'people', hash: 'Odalys Fenwick' }] })]]) {
+    const f = path.join(work, name);
+    if (body !== null) fs.writeFileSync(f, body);
+    const r = run(['--hashes', HASHES, '--known', f, '--repository', 'dazzer-io/example', '--root', dir]);
+    assert.notEqual(r.status, 0, `the scan ran on the unreadable ${name}: ${r.out}`);
+    assert.match(r.out, /no known-findings list/, `the scan stopped on ${name} without saying "no known-findings list": ${r.out}`);
+    assertNoPlain(r.out);
+  }
+  const r = run(['--hashes', HASHES, '--known', path.join(work, 'plain.json'), '--root', dir]);
+  assert.match(r.out, /findings\[0\]/, `the refusal does not name the entry by place: ${r.out}`);
+});
+
+test('the tip of every branch, tag and pull request ref the remote serves is read; their findings are counted apart and do not refuse the change', () => {
+  const origin = tmp();
+  git(origin, 'init', '-q');
+  fs.writeFileSync(path.join(origin, 'README.md'), 'A public readme.\n');
+  const main = commitAll(origin, 'readme');
+  git(origin, 'tag', '-a', 'v1', '-m', 'first');
+  git(origin, 'checkout', '-q', '-b', 'parked');
+  fs.writeFileSync(path.join(origin, 'parked.md'), 'Parked work for lantern-vault.\n');
+  commitAll(origin, 'parked');
+  git(origin, 'checkout', '-q', '-b', 'pull-3', 'main');
+  fs.writeFileSync(path.join(origin, 'draft.md'), 'Drafted by Odalys Fenwick for dazzer-io/quill.\n');
+  const pull = commitAll(origin, 'draft');
+  git(origin, 'update-ref', 'refs/pull/3/head', pull);
+  git(origin, 'checkout', '-q', 'main');
+  git(origin, 'branch', '-q', '-D', 'pull-3');
+  assert.equal(git(origin, 'rev-parse', 'HEAD'), main);
+
+  const work = tmp();
+  git(work, 'clone', '-q', '--depth=1', `file://${origin}`, 'copy');
+  const dir = path.join(work, 'copy');
+  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
+  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir, '--refs', 'origin']);
+  assert.equal(r.status, 0, `findings on branches and pull request refs refused a change whose files are clean: ${r.out}`);
+  const notice = noticeOf(r.out);
+  assert.match(notice ?? '', NOTICE, `the run records no "Leak check" notice in its counted form: ${r.out}`);
+  const [, files, fresh, , refs, onBranches, onPulls] = notice.match(NOTICE);
+  assert.deepEqual({ files, fresh, refs, onBranches, onPulls }, { files: '1', fresh: '0', refs: '4', onBranches: '1', onPulls: '2' },
+    `the notice does not read main, parked, v1 and the pull request ref, with one finding on a branch and two on the pull request ref: ${notice}`);
+  assert.match(r.out, /refs\/heads\/parked: parked\.md:1 /, `the run does not say where the finding on the branch is: ${r.out}`);
+  assert.match(r.out, /refs\/pull\/3\/head: draft\.md:1 /, `the run does not say where the findings on the pull request ref are: ${r.out}`);
+  assertNoPlain(r.out);
+});
+
+test('a remote that serves nothing is read as unknown refs, never as none', () => {
+  const dir = notesRepo();
+  fs.writeFileSync(path.join(dir, 'notes.md'), 'nothing private\n');
+  commitAll(dir, 'clean');
+  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
+  const r = run(['--hashes', HASHES, '--known', known, '--root', dir, '--refs', 'nowhere']);
+  assert.match(r.out, /could not read the refs of nowhere/, `a remote that could not be listed was not named: ${r.out}`);
+  assert.match(noticeOf(r.out) ?? '', /refs: unknown/, `a remote that could not be listed was counted as read: ${r.out}`);
+});
+
+test('the shipped known.json is hashes and places only', () => {
+  const file = path.join(ROOT, 'leak-check', 'known.json');
+  assert.ok(fs.existsSync(file), 'leak-check/known.json is not there');
+  const known = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.ok(Array.isArray(known.findings), 'known.json holds no findings list');
+  for (const [i, f] of known.findings.entries()) assert.match(f.hash ?? '', /^[0-9a-f]{64}$/, `known.json findings[${i}] holds no one-way hash`);
+  assert.ok(Array.isArray(known['role-addresses']) && known['role-addresses'].every((a) => /^[a-z0-9._+-]+@[a-z0-9.-]+$/.test(a)), 'known.json holds no role-address list');
+});
+
+test('the action reads the files and refs, pins every outside action by its full commit and puts no input into its script', () => {
+  const file = path.join(ROOT, 'leak-check', 'action.yml');
+  assert.ok(fs.existsSync(file), `${NOT_REFUSED}: leak-check/action.yml is not there`);
+  const action = parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(action.runs?.using, 'composite', 'the leak check is not a composite action');
+  const steps = action.runs.steps ?? [];
+  for (const s of steps) {
+    if (typeof s.uses === 'string') assert.match(s.uses, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+@[0-9a-f]{40}$/, `the action uses ${s.uses} without pinning it by its full commit`);
+    if (typeof s.run === 'string') assert.doesNotMatch(s.run, /\$\{\{/, `a step's script reads an expression directly, not through its environment: ${s.run}`);
+  }
+  const scanStep = steps.find((s) => typeof s.run === 'string' && /scan\.mjs/.test(s.run));
+  assert.ok(scanStep, `${NOT_REFUSED}: no step runs leak-check/scan.mjs`);
+  for (const flag of ['--hashes', '--known', '--repository', '--refs']) assert.ok(scanStep.run.includes(flag), `the scan step does not pass ${flag}`);
+});

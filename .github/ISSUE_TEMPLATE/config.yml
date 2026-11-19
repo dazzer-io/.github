@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/dazzer-io/.github/blob/main/SECURITY.md
+    about: Please report security problems privately through the repository's Security tab, never as an issue.
+  - name: Questions about Dazzer
+    url: https://dazzer.io
+    about: For general questions, visit our website.

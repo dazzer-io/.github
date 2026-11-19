@@ -1,8 +1,9 @@
 // The leak scanner: it reads every file git tracks and the tip of every branch, tag and pull
 // request ref a remote serves, matches the names the one-way hash list holds (hashes.mjs), refuses
 // a finding in the tracked files that known.json does not accept, and records its counts as one
-// notice titled "Leak check". A file it cannot read as text is named and counted unread, never
-// clean; a ref the fetch could not serve is unknown with its name, never zero findings; and with no
+// notice titled "Leak check". A file that is not UTF-8 text (UTF-16, a stray Windows-1252 byte,
+// a NUL) is read as bytes, matched in every decoding that could show a name, and named; a file it
+// could not open is named and counted unread, and refuses the run; a ref the fetch could not serve is unknown with its name, never zero findings; and with no
 // one-way hash list it stops before reading anything. No output repeats a name it found: a finding
 // is told by file, line, kind and the one-way hash it matched.
 //
@@ -10,8 +11,8 @@
 //   node leak-check/scan.mjs --hashes <hashes.json> [--known <known.json>] [--repository <owner/name>]
 //                            [--owner <owner>] [--root <folder>] [--refs <remote>] [<file>...]
 // With no files named it reads every file git tracks under --root. It exits 1 on a refused hash
-// list or known-findings list, on a new finding in the files, or on a file it could not open;
-// findings on refs, which a change cannot remove, are counted and named but refuse nothing.
+// list or known-findings list, on a new finding in the files, or on a file it could not open
+// (verdict decides both what it prints and its exit); findings on refs, which a change cannot remove, are counted and named but refuse nothing.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -19,26 +20,39 @@ import { fileURLToPath } from 'node:url';
 import { KINDS, loadList, oneWay } from './hashes.mjs';
 
 const decoder = new TextDecoder('utf-8', { fatal: true });
+const LOSSY = ['utf-8', 'utf-16le', 'utf-16be'].map((e) => new TextDecoder(e));
 const HASH = /^[0-9a-f]{64}$/;
 export const KNOWN_REFUSAL = 'no known-findings list';
 export const WHAT = { repositories: 'a private repository name', people: 'a private person\'s name', addresses: 'a private address' };
 
-// Text of `bytes`, or null when they are not UTF-8 text (a stray byte or a NUL marks a binary file).
-export function asText(bytes) {
-  if (bytes.includes(0)) return null;
-  try { return decoder.decode(bytes); } catch { return null; }
+// The texts to match in `bytes`: { texts, bytes }. UTF-8 text with no NUL is one text; anything
+// else (UTF-16 with or without a byte-order mark, a stray Windows-1252 byte, a NUL, an image) is
+// read as bytes, in every decoding that could show a name: UTF-8 with bad bytes replaced, Latin-1,
+// and UTF-16 both ways. A binary holding no name matches in none of them and passes.
+export function decodings(bytes) {
+  if (!bytes.includes(0)) {
+    try { return { texts: [decoder.decode(bytes)], bytes: false }; } catch { /* read as bytes below */ }
+  }
+  const latin1 = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length).toString('latin1');
+  return { texts: [...LOSSY.map((d) => d.decode(bytes)), latin1], bytes: true };
 }
 
-// Reads each path under `root`: { read: [{ path, text }], unread: [{ path, why, opened }] }.
+// The findings in every text of one file, each once.
+export function matchTexts(match, texts, filePath) {
+  const found = new Map();
+  for (const text of texts) for (const f of match(text, filePath)) found.set(`${f.line}:${f.kind}:${f.hash}`, f);
+  return [...found.values()].sort((a, b) => a.line - b.line || KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind));
+}
+
+// Reads each path under `root`: { read: [{ path, texts, bytes }], unread: [{ path, why }] }; only a
+// file it could not open is unread.
 export function readFiles(root, paths) {
   const read = [];
   const unread = [];
   for (const p of paths) {
     let bytes;
-    try { bytes = readFileSync(path.join(root, p)); } catch (e) { unread.push({ path: p, why: `could not open it (${e.code ?? e.message})`, opened: false }); continue; }
-    const text = asText(bytes);
-    if (text === null) unread.push({ path: p, why: 'not text', opened: true });
-    else read.push({ path: p, text });
+    try { bytes = readFileSync(path.join(root, p)); } catch (e) { unread.push({ path: p, why: `could not open it (${e.code ?? e.message})` }); continue; }
+    read.push({ path: p, ...decodings(bytes) });
   }
   return { read, unread };
 }
@@ -146,7 +160,7 @@ export function classify(findings, known, repository) {
 
 // ---------- refs ----------
 
-// Reads each ref through `serve(ref)`, which returns its files as [{ path, text, blob? }] or null,
+// Reads each ref through `serve(ref)`, which returns its files as [{ path, texts | text, blob? }] or null,
 // or throws. A read ref is { ref, state: 'read', findings, found }; a ref it could not serve is
 // { ref, state: 'unknown', findings: null, why }. Files with the same blob id are matched once.
 export async function readRefs(refs, serve, match) {
@@ -160,7 +174,7 @@ export async function readRefs(refs, serve, match) {
     for (const f of files) {
       let hits = f.blob ? byBlob.get(f.blob) : undefined;
       if (!hits) {
-        hits = match(f.text, f.path).map(({ line, kind, hash }) => ({ line, kind, hash }));
+        hits = matchTexts(match, f.texts ?? [f.text], f.path).map(({ line, kind, hash }) => ({ line, kind, hash }));
         if (f.blob) byBlob.set(f.blob, hits);
       }
       for (const h of hits) found.push({ path: f.path, ...h });
@@ -209,26 +223,16 @@ export function remoteRefs(root, remote) {
         const nl = out.indexOf(10, at);
         const [blob, , size] = out.subarray(at, nl).toString().split(' ');
         const n = Number(size);
-        texts.set(blob, asText(out.subarray(nl + 1, nl + 1 + n)));
+        texts.set(blob, decodings(out.subarray(nl + 1, nl + 1 + n)).texts);
         at = nl + 1 + n + 1;
       }
     }
-    return blobs.filter((b) => typeof texts.get(b.blob) === 'string').map((b) => ({ path: b.path, blob: b.blob, text: texts.get(b.blob) }));
+    return blobs.map((b) => ({ path: b.path, blob: b.blob, texts: texts.get(b.blob) }));
   };
   return { refs, serve };
 }
 
 // ---------- the reading ----------
-
-// Whether a run read everything and found nothing, and the lines that say so or say what is missing.
-export function verdict({ files, refs }) {
-  const unknown = refs.filter((r) => r.state !== 'read');
-  const findings = refs.reduce((n, r) => n + (r.state === 'read' ? r.findings : 0), 0);
-  const lines = [`files: ${files.read.length} read, ${files.unread.length} unread; refs: ${refs.length - unknown.length} read, ${unknown.length} unknown, ${findings} findings`];
-  for (const u of files.unread) lines.push(`could not read ${u.path}: ${u.why}`);
-  for (const r of unknown) lines.push(`could not read ${r.ref}: ${r.why}`);
-  return { clean: !files.unread.length && !unknown.length && !findings, lines };
-}
 
 // The one notice a run records: its counts, and what it could not read when there is any.
 // refs is null when the remote could not be listed at all.
@@ -248,6 +252,25 @@ const data = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace
 const prop = (s) => data(s).replace(/:/g, '%3A').replace(/,/g, '%2C');
 const said = (f) => `${WHAT[f.kind]} (one-way hash ${f.hash})`;
 
+// What a run prints and exits with: { code, lines }. main prints these lines and returns this code,
+// and nothing else decides it. A new finding in the files, or a file it could not open, exits 1;
+// findings on refs and refs it could not read are named and counted but refuse nothing. Every path
+// and ref is escaped as a workflow command's message, so a name holding a line break cannot start
+// a command of its own in the log.
+export function verdict({ files, fresh, known, refs }) {
+  const lines = [];
+  for (const f of fresh) lines.push(`::error file=${prop(f.path)},line=${f.line},title=Leak finding::${data(`${said(f)}, not in known.json`)}`);
+  for (const f of known) lines.push(`known: ${data(f.path)}:${f.line} ${said(f)}`);
+  for (const f of files.read) if (f.bytes) lines.push(`read as bytes: ${data(f.path)} (not UTF-8 text; matched as UTF-8, Latin-1 and UTF-16)`);
+  for (const u of files.unread) lines.push(`could not read ${data(u.path)}: ${data(u.why)}`);
+  for (const r of refs ?? []) {
+    if (r.state !== 'read') { lines.push(`could not read ${data(r.ref)}: ${data(r.why)}`); continue; }
+    for (const f of r.found) lines.push(`${data(r.ref)}: ${data(f.path)}:${f.line} ${said(f)}`);
+  }
+  lines.push(`::notice title=Leak check::${data(notice({ files, fresh, known, refs }))}`);
+  return { code: fresh.length || files.unread.length ? 1 : 0, lines };
+}
+
 async function main(argv) {
   const args = [...argv];
   const opt = { root: process.cwd(), owner: 'dazzer-io', repository: '' };
@@ -262,15 +285,15 @@ async function main(argv) {
   try {
     list = loadList(opt.hashes ?? '(no --hashes given)');
     if (opt.known !== undefined) known = loadKnown(opt.known);
-  } catch (e) { console.error(e.message); return 1; }
+  } catch (e) { console.error(data(e.message)); return 1; }
 
   let tracked = paths;
   if (!tracked.length) {
-    try { tracked = git(opt.root, ['ls-files', '-z']).split('\0').filter(Boolean); } catch (e) { console.error(`could not list the files git tracks under ${opt.root}: ${e.message}`); return 1; }
+    try { tracked = git(opt.root, ['ls-files', '-z']).split('\0').filter(Boolean); } catch (e) { console.error(data(`could not list the files git tracks under ${opt.root}: ${e.message}`)); return 1; }
   }
   const match = matcher(list, { roles: known.roles, owner: opt.owner });
   const files = readFiles(opt.root, tracked);
-  const split = classify(files.read.flatMap((f) => match(f.text, f.path)), known, opt.repository);
+  const split = classify(files.read.flatMap((f) => matchTexts(match, f.texts, f.path)), known, opt.repository);
 
   let refs = [];
   if (opt.refs !== undefined) {
@@ -279,20 +302,14 @@ async function main(argv) {
       refs = await readRefs(remote.refs, remote.serve, match);
     } catch (e) {
       console.log(`::warning title=Leak check not read::${data(`could not read the refs of ${opt.refs}: ${e.message}`)}`);
-      console.log(`could not read the refs of ${opt.refs}: ${e.message}`);
+      console.log(data(`could not read the refs of ${opt.refs}: ${e.message}`));
       refs = null;
     }
   }
 
-  for (const f of split.fresh) console.log(`::error file=${prop(f.path)},line=${f.line},title=Leak finding::${data(`${said(f)}, not in known.json`)}`);
-  for (const f of split.known) console.log(`known: ${f.path}:${f.line} ${said(f)}`);
-  for (const u of files.unread) console.log(`could not read ${u.path}: ${u.why}`);
-  for (const r of refs ?? []) {
-    if (r.state !== 'read') { console.log(`could not read ${r.ref}: ${r.why}`); continue; }
-    for (const f of r.found) console.log(`${r.ref}: ${f.path}:${f.line} ${said(f)}`);
-  }
-  console.log(`::notice title=Leak check::${data(notice({ files, fresh: split.fresh, known: split.known, refs }))}`);
-  return split.fresh.length || files.unread.some((u) => !u.opened) ? 1 : 0;
+  const { code, lines } = verdict({ files, fresh: split.fresh, known: split.known, refs });
+  for (const line of lines) console.log(line);
+  return code;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main(process.argv.slice(2));

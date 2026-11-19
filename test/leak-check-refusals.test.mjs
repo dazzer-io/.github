@@ -1,8 +1,9 @@
 // The leak check's refusals (leak-check/hashes.mjs, leak-check/scan.mjs): a check that passes when
 // it read nothing is worse than none. The hash list must exist, hold at least one entry and hold
-// one-way hashes only; a file that is not text is named and counted unread, never clean; a ref the
-// fetch could not serve is unknown with its name, never zero findings. Every name here is invented,
-// and no test touches the network: files and refs are built in a temporary folder or passed in.
+// one-way hashes only; a file that cannot be opened is named and counted unread and refuses the run,
+// and one that is not UTF-8 is read as bytes, never skipped as clean; a ref the fetch could not
+// serve is unknown with its name, never zero findings. Every name here is invented, and no test
+// touches the network: files and refs are built in a temporary folder or passed in.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -96,19 +97,34 @@ test('the scanner run from the command line stops red on an empty hash list, bef
 
 // ---------- files it cannot read ----------
 
-test('a file that is not text is named and counted unread, never clean', () => {
-  assert.equal(typeof scan.readFiles, 'function', `leak-check/scan.mjs has no readFiles: ${scan.missing ?? 'not exported'}`);
+// These run the scanner itself, so its exit is what is judged, not a helper it might not call.
+const runScan = (dir, files) => {
+  const r = spawnSync(process.execPath, [SCAN, '--hashes', path.join(FIXTURES, 'hashes.json'), '--root', dir, ...files], { encoding: 'utf8' });
+  return { status: r.status, out: `${r.stdout}${r.stderr}` };
+};
+const noticeOf = (out) => (out.match(/^::notice title=Leak check::(.*)$/m) ?? [])[1] ?? '';
+
+test('a file the scanner could not open is named and counted unread, and the run is never clean', () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'notes.md'), 'a plain note\n');
+  const r = runScan(dir, ['notes.md', 'gone.md']);
+  assert.notEqual(r.status, 0, `a run that could not open gone.md passed: ${r.out}`);
+  assert.match(r.out, /^could not read gone\.md: could not open it/m, `the run does not name the file it could not open: ${r.out}`);
+  assert.match(noticeOf(r.out), /^files: 1 read, .*; not read: 1 files, 0 refs$/, `the notice does not count the file it could not open: ${r.out}`);
+});
+
+test('a file that is not UTF-8 is read as bytes and named, never skipped as clean', () => {
   const dir = tmp();
   fs.writeFileSync(path.join(dir, 'notes.md'), 'a plain note\n');
   fs.writeFileSync(path.join(dir, 'logo.bin'), Buffer.from([0xff, 0xfe, 0x00, 0xc3, 0x28, 0x80]));
-  const got = scan.readFiles(dir, ['notes.md', 'logo.bin', 'gone.md']);
-  assert.deepEqual(got.read.map((f) => f.path), ['notes.md'], `the files read as text are ${JSON.stringify(got.read.map((f) => f.path))}`);
-  assert.deepEqual(got.unread.map((f) => f.path).sort(), ['gone.md', 'logo.bin'], `the files counted unread are ${JSON.stringify(got.unread)}`);
-  for (const u of got.unread) assert.ok(u.why, `${u.path} was counted unread without saying why`);
-  const verdict = scan.verdict({ files: got, refs: [] });
-  assert.equal(verdict.clean, false, 'two files nobody read were called clean');
-  assert.match(verdict.lines.join('\n'), /logo\.bin/, `the run does not name the file it could not read: ${verdict.lines.join('\n')}`);
-  assert.match(verdict.lines.join('\n'), /2 unread/, `the run does not count the unread files: ${verdict.lines.join('\n')}`);
+  const r = runScan(dir, ['notes.md', 'logo.bin']);
+  assert.equal(r.status, 0, `a binary holding no name was refused: ${r.out}`);
+  assert.match(r.out, /^read as bytes: logo\.bin /m, `the run does not name the file it read as bytes: ${r.out}`);
+  assert.match(noticeOf(r.out), /^files: 2 read, 0 new findings, 0 known/, `the notice does not count the binary as read: ${r.out}`);
+  fs.writeFileSync(path.join(dir, 'logo.bin'), Buffer.concat([Buffer.from([0xff, 0x00]), Buffer.from(' lantern-vault '), Buffer.from([0x00])]));
+  const named = runScan(dir, ['notes.md', 'logo.bin']);
+  assert.notEqual(named.status, 0, `a private name in a binary file passed: ${named.out}`);
+  assert.ok(!named.out.includes('lantern-vault'), `the run repeats the private name it found: ${named.out}`);
 });
 
 // ---------- refs it could not fetch ----------
@@ -130,18 +146,22 @@ test('a ref the fetch could not serve is unknown with its name, never zero findi
     assert.equal(r.findings, null, `the ref ${name} the fetch could not serve was given ${r.findings} findings`);
     assert.ok(r.why, `the unknown ref ${name} does not say why`);
   }
-  const verdict = scan.verdict({ files: { read: [], unread: [] }, refs });
-  assert.equal(verdict.clean, false, 'two refs nobody read were called clean');
+  // verdict is what the scanner's main prints and exits with; refs a change cannot fix refuse
+  // nothing, but each unknown one is named and counted, never read as zero findings.
+  assert.equal(typeof scan.verdict, 'function', `leak-check/scan.mjs has no verdict: ${scan.missing ?? 'not exported'}`);
+  const verdict = scan.verdict({ files: { read: [], unread: [] }, fresh: [], known: [], refs });
   const said = verdict.lines.join('\n');
-  for (const name of ['refs/pull/7/head', 'refs/tags/v0.1']) assert.ok(said.includes(name), `the run does not name the unknown ref ${name}: ${said}`);
-  assert.match(said, /2 unknown/, `the run does not count the unknown refs: ${said}`);
+  for (const name of ['refs/pull/7/head', 'refs/tags/v0.1']) assert.match(said, new RegExp(`^could not read ${name.replace(/[./]/g, '\\$&')}: `, 'm'), `the run does not name the unknown ref ${name}: ${said}`);
+  assert.match(said, /; not read: 0 files, 2 refs$/m, `the run does not count the unknown refs: ${said}`);
 });
 
-test('a run that read every file and every ref, finding nothing, is clean', () => {
+test('a run that read every file and every ref, finding nothing, exits clean', () => {
   assert.equal(typeof scan.verdict, 'function', `leak-check/scan.mjs has no verdict: ${scan.missing ?? 'not exported'}`);
   const verdict = scan.verdict({
-    files: { read: [{ path: 'notes.md', text: 'x' }], unread: [] },
-    refs: [{ ref: 'refs/heads/main', state: 'read', findings: 0 }],
+    files: { read: [{ path: 'notes.md', texts: ['x'] }], unread: [] },
+    fresh: [],
+    known: [],
+    refs: [{ ref: 'refs/heads/main', state: 'read', findings: 0, found: [] }],
   });
-  assert.equal(verdict.clean, true, `a run that read everything was not clean: ${verdict.lines.join('\n')}`);
+  assert.equal(verdict.code, 0, `a run that read everything did not exit clean: ${verdict.lines.join('\n')}`);
 });

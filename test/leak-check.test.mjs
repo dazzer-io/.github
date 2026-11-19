@@ -140,17 +140,62 @@ test('a finding known.json accepts is counted known and passes; the same name in
   assertNoPlain(more.out);
 });
 
-test('an untracked file is not read; a tracked file that is not text is named, never clean', () => {
+test('an untracked file is not read; a tracked binary holding no name is read as bytes and passes', () => {
   const dir = notesRepo();
   const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
   fs.writeFileSync(path.join(dir, 'notes.md'), 'nothing private\n');
-  fs.writeFileSync(path.join(dir, 'logo.bin'), Buffer.from([0x89, 0x50, 0x00, 0xff]));
+  // An image's first bytes: a NUL, a stray 0xff, no name anywhere.
+  fs.writeFileSync(path.join(dir, 'logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0xff, 0x00]));
   commitAll(dir, 'clean');
   fs.writeFileSync(path.join(dir, 'scratch.md'), 'lantern-vault, not tracked\n');
   const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
-  assert.equal(r.status, 0, `a clean tracked tree was refused: ${r.out}`);
-  assert.match(noticeOf(r.out) ?? '', /^files: 1 read, 0 new findings, 0 known; .*; not read: 1 files, 0 refs$/, `the notice does not count the file it could not read: ${r.out}`);
-  assert.match(r.out, /logo\.bin: not text/, `the run does not name the file it could not read: ${r.out}`);
+  assert.equal(r.status, 0, `a clean tracked tree holding an image was refused: ${r.out}`);
+  assert.match(noticeOf(r.out) ?? '', /^files: 2 read, 0 new findings, 0 known; refs: 0 read, 0 findings on branches and tags, 0 on pull request refs$/, `the notice does not count the image as read: ${r.out}`);
+  assert.match(r.out, /^read as bytes: logo\.png /m, `the run does not name the file it read as bytes: ${r.out}`);
+});
+
+// A repository holding one tracked file of these bytes, scanned with no accepted findings.
+const scanBytes = (name, bytes) => {
+  const dir = tmp();
+  git(dir, 'init', '-q');
+  fs.writeFileSync(path.join(dir, name), bytes);
+  commitAll(dir, name);
+  return run(['--hashes', HASHES, '--known', writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] }), '--repository', 'dazzer-io/example', '--root', dir]);
+};
+const utf16le = (s) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(s, 'utf16le')]);
+const utf16be = (s) => Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(s, 'utf16le').swap16()]);
+
+test('a private name in a file that is not UTF-8 is still refused: UTF-16 with a byte-order mark, a stray Windows-1252 byte, a NUL', () => {
+  const cases = [
+    ['minutes.txt', utf16le('Minutes\r\nDrafted by Odalys Fenwick.\r\n'), 2, 'person', 'UTF-16 (little-endian) with a byte-order mark'],
+    ['minutes-be.txt', utf16be('Minutes\nThe mirror is dazzer-io/quill.\n'), 2, 'repository', 'UTF-16 (big-endian) with a byte-order mark'],
+    ['letter.md', Buffer.concat([Buffer.from('A note\nIt\'s lantern-vault'), Buffer.from([0x92]), Buffer.from('s backup.\n')]), 2, 'repository', 'UTF-8 with one stray 0x92 byte'],
+    ['dump.bin', Buffer.concat([Buffer.from([0x00, 0x01, 0x02]), Buffer.from('\nwrite to marlo@brightfen.example\n'), Buffer.from([0x00])]), 2, 'address', 'a file holding a NUL byte'],
+  ];
+  for (const [name, bytes, line, said, what] of cases) {
+    const r = scanBytes(name, bytes);
+    assert.notEqual(r.status, 0, `${NOT_REFUSED}: a private name in ${what} passed the scan: ${r.out}`);
+    const error = new RegExp(`^::error file=${name.replace(/\./g, '\\.')},line=${line},title=Leak finding::.*${said}`, 'm');
+    assert.match(r.out, error, `${NOT_REFUSED}: no error names ${name} line ${line} (${what}): ${r.out}`);
+    assertNoPlain(r.out);
+  }
+});
+
+test('a file name or path holding a line break cannot forge a workflow command in the log', () => {
+  const dir = notesRepo();
+  const odd = 'odd\n::warning title=forged::known.md';
+  fs.writeFileSync(path.join(dir, odd), 'A mention of lantern-vault.\n');
+  commitAll(dir, 'odd');
+  const match = scan.matcher(hashes.loadList(HASHES), { roles: ROLES });
+  const findings = [
+    ...match(fs.readFileSync(NOTES, 'utf8'), 'notes.md'),
+    ...match('A mention of lantern-vault.\n', odd),
+  ].map(({ path: p, kind, hash }) => ({ path: p, kind, hash }));
+  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings });
+  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir, 'notes.md', odd, 'gone\n::error title=forged::gone.md']);
+  assert.match(r.out, /^known: odd%0A::warning title=forged::known\.md:1 /m, `the known finding's path was not escaped: ${r.out}`);
+  assert.match(r.out, /^could not read gone%0A::error title=forged::gone\.md: /m, `the unopened path was not escaped: ${r.out}`);
+  assert.doesNotMatch(r.out, /^::(?:warning|error) title=forged/m, `a file name forged a workflow command in the log: ${r.out}`);
 });
 
 test('a known-findings list that is not readable stops the scan red, naming the entry by place', () => {

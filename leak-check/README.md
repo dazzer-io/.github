@@ -28,7 +28,10 @@ that is missing, empty or holds anything but 64-character hex hashes stops the c
   titled "Leak finding" on its file and line.
 - Findings on branches, tags and pull request refs fail nothing, since a change cannot remove them.
   They are listed in the log by ref, file and line, and counted apart.
-- A tracked file that is not text is named and counted as not read, never as clean. A ref the fetch
+- A tracked file that is not UTF-8 text (UTF-16, a stray Windows-1252 byte, a NUL, an image) is
+  read as bytes, matched as UTF-8, Latin-1 and UTF-16, and named in the log; a binary holding no
+  name passes. A tracked file that cannot be opened is named, counted as not read, and fails the
+  step. Paths and refs in the log are escaped, so a file name cannot start a command. A ref the fetch
   did not bring is named and counted as not read. A remote that cannot be listed makes the refs unknown.
 - Nothing it prints repeats a name it found: a finding is told by file, line, kind and the one-way
   hash it matched.

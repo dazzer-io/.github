@@ -42,19 +42,30 @@ const git = (cwd, ...args) => {
 };
 const commitAll = (cwd, message) => { git(cwd, 'add', '-A'); git(cwd, 'commit', '-q', '-m', message); return git(cwd, 'rev-parse', 'HEAD'); };
 
-// A git repository holding the fixture notes as its one tracked file.
-const notesRepo = () => {
+// A git repository holding these files ({ path: contents }), committed.
+const repoOf = (files) => {
   const dir = tmp();
   git(dir, 'init', '-q');
-  fs.copyFileSync(NOTES, path.join(dir, 'notes.md'));
-  commitAll(dir, 'notes');
+  for (const [p, body] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true }); fs.writeFileSync(path.join(dir, p), body); }
+  commitAll(dir, 'files');
   return dir;
 };
+// A git repository holding the fixture notes as its one tracked file.
+const notesRepo = () => repoOf({ 'notes.md': fs.readFileSync(NOTES) });
 const run = (args) => {
   const r = spawnSync(process.execPath, [SCAN, ...args], { encoding: 'utf8', env: GIT_ENV });
   return { status: r.status, out: `${r.stdout}${r.stderr}` };
 };
 const writeKnown = (dir, known) => { const f = path.join(dir, 'known.json'); fs.writeFileSync(f, JSON.stringify(known)); return f; };
+// Scans dir with the fixture list, accepting `findings` for `repository`; `extra` arguments follow.
+const scanRepo = (dir, { findings = [], repository = 'dazzer-io/example', extra = [] } = {}) =>
+  run(['--hashes', HASHES, '--known', writeKnown(tmp(), { 'role-addresses': ROLES, findings }), '--repository', repository, '--root', dir, ...extra]);
+// A one-commit clone of origin, scanned with the refs its origin serves.
+const scanClone = (origin) => {
+  const work = tmp();
+  git(work, 'clone', '-q', '--depth=1', `file://${origin}`, 'copy');
+  return scanRepo(path.join(work, 'copy'), { extra: ['--refs', 'origin'] });
+};
 const noticeOf = (out) => (out.match(/^::notice title=Leak check::(.*)$/m) ?? [])[1] ?? null;
 const HEAD = /^files: (\d+) read, (\d+) new findings, (\d+) known; refs: not read\b/;
 const NOTICE = /^files: (\d+) read, (\d+) new findings, (\d+) known; refs: (\d+) read, (\d+) findings on branches and tags, (\d+) on pull request refs/;
@@ -106,9 +117,7 @@ test('a hash list with a salt is matched with that salt, and a list without one 
 });
 
 test('the scan refuses a new finding in the tracked files, naming file, line and kind, never the name', () => {
-  const dir = notesRepo();
-  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
-  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
+  const r = scanRepo(notesRepo());
   assert.notEqual(r.status, 0, `${NOT_REFUSED}: the scan passed four findings in notes.md: ${r.out}`);
   for (const { line, kind } of EXPECTED) {
     const said = new RegExp(`^::error file=notes\\.md,line=${line},title=Leak finding::.*${kind === 'repositories' ? 'repository' : kind === 'people' ? 'person' : 'address'}`, 'm');
@@ -125,16 +134,15 @@ test('a finding known.json accepts is counted known and passes; the same name in
   const dir = notesRepo();
   const match = scan.matcher(hashes.loadList(HASHES), { roles: ROLES });
   const findings = match(fs.readFileSync(NOTES, 'utf8'), 'notes.md').map(({ path: p, kind, hash }) => ({ repository: 'dazzer-io/example', path: p, kind, hash }));
-  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings });
-  const clean = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
+  const clean = scanRepo(dir, { findings });
   assert.equal(clean.status, 0, `four accepted findings were refused: ${clean.out}`);
   assert.match(noticeOf(clean.out) ?? '', /^files: 1 read, 0 new findings, 4 known;/, `the notice does not count four known findings: ${clean.out}`);
   // Another repository's acceptance does not carry over.
-  const other = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/elsewhere', '--root', dir]);
+  const other = scanRepo(dir, { findings, repository: 'dazzer-io/elsewhere' });
   assert.notEqual(other.status, 0, `${NOT_REFUSED}: findings accepted for one repository passed in another: ${other.out}`);
   fs.writeFileSync(path.join(dir, 'more.md'), 'A second mention of lantern-vault.\n');
   commitAll(dir, 'more');
-  const more = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
+  const more = scanRepo(dir, { findings });
   assert.notEqual(more.status, 0, `${NOT_REFUSED}: a known name added to a new file passed: ${more.out}`);
   assert.match(more.out, /^::error file=more\.md,line=1,title=Leak finding::/m, `${NOT_REFUSED}: no error names more.md: ${more.out}`);
   assert.match(noticeOf(more.out) ?? '', /^files: 2 read, 1 new findings, 4 known;/, `the notice reads ${noticeOf(more.out)}`);
@@ -142,27 +150,17 @@ test('a finding known.json accepts is counted known and passes; the same name in
 });
 
 test('an untracked file is not read; a tracked binary holding no name is read as bytes and passes', () => {
-  const dir = notesRepo();
-  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
-  fs.writeFileSync(path.join(dir, 'notes.md'), 'nothing private\n');
   // An image's first bytes: a NUL, a stray 0xff, no name anywhere.
-  fs.writeFileSync(path.join(dir, 'logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0xff, 0x00]));
-  commitAll(dir, 'clean');
+  const dir = repoOf({ 'notes.md': 'nothing private\n', 'logo.png': Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0xff, 0x00]) });
   fs.writeFileSync(path.join(dir, 'scratch.md'), 'lantern-vault, not tracked\n');
-  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
+  const r = scanRepo(dir);
   assert.equal(r.status, 0, `a clean tracked tree holding an image was refused: ${r.out}`);
   assert.match(noticeOf(r.out) ?? '', /^files: 2 read, 0 new findings, 0 known; refs: not read, no remote was named$/, `the notice does not count the image as read: ${r.out}`);
   assert.match(r.out, /^read as bytes: logo\.png /m, `the run does not name the file it read as bytes: ${r.out}`);
 });
 
 // A repository holding one tracked file of these bytes, scanned with no accepted findings.
-const scanBytes = (name, bytes) => {
-  const dir = tmp();
-  git(dir, 'init', '-q');
-  fs.writeFileSync(path.join(dir, name), bytes);
-  commitAll(dir, name);
-  return run(['--hashes', HASHES, '--known', writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] }), '--repository', 'dazzer-io/example', '--root', dir]);
-};
+const scanBytes = (name, bytes) => scanRepo(repoOf({ [name]: bytes }));
 const utf16le = (s) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(s, 'utf16le')]);
 const utf16be = (s) => Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(s, 'utf16le').swap16()]);
 
@@ -192,8 +190,7 @@ test('a file name or path holding a line break cannot forge a workflow command i
     ...match(fs.readFileSync(NOTES, 'utf8'), 'notes.md'),
     ...match('A mention of lantern-vault.\n', odd),
   ].map(({ path: p, kind, hash }) => ({ path: p, kind, hash }));
-  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings });
-  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir, 'notes.md', odd, 'gone\n::error title=forged::gone.md']);
+  const r = scanRepo(dir, { findings, extra: ['notes.md', odd, 'gone\n::error title=forged::gone.md'] });
   assert.match(r.out, /^known: odd%0A::warning title=forged::known\.md:1 /m, `the known finding's path was not escaped: ${r.out}`);
   assert.match(r.out, /^could not read gone%0A::error title=forged::gone\.md: /m, `the unopened path was not escaped: ${r.out}`);
   assert.doesNotMatch(r.out, /^::(?:warning|error) title=forged/m, `a file name forged a workflow command in the log: ${r.out}`);
@@ -230,12 +227,7 @@ test('the tip of every branch, tag and pull request ref the remote serves is rea
   git(origin, 'checkout', '-q', 'main');
   git(origin, 'branch', '-q', '-D', 'pull-3');
   assert.equal(git(origin, 'rev-parse', 'HEAD'), main);
-
-  const work = tmp();
-  git(work, 'clone', '-q', '--depth=1', `file://${origin}`, 'copy');
-  const dir = path.join(work, 'copy');
-  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
-  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir, '--refs', 'origin']);
+  const r = scanClone(origin);
   assert.equal(r.status, 0, `findings on branches and pull request refs refused a change whose files are clean: ${r.out}`);
   const notice = noticeOf(r.out);
   assert.match(notice ?? '', NOTICE, `the run records no "Leak check" notice in its counted form: ${r.out}`);
@@ -248,11 +240,7 @@ test('the tip of every branch, tag and pull request ref the remote serves is rea
 });
 
 test('a remote that serves nothing is read as unknown refs, never as none', () => {
-  const dir = notesRepo();
-  fs.writeFileSync(path.join(dir, 'notes.md'), 'nothing private\n');
-  commitAll(dir, 'clean');
-  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
-  const r = run(['--hashes', HASHES, '--known', known, '--root', dir, '--refs', 'nowhere']);
+  const r = scanRepo(repoOf({ 'notes.md': 'nothing private\n' }), { extra: ['--refs', 'nowhere'] });
   assert.match(r.out, /could not read the refs of the remote --refs names/, `a remote that could not be listed was not said: ${r.out}`);
   assert.match(noticeOf(r.out) ?? '', /refs: unknown/, `a remote that could not be listed was counted as read: ${r.out}`);
 });
@@ -284,16 +272,8 @@ test('the action reads the files and refs, pins every outside action by its full
 // ---------- names, ref names, hidden letters, hostnames ----------
 
 test('a private name as a file or folder name is a finding, and the log hides that part of the path', () => {
-  const dir = tmp();
-  git(dir, 'init', '-q');
-  fs.mkdirSync(path.join(dir, 'docs', 'lantern-vault'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'docs', 'lantern-vault', 'readme.md'), 'nothing private\n');
-  fs.mkdirSync(path.join(dir, 'dazzer-io', 'quill'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'dazzer-io', 'quill', 'a.md'), 'nothing private\n');
-  fs.writeFileSync(path.join(dir, 'Odalys Fenwick.txt'), 'nothing private\n');
-  commitAll(dir, 'names');
-  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
-  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
+  const clean = 'nothing private\n';
+  const r = scanRepo(repoOf({ 'docs/lantern-vault/readme.md': clean, 'dazzer-io/quill/a.md': clean, 'Odalys Fenwick.txt': clean }));
   assert.notEqual(r.status, 0, `${NOT_REFUSED}: private names as file and folder names passed: ${r.out}`);
   const named = r.out.split('\n').filter((l) => /^::error .*title=Leak finding::.*file or folder name/.test(l));
   assert.equal(named.length, 3, `${NOT_REFUSED}: not one name finding for each of the three paths: ${r.out}`);
@@ -311,11 +291,7 @@ test('a private name in a ref name, or in a file name on a ref, is found on that
   fs.writeFileSync(path.join(origin, 'Odalys-Fenwick.md'), 'nothing private\n');
   commitAll(origin, 'side');
   git(origin, 'checkout', '-q', 'main');
-  const work = tmp();
-  git(work, 'clone', '-q', '--depth=1', `file://${origin}`, 'copy');
-  const dir = path.join(work, 'copy');
-  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
-  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir, '--refs', 'origin']);
+  const r = scanClone(origin);
   assert.equal(r.status, 0, `findings on refs refused a change whose files are clean: ${r.out}`);
   assert.match(r.out, /^refs\/heads\/feature\/\S+: ref name .*repository/m, `the ref name holding a private repository name is not a finding: ${r.out}`);
   assert.match(r.out, /^refs\/heads\/side: \S+ \(file or folder name\) .*person/m, `a private name as a file name on a ref is not a finding: ${r.out}`);
@@ -354,11 +330,7 @@ test('a listed address domain is found as a hostname: in a URL, bare, and as a s
 });
 
 test('without --refs the notice says the refs were not read, never "0 read"', () => {
-  const dir = tmp();
-  git(dir, 'init', '-q');
-  fs.writeFileSync(path.join(dir, 'a.md'), 'nothing private\n');
-  commitAll(dir, 'a');
-  const r = run(['--hashes', HASHES, '--root', dir]);
+  const r = run(['--hashes', HASHES, '--root', repoOf({ 'a.md': 'nothing private\n' })]);
   assert.equal(r.status, 0, `a clean run was refused: ${r.out}`);
   const notice = noticeOf(r.out) ?? '';
   assert.match(notice, /; refs: not read\b/, `the notice does not say the refs were not read: ${notice}`);
@@ -394,18 +366,13 @@ test('a failed fetch\'s reason is printed with a private name in it hidden', () 
 });
 
 test('a known.json entry with "in": "name" accepts a name finding, and a plain entry does not', () => {
-  const dir = tmp();
-  git(dir, 'init', '-q');
-  fs.mkdirSync(path.join(dir, 'docs', 'lantern-vault'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'docs', 'lantern-vault', 'readme.md'), 'nothing private\n');
-  commitAll(dir, 'name');
   const p = 'docs/lantern-vault/readme.md';
+  const dir = repoOf({ [p]: 'nothing private\n' });
   const hash = hashes.oneWay('lantern-vault', 'fixture-only-salt');
-  const args = (known) => ['--hashes', HASHES, '--known', writeKnown(tmp(), { 'role-addresses': ROLES, findings: [known] }), '--repository', 'dazzer-io/example', '--root', dir];
-  const accepted = run(args({ path: p, kind: 'repositories', hash, in: 'name' }));
+  const accepted = scanRepo(dir, { findings: [{ path: p, kind: 'repositories', hash, in: 'name' }] });
   assert.equal(accepted.status, 0, `an entry with "in": "name" did not accept the name finding: ${accepted.out}`);
   assert.match(noticeOf(accepted.out) ?? '', /^files: 1 read, 0 new findings, 1 known;/, `the notice does not count the accepted name finding: ${accepted.out}`);
-  const plain = run(args({ path: p, kind: 'repositories', hash }));
+  const plain = scanRepo(dir, { findings: [{ path: p, kind: 'repositories', hash }] });
   assert.notEqual(plain.status, 0, `${NOT_REFUSED}: a plain entry, meant for file contents, accepted a name finding: ${plain.out}`);
   assertNoPlain(`${accepted.out}${plain.out}`);
 });

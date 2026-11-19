@@ -26,6 +26,7 @@ const hashes = await load('hashes.mjs');
 const scan = await load('scan.mjs');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'leak-check-refusals-'));
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
 const refusalOf = (read) => {
   if (typeof hashes.loadHashes !== 'function') return `(no loadHashes in leak-check/hashes.mjs: ${hashes.missing ?? 'not exported'})`;
   try { read(); return null; } catch (e) { return e.message; }
@@ -152,7 +153,7 @@ test('a ref the fetch could not serve is unknown with its name, never zero findi
   assert.equal(typeof scan.verdict, 'function', `leak-check/scan.mjs has no verdict: ${scan.missing ?? 'not exported'}`);
   const verdict = scan.verdict({ files: { read: [], unread: [] }, fresh: [], known: [], refs });
   const said = verdict.lines.join('\n');
-  for (const name of ['refs/pull/7/head', 'refs/tags/v0.1']) assert.match(said, new RegExp(`^could not read ${name.replace(/[./]/g, '\\$&')}: `, 'm'), `the run does not name the unknown ref ${name}: ${said}`);
+  for (const name of ['refs/pull/7/head', 'refs/tags/v0.1']) assert.match(said, new RegExp(`^could not read ${escapeRegExp(name)}: `, 'm'), `the run does not name the unknown ref ${name}: ${said}`);
   assert.match(said, /; not read: 0 files, 2 refs$/m, `the run does not count the unknown refs: ${said}`);
 });
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// Lints this repository's workflows with a pinned actionlint, the lint the organisation's machine
-// rule ran before these checks moved to their public home.
+// Lints this repository's GitHub Actions workflows with a pinned release of actionlint.
 //
 //   node scripts/actionlint.mjs [workflow files...]
 //
@@ -8,12 +7,11 @@
 // actionlint 1.7.12 for the running platform, refuses unless the archive's SHA-256 is the one
 // pinned below, and exits non-zero when actionlint finds anything.
 //
-// The checksums are the release's own (actionlint_1.7.12_checksums.txt); linux amd64 is also the
-// one the machine rule pins. A platform with no pinned checksum is refused, never guessed.
-// shellcheck and pyflakes are switched off as the machine rule switches them off, so the result
-// does not depend on what else the runner has installed. The one ignore is the machine rule's:
-// security-scan.yml and engineer-review.yml read job.workflow_repository and job.workflow_sha,
-// which actionlint 1.7.12 does not know yet.
+// The checksums are the release's own (actionlint_1.7.12_checksums.txt). A platform with no
+// pinned checksum is refused, never guessed. The shellcheck and pyflakes integrations are
+// switched off, so the result does not depend on what else the runner has installed. One message
+// is ignored: actionlint 1.7.12 does not yet know the job.workflow_repository and
+// job.workflow_sha properties GitHub Actions provides, and reports them as undefined.
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';

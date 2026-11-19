@@ -89,11 +89,25 @@ test('the decide-tests check lints every workflow with actionlint before the tes
   assert.ok(steps[lint].if === undefined && steps[lint]['continue-on-error'] === undefined, `${NO_LINT} as a refusal: the step carries ${JSON.stringify({ if: steps[lint].if, 'continue-on-error': steps[lint]['continue-on-error'] })}`);
 });
 
-// The workflow is public: its comments explain the check to a reader, and name none of the
-// organisation's internal machinery.
+// The workflow and its lint script are public: their comments explain the check to a reader, and
+// name none of the organisation's internal machinery.
+const INTERNAL = [[/fallback watcher/i, 'the fallback watcher'], [/\b(?:CHECKS|SCAN|LOCKED)_/, 'an internal setting'], [/change-check machines|our machines/i, 'internal machines'], [/machine rule/i, 'the machine rule'], [/CHECKS_RUNNER|runner name/i, 'a runner name'], [/security-scan\.yml|engineer-review\.yml/i, 'an internal workflow']];
+
 test('the workflow\'s comments describe no internal machinery', () => {
   const comments = read().split('\n').filter((l) => /^\s*#/.test(l)).join('\n');
-  for (const [said, what] of [[/fallback watcher/i, 'the fallback watcher'], [/\b(?:CHECKS|SCAN|LOCKED)_/, 'an internal setting'], [/change-check machines|our machines/i, 'internal machines'], [/machine rule/i, 'the machine rule'], [/CHECKS_RUNNER|runner name/i, 'a runner name']]) {
+  for (const [said, what] of INTERNAL) {
     assert.doesNotMatch(comments, said, `the workflow's comments name ${what}`);
+  }
+});
+
+test('the lint script\'s comments describe no internal machinery', () => {
+  const script = fileURLToPath(new URL('../scripts/actionlint.mjs', import.meta.url));
+  assert.ok(fs.existsSync(script), 'scripts/actionlint.mjs is absent');
+  // The comment text alone, its lines joined, so a phrase broken across two lines is still read.
+  const comments = fs.readFileSync(script, 'utf8').split('\n').filter((l) => /^\s*\/\//.test(l))
+    .map((l) => l.replace(/^\s*\/\/\s?/, '')).join(' ').replace(/\s+/g, ' ').trim();
+  assert.ok(comments.length > 0, 'scripts/actionlint.mjs carries no comment to read');
+  for (const [said, what] of INTERNAL) {
+    assert.doesNotMatch(comments, said, `scripts/actionlint.mjs's comments name ${what}`);
   }
 });

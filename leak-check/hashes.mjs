@@ -17,8 +17,14 @@ export const REFUSAL = 'no one-way hash list';
 export const KINDS = ['repositories', 'people', 'addresses'];
 const HASH = /^[0-9a-f]{64}$/;
 
-// The one-way hash of a name, as the list holds it, with the list's salt if it has one.
-export const oneWay = (name, salt = '') => createHash('sha256').update(`${salt}${String(name).trim().toLowerCase()}`).digest('hex');
+// Text as it is matched and hashed: format characters (zero-width joiner and space, soft hyphen,
+// direction marks, every Unicode Cf) removed and NFKC applied, so a name split by an invisible
+// character or written in fullwidth or decomposed letters reads as the name.
+export const normalise = (s) => String(s).replace(/\p{Cf}/gu, '').normalize('NFKC').replace(/\p{Cf}/gu, '');
+
+// The one-way hash of a name, as the list holds it, with the list's salt if it has one; the name
+// is normalised, trimmed and lower-cased first.
+export const oneWay = (name, salt = '') => createHash('sha256').update(`${salt}${normalise(name).trim().toLowerCase()}`).digest('hex');
 
 const refuse = (why) => { throw new Error(`${REFUSAL}: ${why}`); };
 

@@ -110,7 +110,7 @@ test('a file the scanner could not open is named and counted unread, and the run
   const r = runScan(dir, ['notes.md', 'gone.md']);
   assert.notEqual(r.status, 0, `a run that could not open gone.md passed: ${r.out}`);
   assert.match(r.out, /^could not read gone\.md: could not open it/m, `the run does not name the file it could not open: ${r.out}`);
-  assert.match(noticeOf(r.out), /^files: 1 read, .*; not read: 1 files, 0 refs$/, `the notice does not count the file it could not open: ${r.out}`);
+  assert.match(noticeOf(r.out), /^files: 1 read, .*; not read: 1 files$/, `the notice does not count the file it could not open: ${r.out}`);
 });
 
 test('a file that is not UTF-8 is read as bytes and named, never skipped as clean', () => {
@@ -164,4 +164,17 @@ test('a run that read every file and every ref, finding nothing, exits clean', (
     refs: [{ ref: 'refs/heads/main', state: 'read', findings: 0, found: [] }],
   });
   assert.equal(verdict.code, 0, `a run that read everything did not exit clean: ${verdict.lines.join('\n')}`);
+});
+
+test('a run that read no tracked file stops red saying it read nothing, never "0 read" and clean', () => {
+  const dir = tmp();
+  const g = (...a) => spawnSync('git', a, { cwd: dir, encoding: 'utf8' });
+  g('init', '-q');
+  const r = spawnSync(process.execPath, [SCAN, '--hashes', path.join(FIXTURES, 'hashes.json'), '--root', dir], { encoding: 'utf8' });
+  const out = `${r.stdout}${r.stderr}`;
+  assert.notEqual(r.status, 0, `a run that read no file passed: ${out}`);
+  assert.match(out, /read nothing/, `the run does not say it read nothing: ${out}`);
+  assert.doesNotMatch(noticeOf(out), /files: 0 read/, `the notice counts "0 read" as a reading: ${out}`);
+  assert.equal(typeof scan.verdict, 'function', `leak-check/scan.mjs has no verdict: ${scan.missing ?? 'not exported'}`);
+  assert.notEqual(scan.verdict({ files: { read: [], unread: [] }, fresh: [], known: [], refs: [] }).code, 0, 'verdict passes a run that read no file');
 });

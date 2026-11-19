@@ -6,15 +6,10 @@
 # (test/decide-tests-workflow.test.mjs holds it there). The tests read fixtures only:
 # no network, no secrets, read-only token.
 #
-# It runs on GitHub's ubuntu-latest, written as a literal label, and reads no CHECKS_, SCAN_ or
-# LOCKED_ setting: the fallback watcher, which sends a job waiting on our machines back to
-# GitHub's, does not read this repository's runs, so a job here on the change-check machines
-# would never be sent back if they stalled. Once the watcher reads this repository's runs, it may
-# read CHECKS_RUNNER_2 like the other repositories' checks. It asks setup-node for Node 24, then
-# installs the one package the tests read, the YAML reader they read workflows with, pinned in
-# package-lock.json, with npm ci --ignore-scripts, so
-# no package's install script runs. The workflow's own token grants nothing; the one job reads
-# the code alone.
+# It runs on GitHub's ubuntu-latest. It asks setup-node for Node 24, then installs the one
+# package the tests read, the YAML reader they read workflows with, pinned in
+# package-lock.json, with npm ci --ignore-scripts, so no package's install script runs. The
+# workflow's own token grants nothing; the one job reads the code alone.
 #
 # Before the tests it runs the leak check (./leak-check, the change's own copy) over every tracked
 # file and every branch, tag and pull request ref, so the required check refuses a change that adds
@@ -23,9 +18,7 @@
 # with no credential kept.
 #
 # Before the tests it also lints every workflow with actionlint (scripts/actionlint.mjs), which
-# downloads a pinned release and refuses one whose SHA-256 is not the one written in the script:
-# the organisation's machine rule linted these workflows before they moved here, and nothing else
-# lints them now.
+# downloads a pinned release and refuses one whose SHA-256 is not the one written in the script.
 name: Decide tests
 
 on:

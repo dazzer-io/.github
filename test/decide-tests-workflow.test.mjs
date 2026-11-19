@@ -73,8 +73,8 @@ test('the decide-tests check runs the leak check over every ref before the tests
   assert.ok(steps[leak].if === undefined && steps[leak]['continue-on-error'] === undefined, `${NO_LEAK} as a refusal: the step carries ${JSON.stringify({ if: steps[leak].if, 'continue-on-error': steps[leak]['continue-on-error'] })}`);
 });
 
-// The machine rule's workflow lint did not move with these workflows, so the required check lints
-// them itself: scripts/actionlint.mjs runs over every workflow (no file named) before the tests.
+// The required check lints the workflows itself: scripts/actionlint.mjs runs over every workflow
+// (no file named) before the tests.
 test('the decide-tests check lints every workflow with actionlint before the tests', () => {
   const NO_LINT = 'decide-tests does not lint the workflows with scripts/actionlint.mjs';
   const job = jobs(parse(read())).find((j) => j.check === REQUIRED_CHECK);
@@ -87,4 +87,13 @@ test('the decide-tests check lints every workflow with actionlint before the tes
   assert.ok(tests !== -1 && lint < tests, `${NO_LINT} before the tests: it is step ${lint + 1}, the tests step ${tests + 1}`);
   assert.ok(node !== -1 && node < lint, `${NO_LINT} after Node is set up: Node is step ${node + 1}, the lint step ${lint + 1}`);
   assert.ok(steps[lint].if === undefined && steps[lint]['continue-on-error'] === undefined, `${NO_LINT} as a refusal: the step carries ${JSON.stringify({ if: steps[lint].if, 'continue-on-error': steps[lint]['continue-on-error'] })}`);
+});
+
+// The workflow is public: its comments explain the check to a reader, and name none of the
+// organisation's internal machinery.
+test('the workflow\'s comments describe no internal machinery', () => {
+  const comments = read().split('\n').filter((l) => /^\s*#/.test(l)).join('\n');
+  for (const [said, what] of [[/fallback watcher/i, 'the fallback watcher'], [/\b(?:CHECKS|SCAN|LOCKED)_/, 'an internal setting'], [/change-check machines|our machines/i, 'internal machines'], [/machine rule/i, 'the machine rule'], [/CHECKS_RUNNER|runner name/i, 'a runner name']]) {
+    assert.doesNotMatch(comments, said, `the workflow's comments name ${what}`);
+  }
 });

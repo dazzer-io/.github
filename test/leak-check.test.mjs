@@ -56,6 +56,7 @@ const run = (args) => {
 };
 const writeKnown = (dir, known) => { const f = path.join(dir, 'known.json'); fs.writeFileSync(f, JSON.stringify(known)); return f; };
 const noticeOf = (out) => (out.match(/^::notice title=Leak check::(.*)$/m) ?? [])[1] ?? null;
+const HEAD = /^files: (\d+) read, (\d+) new findings, (\d+) known; refs: not read\b/;
 const NOTICE = /^files: (\d+) read, (\d+) new findings, (\d+) known; refs: (\d+) read, (\d+) findings on branches and tags, (\d+) on pull request refs/;
 const assertNoPlain = (out) => {
   for (const p of PLAIN) assert.ok(!out.includes(p), `the run's output repeats the private name it found, which would publish it (${p}): ${out}`);
@@ -114,8 +115,8 @@ test('the scan refuses a new finding in the tracked files, naming file, line and
     assert.match(r.out, said, `${NOT_REFUSED}: no error names notes.md line ${line} (${kind}): ${r.out}`);
   }
   const notice = noticeOf(r.out);
-  assert.match(notice ?? '', NOTICE, `the run records no "Leak check" notice in its counted form: ${r.out}`);
-  const [, files, fresh, knownCount] = notice.match(NOTICE);
+  assert.match(notice ?? '', HEAD, `the run records no "Leak check" notice in its counted form: ${r.out}`);
+  const [, files, fresh, knownCount] = notice.match(HEAD);
   assert.deepEqual([files, fresh, knownCount], ['1', '4', '0'], `${NOT_REFUSED}: the notice reads ${notice}`);
   assertNoPlain(r.out);
 });
@@ -150,7 +151,7 @@ test('an untracked file is not read; a tracked binary holding no name is read as
   fs.writeFileSync(path.join(dir, 'scratch.md'), 'lantern-vault, not tracked\n');
   const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
   assert.equal(r.status, 0, `a clean tracked tree holding an image was refused: ${r.out}`);
-  assert.match(noticeOf(r.out) ?? '', /^files: 2 read, 0 new findings, 0 known; refs: 0 read, 0 findings on branches and tags, 0 on pull request refs$/, `the notice does not count the image as read: ${r.out}`);
+  assert.match(noticeOf(r.out) ?? '', /^files: 2 read, 0 new findings, 0 known; refs: not read, no remote was named$/, `the notice does not count the image as read: ${r.out}`);
   assert.match(r.out, /^read as bytes: logo\.png /m, `the run does not name the file it read as bytes: ${r.out}`);
 });
 
@@ -278,4 +279,97 @@ test('the action reads the files and refs, pins every outside action by its full
   const scanStep = steps.find((s) => typeof s.run === 'string' && /scan\.mjs/.test(s.run));
   assert.ok(scanStep, `${NOT_REFUSED}: no step runs leak-check/scan.mjs`);
   for (const flag of ['--hashes', '--known', '--repository', '--refs']) assert.ok(scanStep.run.includes(flag), `the scan step does not pass ${flag}`);
+});
+
+// ---------- names, ref names, hidden letters, hostnames ----------
+
+test('a private name as a file or folder name is a finding, and the log hides that part of the path', () => {
+  const dir = tmp();
+  git(dir, 'init', '-q');
+  fs.mkdirSync(path.join(dir, 'docs', 'lantern-vault'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'docs', 'lantern-vault', 'readme.md'), 'nothing private\n');
+  fs.mkdirSync(path.join(dir, 'dazzer-io', 'quill'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'dazzer-io', 'quill', 'a.md'), 'nothing private\n');
+  fs.writeFileSync(path.join(dir, 'Odalys Fenwick.txt'), 'nothing private\n');
+  commitAll(dir, 'names');
+  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
+  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir]);
+  assert.notEqual(r.status, 0, `${NOT_REFUSED}: private names as file and folder names passed: ${r.out}`);
+  const named = r.out.split('\n').filter((l) => /^::error .*title=Leak finding::.*file or folder name/.test(l));
+  assert.equal(named.length, 3, `${NOT_REFUSED}: not one name finding for each of the three paths: ${r.out}`);
+  assert.match(noticeOf(r.out) ?? '', /^files: 3 read, 3 new findings, 0 known;/, `the notice does not count the three name findings: ${r.out}`);
+  assertNoPlain(r.out);
+});
+
+test('a private name in a ref name, or in a file name on a ref, is found on that ref', () => {
+  const origin = tmp();
+  git(origin, 'init', '-q');
+  fs.writeFileSync(path.join(origin, 'README.md'), 'A public readme.\n');
+  commitAll(origin, 'readme');
+  git(origin, 'branch', 'feature/lantern-vault');
+  git(origin, 'checkout', '-q', '-b', 'side');
+  fs.writeFileSync(path.join(origin, 'Odalys-Fenwick.md'), 'nothing private\n');
+  commitAll(origin, 'side');
+  git(origin, 'checkout', '-q', 'main');
+  const work = tmp();
+  git(work, 'clone', '-q', '--depth=1', `file://${origin}`, 'copy');
+  const dir = path.join(work, 'copy');
+  const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
+  const r = run(['--hashes', HASHES, '--known', known, '--repository', 'dazzer-io/example', '--root', dir, '--refs', 'origin']);
+  assert.equal(r.status, 0, `findings on refs refused a change whose files are clean: ${r.out}`);
+  assert.match(r.out, /^refs\/heads\/feature\/\S+: ref name .*repository/m, `the ref name holding a private repository name is not a finding: ${r.out}`);
+  assert.match(r.out, /^refs\/heads\/side: \S+ \(file or folder name\) .*person/m, `a private name as a file name on a ref is not a finding: ${r.out}`);
+  const [, , , , , onBranches] = (noticeOf(r.out) ?? '').match(NOTICE) ?? [];
+  assert.equal(onBranches, '2', `the notice does not count the two name findings on refs: ${noticeOf(r.out)}`);
+  assertNoPlain(r.out);
+});
+
+test('a name split by format characters, or in fullwidth or decomposed letters, is still found', () => {
+  const match = scan.matcher(hashes.loadList(HASHES), { roles: ROLES });
+  const cases = [
+    ['lantern\u200d-vault', 'repositories', 'a zero-width joiner'],
+    ['lan\u00adtern-vault', 'repositories', 'a soft hyphen'],
+    ['dazzer-io/qu\u200bill', 'repositories', 'a zero-width space'],
+    ['\uff4c\uff41\uff4e\uff54\uff45\uff52\uff4e\uff0d\uff56\uff41\uff55\uff4c\uff54', 'repositories', 'fullwidth letters'],
+    ['Odalys Fenwic\u200ek', 'people', 'a left-to-right mark'],
+  ];
+  for (const [text, kind, what] of cases) {
+    const found = match(`${text}\n`, 'x.md');
+    assert.deepEqual(found.map((f) => f.kind), [kind], `${NOT_REFUSED}: a name written with ${what} was not found: ${JSON.stringify(found)}`);
+  }
+  const list = { salt: '', repositories: new Set(), people: new Set([hashes.oneWay('ren\u00e9e caul')]), addresses: new Set() };
+  const decomposed = scan.matcher(list)('Signed, Rene\u0301e Caul.\n', 'x.md');
+  assert.equal(decomposed.length, 1, `${NOT_REFUSED}: a name in decomposed letters was not found: ${JSON.stringify(decomposed)}`);
+});
+
+test('a listed address domain is found as a hostname: in a URL, bare, and as a subdomain\'s parent', () => {
+  const match = scan.matcher(hashes.loadList(HASHES), { roles: ROLES });
+  for (const text of ['See https://brightfen.example/docs for more.', 'Hosted at brightfen.example.', 'Mirror: http://cdn.eu.brightfen.example:8080/x', 'mail marlo@mail.brightfen.example']) {
+    const found = match(`${text}\n`, 'x.md');
+    assert.deepEqual(found.map((f) => f.kind), ['addresses'], `${NOT_REFUSED}: the listed domain was not found in "${text.replace(/brightfen/g, 'b…')}": ${JSON.stringify(found)}`);
+  }
+  for (const text of ['Ask help@brightfen.example.', 'A brightfenx.example site and notbrightfen.example.org.', 'file notes.md']) {
+    assert.deepEqual(match(`${text}\n`, 'x.md'), [], `a role address or another host was found as the listed domain in "${text.replace(/brightfen/g, 'b…')}"`);
+  }
+});
+
+test('without --refs the notice says the refs were not read, never "0 read"', () => {
+  const dir = tmp();
+  git(dir, 'init', '-q');
+  fs.writeFileSync(path.join(dir, 'a.md'), 'nothing private\n');
+  commitAll(dir, 'a');
+  const r = run(['--hashes', HASHES, '--root', dir]);
+  assert.equal(r.status, 0, `a clean run was refused: ${r.out}`);
+  const notice = noticeOf(r.out) ?? '';
+  assert.match(notice, /; refs: not read\b/, `the notice does not say the refs were not read: ${notice}`);
+  assert.doesNotMatch(notice, /refs: 0 read/, `the notice reads refs it never read as "0 read": ${notice}`);
+});
+
+test('the README says what is read and what is not, and makes no claim the hash list keeps names secret', () => {
+  const t = fs.readFileSync(path.join(ROOT, 'leak-check', 'README.md'), 'utf8').replace(/\s+/g, ' ').toLowerCase();
+  for (const read of ['file contents', 'file and folder names', 'ref names', 'ref trees']) assert.ok(t.includes(read), `the README does not say it reads ${read}`);
+  for (const not of ['commit messages', 'author names and emails', 'tag messages', 'pull request titles and bodies', 'git lfs content']) assert.ok(t.includes(not), `the README does not say it does not read ${not}`);
+  assert.match(t, /confirm a name they already guess/, 'the README does not say a guessed name can be confirmed from the hash list');
+  assert.doesNotMatch(t, /what a stranger can read/, 'the README still claims it reads what a stranger can read');
+  assert.doesNotMatch(t, /keeps? (?:the )?names? (?:secret|private)/i, 'the README claims the list keeps names secret');
 });

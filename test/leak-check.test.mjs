@@ -373,3 +373,39 @@ test('the README says what is read and what is not, and makes no claim the hash 
   assert.doesNotMatch(t, /what a stranger can read/, 'the README still claims it reads what a stranger can read');
   assert.doesNotMatch(t, /keeps? (?:the )?names? (?:secret|private)/i, 'the README claims the list keeps names secret');
 });
+
+test('a name a zero-width space or word joiner separates is found split as well as joined', () => {
+  const match = scan.matcher(hashes.loadList(HASHES), { roles: ROLES });
+  for (const [mark, what] of [['\u200b', 'a zero-width space'], ['\u2060', 'a word joiner']]) {
+    const found = match(`Drafted by Odalys${mark}Fenwick.\n`, 'x.md');
+    assert.deepEqual(found.map((f) => f.kind), ['people'], `${NOT_REFUSED}: a person's name separated by ${what} was not found: ${JSON.stringify(found)}`);
+    assert.deepEqual(match.names(`docs/Odalys${mark}Fenwick.md`).map((f) => f.kind), ['people'], `${NOT_REFUSED}: a file name separated by ${what} was not found`);
+    assert.equal(match.hide(`docs/Odalys${mark}Fenwick.md`), 'docs/[hidden]', `a file name separated by ${what} is not hidden in the log`);
+  }
+  assert.equal(hashes.oneWay('lantern-vault', 'fixture-only-salt'), '64935f3884c00979724167c0108ce3c1090f7e30e1f4f312538cfad1af272636', 'the one-way hash of an ASCII name changed');
+});
+
+test('a failed fetch\'s reason is printed with a private name in it hidden', () => {
+  const match = scan.matcher(hashes.loadList(HASHES), { roles: ROLES });
+  const refs = [{ ref: 'refs/heads/main', state: 'unknown', findings: null, why: 'couldn\'t find remote ref refs/heads/lantern-vault', named: [] }];
+  const said = scan.verdict({ files: { read: [{ path: 'a.md', texts: [''] }], unread: [] }, fresh: [], known: [], refs, hide: match.hide }).lines.join('\n');
+  assert.match(said, /^could not read refs\/heads\/main: /m, `the run does not name the ref it could not read: ${said}`);
+  assertNoPlain(said);
+});
+
+test('a known.json entry with "in": "name" accepts a name finding, and a plain entry does not', () => {
+  const dir = tmp();
+  git(dir, 'init', '-q');
+  fs.mkdirSync(path.join(dir, 'docs', 'lantern-vault'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'docs', 'lantern-vault', 'readme.md'), 'nothing private\n');
+  commitAll(dir, 'name');
+  const p = 'docs/lantern-vault/readme.md';
+  const hash = hashes.oneWay('lantern-vault', 'fixture-only-salt');
+  const args = (known) => ['--hashes', HASHES, '--known', writeKnown(tmp(), { 'role-addresses': ROLES, findings: [known] }), '--repository', 'dazzer-io/example', '--root', dir];
+  const accepted = run(args({ path: p, kind: 'repositories', hash, in: 'name' }));
+  assert.equal(accepted.status, 0, `an entry with "in": "name" did not accept the name finding: ${accepted.out}`);
+  assert.match(noticeOf(accepted.out) ?? '', /^files: 1 read, 0 new findings, 1 known;/, `the notice does not count the accepted name finding: ${accepted.out}`);
+  const plain = run(args({ path: p, kind: 'repositories', hash }));
+  assert.notEqual(plain.status, 0, `${NOT_REFUSED}: a plain entry, meant for file contents, accepted a name finding: ${plain.out}`);
+  assertNoPlain(`${accepted.out}${plain.out}`);
+});

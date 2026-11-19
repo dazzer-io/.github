@@ -11,9 +11,10 @@ private name to a tracked file or to a file or folder name.
 - The ref trees: the tip of each of those refs, fetched one commit deep under `refs/leak-check/`,
   file contents and file and folder names alike.
 
-Before matching, text is normalised: format characters (zero-width joiner and space, soft hyphen,
-direction marks and the rest of Unicode's Cf) are removed and NFKC is applied, so a name split by
-an invisible character or written in fullwidth or decomposed letters is still found.
+Before matching, text is normalised: NFKC is applied, and format characters (zero-width joiner and
+space, word joiner, soft hyphen, direction marks and the rest of Unicode's Cf) are read twice, once
+removed and once as spaces. So a name split by an invisible character, separated only by a
+zero-width space, or written in fullwidth or decomposed letters is still found.
 
 ## What it does not read
 

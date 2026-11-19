@@ -22,6 +22,11 @@ const HASH = /^[0-9a-f]{64}$/;
 // character or written in fullwidth or decomposed letters reads as the name.
 export const normalise = (s) => String(s).replace(/\p{Cf}/gu, '').normalize('NFKC').replace(/\p{Cf}/gu, '');
 
+// The second reading of the same text: each format character turned into a space instead, since a
+// zero-width space or word joiner may stand where a space did. Text is matched in both readings;
+// a name is hashed only as normalise leaves it, so an ASCII name's hash never changes.
+export const spaced = (s) => String(s).replace(/\p{Cf}/gu, ' ').normalize('NFKC').replace(/\p{Cf}/gu, ' ');
+
 // The one-way hash of a name, as the list holds it, with the list's salt if it has one; the name
 // is normalised, trimmed and lower-cased first.
 export const oneWay = (name, salt = '') => createHash('sha256').update(`${salt}${normalise(name).trim().toLowerCase()}`).digest('hex');

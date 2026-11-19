@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { KINDS, loadList, normalise, oneWay } from './hashes.mjs';
+import { KINDS, loadList, normalise, oneWay, spaced } from './hashes.mjs';
 
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const LOSSY = ['utf-8', 'utf-16le', 'utf-16be'].map((e) => new TextDecoder(e));
@@ -80,8 +80,9 @@ const lineAt = (starts, index) => {
 const MAX_PARTS = 8;
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Text is matched as normalise (hashes.mjs) leaves it: format characters removed, NFKC applied.
-export { normalise };
+// Text is matched in two readings (hashes.mjs): normalise, format characters removed, and spaced,
+// format characters turned into spaces; both apply NFKC.
+export { normalise, spaced };
 
 const EMAIL = /[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})/g;
 const HOST = /(?<![A-Za-z0-9._%+@-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}(?![A-Za-z0-9@-]|\.[A-Za-z0-9])/g;
@@ -146,19 +147,19 @@ export function matcher(list, { roles = [], owner = 'dazzer-io' } = {}) {
     return out;
   };
   const match = (raw, filePath) => {
-    const text = normalise(raw);
-    const starts = lineStarts(text);
     const found = new Map();
-    for (const h of hits(text)) {
-      const line = lineAt(starts, h.start);
-      const key = `${line}:${h.kind}:${h.hash}`;
-      if (!found.has(key)) found.set(key, { path: filePath, line, kind: h.kind, hash: h.hash });
+    for (const text of new Set([normalise(raw), spaced(raw)])) {
+      const starts = lineStarts(text);
+      for (const h of hits(text)) {
+        const line = lineAt(starts, h.start);
+        const key = `${line}:${h.kind}:${h.hash}`;
+        if (!found.has(key)) found.set(key, { path: filePath, line, kind: h.kind, hash: h.hash });
+      }
     }
     return [...found.values()].sort((a, b) => a.line - b.line || KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind));
   };
   // The hits in a path and in each of its segments, with each segment they touch.
-  const pathHits = (p) => {
-    const text = normalise(p);
+  const readingHits = (text) => {
     const segs = [];
     let at = 0;
     for (const seg of text.split('/')) { segs.push({ seg, start: at, end: at + seg.length }); at += seg.length + 1; }
@@ -167,15 +168,23 @@ export function matcher(list, { roles = [], owner = 'dazzer-io' } = {}) {
     const all = [...hits(text), ...segs.flatMap((s) => [...inSeg(s, s.seg), ...inSeg(s, s.seg.replace(/[-_.]/g, ' '))])];
     return { segs, all };
   };
+  // Both readings of a path: every hit, the segments as normalise leaves them, and the index of
+  // each segment a hit touches in either reading (both readings hold the same segments).
+  const pathHits = (p) => {
+    const readings = [...new Set([normalise(p), spaced(p)])].map(readingHits);
+    const touched = new Set();
+    for (const r of readings) r.segs.forEach((s, i) => { if (r.all.some((h) => h.start < s.end && h.end > s.start)) touched.add(i); });
+    return { segs: readings[0].segs, all: readings.flatMap((r) => r.all), touched };
+  };
   match.names = (p) => {
     const found = new Map();
     for (const h of pathHits(p).all) if (!found.has(`${h.kind}:${h.hash}`)) found.set(`${h.kind}:${h.hash}`, { path: p, line: 0, kind: h.kind, hash: h.hash, in: 'name' });
     return [...found.values()].sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind));
   };
   match.hide = (p) => {
-    const { segs, all } = pathHits(p);
-    if (!all.length) return p;
-    return segs.map((s) => (all.some((h) => h.start < s.end && h.end > s.start) ? '[hidden]' : s.seg)).join('/');
+    const { segs, touched } = pathHits(p);
+    if (!touched.size) return p;
+    return segs.map((s, i) => (touched.has(i) ? '[hidden]' : s.seg)).join('/');
   };
   return match;
 }
@@ -339,13 +348,13 @@ export function verdict({ files, fresh, known, refs, hide = (p) => p }) {
   }
   for (const f of known) lines.push(`known: ${where(f)} ${said(f)}`);
   for (const f of files.read) if (f.bytes) lines.push(`read as bytes: ${data(hide(f.path))} (not UTF-8 text; matched as UTF-8, Latin-1 and UTF-16)`);
-  for (const u of files.unread) lines.push(`could not read ${data(hide(u.path))}: ${data(u.why)}`);
+  for (const u of files.unread) lines.push(`could not read ${data(hide(u.path))}: ${data(hide(u.why))}`);
   if (!files.read.length) lines.push('read nothing: no tracked file was read, so this run cannot say the files are clean');
   for (const r of refs ?? []) {
     const ref = data(hide(r.ref));
     if (r.state !== 'read') {
       for (const f of r.named ?? []) lines.push(`${ref}: ref name ${said(f)}`);
-      lines.push(`could not read ${ref}: ${data(r.why)}`);
+      lines.push(`could not read ${ref}: ${data(hide(r.why))}`);
       continue;
     }
     for (const f of r.found) lines.push(`${ref}: ${f.in === 'ref name' ? 'ref name' : where(f)} ${said(f)}`);

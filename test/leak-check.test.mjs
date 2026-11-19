@@ -253,7 +253,7 @@ test('a remote that serves nothing is read as unknown refs, never as none', () =
   commitAll(dir, 'clean');
   const known = writeKnown(tmp(), { 'role-addresses': ROLES, findings: [] });
   const r = run(['--hashes', HASHES, '--known', known, '--root', dir, '--refs', 'nowhere']);
-  assert.match(r.out, /could not read the refs of nowhere/, `a remote that could not be listed was not named: ${r.out}`);
+  assert.match(r.out, /could not read the refs of the remote --refs names/, `a remote that could not be listed was not said: ${r.out}`);
   assert.match(noticeOf(r.out) ?? '', /refs: unknown/, `a remote that could not be listed was counted as read: ${r.out}`);
 });
 

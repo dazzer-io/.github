@@ -94,22 +94,30 @@ test('the decide-tests check lints every workflow with actionlint before the tes
 
 // The workflow and its lint script are public: their comments explain the check to a reader, and
 // name none of the organisation's internal machinery. The internal names are held as one-way hashes
-// (leak-check/hashes.mjs), so this list does not publish what it keeps out: eleven internal
-// phrases, setting prefixes and workflow file names. Anyone can confirm a word they already guess;
+// (leak-check/hashes.mjs), so this list does not publish what it keeps out: eight internal phrases
+// and workflow file names, and three setting prefixes. Anyone can confirm a word they already guess;
 // none is written here.
 const NOT_REFUSED = 'a new leak finding was not refused';
-const INTERNAL = new Set(["011dec21483a6f72b9420b6197c3f5f6d6d60548c20105a1c8ce9148becca299", "1064bbb0e3e8ccea425268b972ab21019f6e9bef1c5e42a0b0a69ffa9614dccb", "5d15dffb602ac53f8b448da8dc80943eedf614c2ef2324b2fb8753fa00b6afdf", "69b783ee9a87359fefc18c998e722659dd314126e1bf4864a9180c1118b5daf9", "8dcbdc78b95e4cac1050eedf00618cea2c05dbd8867de97f2029df8a92ad8fd5", "a0df506bafc745e05c325270fa56439e15e7de963e80616ca96dfcc681690903", "a0e03d63fe942314951e1730f7abf5695fb14205029befc8b9278b814b093829", "bb582462fda42a722e06244d5d0e25042a2fb11ce74d8e5c3c5c13d2242aebde", "be5ad3553785b5a5603e1ff3ffc1d368fd1048e99bf408a7c0f2e7a564c7d828", "e780b3c53088c0da4ccb49b416a5cc246f62363e56a7ebe6e3eedd82e0dd0f7a", "ec3007376f0c37a647e6301049833f23513ab0ef9098a50c305833f1364a51f3"]);
+const PHRASES = new Set(["4aed456d4575dcd247082bb134c355e25a728321d63b5cea49e252fd9e545f57", "59774f2a630071a23cbaec6dbcc297d0f54e163dbe447a51298e5fddf3cc351a", "69b783ee9a87359fefc18c998e722659dd314126e1bf4864a9180c1118b5daf9", "780805137340a896d6cf94833cae5f64a13b20974a76407b6f6dda1a58403e6c", "80a8243eb4aa60736f612b2272664196ad29e5651f2c1f9d88d05e3207e5bfe4", "a0df506bafc745e05c325270fa56439e15e7de963e80616ca96dfcc681690903", "be5ad3553785b5a5603e1ff3ffc1d368fd1048e99bf408a7c0f2e7a564c7d828", "f33f7e98c933487118e1137c384ad6e18fb91896a64909044b7895437c6466c7"]);
+const PREFIXES = new Set(["a0e03d63fe942314951e1730f7abf5695fb14205029befc8b9278b814b093829", "bb582462fda42a722e06244d5d0e25042a2fb11ce74d8e5c3c5c13d2242aebde", "e780b3c53088c0da4ccb49b416a5cc246f62363e56a7ebe6e3eedd82e0dd0f7a"]);
 
-// Every internal name in text, as its one-way hash: each run of one to three words (a word keeps
-// its - _ . inside it), and each word's part before and up to each underscore.
-const internalIn = (text, hashes = INTERNAL) => {
-  const words = text.toLowerCase().split(/[^a-z0-9_.-]+/).map((w) => w.replace(/^[.-]+|[.-]+$/g, '')).filter(Boolean);
+// Words as a phrase is held: lower-case, split at anything that is not a letter or digit (so a
+// hyphen, underscore or dot separates words), each with a trailing plural s removed.
+const wordsOf = (text) => text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((w) => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w));
+// The one-way hash of a phrase as PHRASES holds it.
+const internalHash = (phrase) => oneWay(wordsOf(phrase).join(' '));
+
+// Every internal name in text, as its one-way hash: each run of one to three words (PHRASES), and
+// each word's part up to and including each underscore (PREFIXES).
+const internalIn = (text, phrases = PHRASES, prefixes = PREFIXES) => {
   const found = new Set();
-  const look = (s) => { const h = oneWay(s); if (hashes.has(h)) found.add(h); };
-  words.forEach((w, i) => {
-    for (let n = 1; n <= 3 && i + n <= words.length; n += 1) look(words.slice(i, i + n).join(' '));
-    for (let at = w.indexOf('_'); at !== -1; at = w.indexOf('_', at + 1)) { look(w.slice(0, at)); look(w.slice(0, at + 1)); }
+  const words = wordsOf(text);
+  words.forEach((_, i) => {
+    for (let n = 1; n <= 3 && i + n <= words.length; n += 1) { const h = oneWay(words.slice(i, i + n).join(' ')); if (phrases.has(h)) found.add(h); }
   });
+  for (const w of text.toLowerCase().split(/[^a-z0-9_]+/)) {
+    for (let at = w.indexOf('_'); at !== -1; at = w.indexOf('_', at + 1)) { const h = oneWay(w.slice(0, at + 1)); if (prefixes.has(h)) found.add(h); }
+  }
   return [...found];
 };
 // The comment text alone, its lines joined, so a phrase broken across two lines is still read.
@@ -143,9 +151,19 @@ test('no file the repository tracks names internal machinery in plain text', () 
 
 test('the internal-names check finds a planted phrase split across lines, and a setting prefix', () => {
   // Invented words, hashed the same way: the check's own reading, seen finding what it must.
-  const planted = new Set([oneWay('quiet lantern'), oneWay('zed_')]);
-  assert.equal(internalIn('a quiet\n# lantern here', planted).length, 1, 'a phrase broken across two lines was not found');
-  assert.equal(internalIn('reads ZED_RUNNER_2', planted).length, 1, 'a setting prefix was not found');
-  assert.equal(internalIn('reads no ZED_ setting', planted).length, 1, 'a bare setting prefix was not found');
-  assert.equal(internalIn('a quiet lamp and zedx', planted).length, 0, 'an ordinary phrase was found');
+  const phrases = new Set([internalHash('quiet lantern')]);
+  const prefixes = new Set([oneWay('zed_')]);
+  assert.equal(internalIn('a quiet\n# lantern here', phrases, prefixes).length, 1, 'a phrase broken across two lines was not found');
+  assert.equal(internalIn('reads ZED_RUNNER_2', phrases, prefixes).length, 1, 'a setting prefix was not found');
+  assert.equal(internalIn('reads no ZED_ setting', phrases, prefixes).length, 1, 'a bare setting prefix was not found');
+  assert.equal(internalIn('a quiet lamp and zedx', phrases, prefixes).length, 0, 'an ordinary phrase was found');
+});
+
+test('the internal-names check finds a plural, hyphenated or underscored form of a hashed phrase', () => {
+  // Invented phrases, hashed as the check holds its own: lower-case, words joined by one space.
+  const planted = new Set([internalHash('quiet lantern'), internalHash('brass kettle')]);
+  for (const text of ['two quiet lanterns', 'a quiet-lantern', 'QUIET_LANTERN', 'the quiet-lanterns', 'Brass Kettles']) {
+    assert.equal(internalIn(text, planted, new Set()).length, 1, `${NOT_REFUSED}: the planted phrase was not found in "${text}"`);
+  }
+  assert.equal(internalIn('a quietly lit lantern', planted, new Set()).length, 0, 'an ordinary phrase was found');
 });

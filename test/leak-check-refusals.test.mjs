@@ -214,3 +214,37 @@ test('a folder git cannot list is refused without printing its path or git\'s me
   assert.match(out, /could not list the files git tracks/, `the run does not say it could not list the files: ${out}`);
   assert.ok(!out.includes('lantern-vault'), `${NOT_REFUSED}: the run prints the folder's path, which holds a private name: ${out}`);
 });
+
+// ---------- what it prints ----------
+
+test('a private name in the --hashes, --known, --root or --refs argument, or as a list key, never reaches the output', () => {
+  const PRIVATE = ['lantern-vault', 'quill', 'Odalys'];
+  const base = path.join(tmp(), 'lantern-vault');
+  fs.mkdirSync(base);
+  const good = path.join(FIXTURES, 'hashes.json');
+  const repo = path.join(base, 'repo');
+  fs.mkdirSync(repo);
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'a.md'), 'nothing private\n');
+  spawnSync('git', ['add', '-A'], { cwd: repo });
+  spawnSync('git', ['-c', 'user.name=f', '-c', 'user.email=f@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'a'], { cwd: repo });
+  fs.writeFileSync(path.join(base, 'broken.json'), '{');
+  fs.writeFileSync(path.join(base, 'keyed.json'), JSON.stringify({ 'Odalys-notes': ['a'.repeat(64)] }));
+  fs.writeFileSync(path.join(base, 'known.json'), JSON.stringify({ findings: [] }));
+  const cases = [
+    ['a --hashes file that is not there', ['--hashes', path.join(base, 'hashes.json'), '--root', repo]],
+    ['a --hashes file that is not JSON', ['--hashes', path.join(base, 'broken.json'), '--root', repo]],
+    ['a --hashes list keyed by a name', ['--hashes', path.join(base, 'keyed.json'), '--root', repo]],
+    ['a --known file that is not there', ['--hashes', good, '--known', path.join(base, 'gone.json'), '--root', repo]],
+    ['a --known file that is not JSON', ['--hashes', good, '--known', path.join(base, 'broken.json'), '--root', repo]],
+    ['a --refs remote that is not there', ['--hashes', good, '--known', path.join(base, 'known.json'), '--root', repo, '--refs', path.join(base, 'quill-origin')]],
+    ['a --refs remote named by owner and name', ['--hashes', good, '--root', repo, '--refs', 'https://invalid.invalid/dazzer-io/quill']],
+    ['a --root folder git cannot list', ['--hashes', good, '--root', path.join(base, 'gone')]],
+  ];
+  for (const [what, args] of cases) {
+    const r = spawnSync(process.execPath, [SCAN, ...args], { encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'file' } });
+    const out = `${r.stdout}${r.stderr}`;
+    assert.ok(out.trim().length > 0, `${what}: the run printed nothing`);
+    for (const p of PRIVATE) assert.ok(!out.includes(p), `${NOT_REFUSED}: ${what} put a private name (${p}) in the output: ${out}`);
+  }
+});

@@ -58,7 +58,7 @@ export function readFiles(root, paths) {
   const unread = [];
   for (const p of paths) {
     let bytes;
-    try { bytes = readFileSync(path.join(root, p)); } catch (e) { unread.push({ path: p, why: `could not open it (${e.code ?? e.message})` }); continue; }
+    try { bytes = readFileSync(path.join(root, p)); } catch (e) { unread.push({ path: p, why: `could not open it (${e.code ?? 'unreadable'})` }); continue; }
     read.push({ path: p, ...decodings(bytes) });
   }
   return { read, unread };
@@ -197,8 +197,8 @@ export function matcher(list, { roles = [], owner = 'dazzer-io' } = {}) {
 export function loadKnown(file) {
   const refuse = (why) => { throw new Error(`${KNOWN_REFUSAL}: ${why}`); };
   let known;
-  try { known = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { refuse(`could not read ${file} as JSON (${e.code ?? 'not JSON'})`); }
-  if (known === null || typeof known !== 'object' || Array.isArray(known)) refuse(`${file} is not an object holding findings`);
+  try { known = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { refuse(`could not read the known-findings list as JSON (${e.code ?? 'not JSON'})`); }
+  if (known === null || typeof known !== 'object' || Array.isArray(known)) refuse('the known-findings list is not an object holding findings');
   const bad = [];
   const roles = known['role-addresses'] ?? [];
   if (!Array.isArray(roles)) bad.push('role-addresses is not a list');
@@ -213,7 +213,7 @@ export function loadKnown(file) {
     if (f.repository !== undefined && typeof f.repository !== 'string') bad.push(`findings[${i}] names no repository`);
     if (f.in !== undefined && f.in !== 'name') bad.push(`findings[${i}] is in something other than "name"`);
   });
-  if (bad.length) refuse(`${file}: ${bad.join('; ')}`);
+  if (bad.length) refuse(`the known-findings list: ${bad.join('; ')}`);
   return { roles: Array.isArray(roles) ? roles : [], findings };
 }
 
@@ -373,7 +373,9 @@ export function verdict({ files, fresh, known, refs, hide = (p) => p }) {
   return { code: fresh.length || files.unread.length || !files.read.length ? 1 : 0, lines };
 }
 
-async function main(argv) {
+// The run itself. It prints nothing: each line goes to say(line, toError), and once the list is
+// read setHide gives the matcher's hide. main prints every line through that hide, at one exit.
+async function run(argv, say, setHide) {
   const args = [...argv];
   const opt = { root: process.cwd(), owner: 'dazzer-io', repository: '' };
   const paths = [];
@@ -383,15 +385,14 @@ async function main(argv) {
     else paths.push(a);
   }
   let list;
+  try { list = loadList(opt.hashes ?? '(no --hashes given)'); } catch (e) { say(data(e.message), true); return 1; }
+  setHide(matcher(list, { owner: opt.owner }).hide);
   let known = { roles: [], findings: [] };
-  try {
-    list = loadList(opt.hashes ?? '(no --hashes given)');
-    if (opt.known !== undefined) known = loadKnown(opt.known);
-  } catch (e) { console.error(data(e.message)); return 1; }
+  try { if (opt.known !== undefined) known = loadKnown(opt.known); } catch (e) { say(data(e.message), true); return 1; }
 
   let tracked = paths;
   if (!tracked.length) {
-    try { tracked = git(opt.root, ['ls-files', '-z']).split('\0').filter(Boolean); } catch { console.error('could not list the files git tracks under the folder --root names (git ls-files failed)'); return 1; }
+    try { tracked = git(opt.root, ['ls-files', '-z']).split('\0').filter(Boolean); } catch { say('could not list the files git tracks under the folder --root names (git ls-files failed)', true); return 1; }
   }
   const match = matcher(list, { roles: known.roles, owner: opt.owner });
   const files = readFiles(opt.root, tracked);
@@ -407,14 +408,34 @@ async function main(argv) {
       const remote = remoteRefs(opt.root, opt.refs);
       refs = await readRefs(remote.refs, remote.serve, match);
     } catch (e) {
-      console.log(`::warning title=Leak check not read::${data(`could not read the refs of ${opt.refs}: ${match.hide(e.message)}`)}`);
-      console.log(data(`could not read the refs of ${opt.refs}: ${match.hide(e.message)}`));
+      // git's own message often repeats the remote's address, so only that it failed is said.
+      say(`::warning title=Leak check not read::${data(`could not read the refs of the remote --refs names (${e.code ?? 'git failed'})`)}`);
+      say(data(`could not read the refs of the remote --refs names (${e.code ?? 'git failed'})`));
       refs = null;
     }
   }
 
   const { code, lines } = verdict({ files, fresh: split.fresh, known: split.known, refs, hide: match.hide });
-  for (const line of lines) console.log(line);
+  for (const line of lines) say(line);
+  return code;
+}
+
+// The one exit point: every line the run says is printed through hide (and through the
+// arguments' own removal), so no message can print a private name the list holds, however it
+// was built. A run that throws is said as having stopped, without its message.
+async function main(argv) {
+  const out = [];
+  let hide = (s) => s;
+  const given = argv.filter((a, i) => i > 0 && ['--hashes', '--known', '--root', '--refs'].includes(argv[i - 1]) && a.length >= 8);
+  const scrub = (line) => given.reduce((l, a) => l.split(a).join('<argument>'), hide(line));
+  let code;
+  try {
+    code = await run(argv, (line, toError = false) => out.push([line, toError]), (h) => { hide = h; });
+  } catch (e) {
+    out.push([`the leak check stopped on an unexpected error (${e?.name ?? 'error'})`, true]);
+    code = 1;
+  }
+  for (const [line, toError] of out) (toError ? process.stderr : process.stdout).write(`${scrub(line)}\n`);
   return code;
 }
 

@@ -56,7 +56,8 @@ name nobody guessed.
   did not bring, or holding a file git could not give the text of, is named and counted as not read. A remote that cannot be listed makes the refs unknown.
 - Nothing it prints repeats a name it found: a finding is told by file, line, kind and the one-way
   hash it matched, and a path or ref name holding a private name is printed with that segment
-  `[hidden]`.
+  `[hidden]`. Every line it prints passes through that hiding at one exit point, and no message
+  repeats the `--hashes`, `--known`, `--root` or `--refs` argument or git's own error text.
 
 Each run records one notice titled "Leak check":
 

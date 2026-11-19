@@ -34,24 +34,25 @@ export const oneWay = (name, salt = '') => createHash('sha256').update(`${salt}$
 const refuse = (why) => { throw new Error(`${REFUSAL}: ${why}`); };
 
 // Reads the list at `file`: { salt, repositories, people, addresses, all }, each kind a Set of its
-// hashes and `all` every hash; throws, saying REFUSAL, otherwise.
+// hashes and `all` every hash; throws, saying REFUSAL, otherwise. A refusal never repeats the
+// file's path or anything the file holds: it names an entry by its place.
 export function loadList(file) {
   let raw;
-  try { raw = readFileSync(file, 'utf8'); } catch (e) { refuse(`could not read ${file} (${e.code ?? e.message})`); }
+  try { raw = readFileSync(file, 'utf8'); } catch (e) { refuse(`could not read the hash list (${e.code ?? 'unreadable'})`); }
   let list;
-  try { list = JSON.parse(raw); } catch { refuse(`${file} is not JSON`); }
-  if (list === null || typeof list !== 'object' || Array.isArray(list)) refuse(`${file} is not an object holding ${KINDS.join(', ')}`);
+  try { list = JSON.parse(raw); } catch { refuse('the hash list is not JSON'); }
+  if (list === null || typeof list !== 'object' || Array.isArray(list)) refuse(`the hash list is not an object holding ${KINDS.join(', ')}`);
   const bad = [];
   const out = { salt: '', all: new Set() };
   for (const kind of KINDS) out[kind] = new Set();
   let lists = 0;
-  for (const [kind, entries] of Object.entries(list)) {
+  for (const [at, [kind, entries]] of Object.entries(list).entries()) {
     if (kind === 'salt') {
       if (typeof entries === 'string' && entries.length) out.salt = entries;
       else bad.push('salt is not a string');
       continue;
     }
-    if (!KINDS.includes(kind)) { bad.push(`${kind} is not one of ${KINDS.join(', ')}`); continue; }
+    if (!KINDS.includes(kind)) { bad.push(`list ${at + 1} is named outside ${KINDS.join(', ')}`); continue; }
     if (!Array.isArray(entries)) { bad.push(`${kind} is not a list`); continue; }
     lists += 1;
     entries.forEach((e, i) => {
@@ -59,9 +60,9 @@ export function loadList(file) {
       else bad.push(`${kind}[${i}] is not a 64-character hex hash`);
     });
   }
-  if (bad.length) refuse(`${file}: ${bad.join('; ')}`);
-  if (!lists) refuse(`${file} holds none of ${KINDS.join(', ')}`);
-  if (!out.all.size) refuse(`${file} holds no hashes`);
+  if (bad.length) refuse(`the hash list: ${bad.join('; ')}`);
+  if (!lists) refuse(`the hash list holds none of ${KINDS.join(', ')}`);
+  if (!out.all.size) refuse('the hash list holds no hashes');
   return out;
 }
 

@@ -4,7 +4,9 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - "/"
+      - "/leak-check"
     schedule:
       interval: weekly
     cooldown:

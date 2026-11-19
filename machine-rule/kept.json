@@ -358,6 +358,36 @@
       "reason": "the machine rule's own job, required in every repository by the ruleset machine-rule-required, a job of under a minute that reads no setting and so stays off our machines in public repositories",
       "decision": 104,
       "source": "dazzer-io/.github .github/workflows/machine-rule.yml (this change)"
+    },
+    {
+      "repository": "dazzer-io/github-fresh",
+      "workflow": "codeql.yml",
+      "job": "upload",
+      "name": "Upload CodeQL results",
+      "effect": "stay",
+      "reason": "the fresh public home's copy of the shared scan, judged as the shared repository while the move lasts (removed by m1.4-checks-trim): it alone holds security-events: write, on GitHub's machine by a literal label",
+      "decision": 36,
+      "source": "dazzer-io/github-fresh .github/workflows/codeql.yml:237-244 at b5f34d0 (pull request 1)"
+    },
+    {
+      "repository": "dazzer-io/github-fresh",
+      "workflow": "codeql.yml",
+      "job": "complete",
+      "name": "CodeQL complete",
+      "effect": "stay",
+      "reason": "the fresh public home's copy of the shared scan's one final check, granted no token, on GitHub's machine (decision 135), while the move lasts (removed by m1.4-checks-trim)",
+      "decision": 93,
+      "source": "dazzer-io/github-fresh .github/workflows/codeql.yml:314-320 at b5f34d0 (pull request 1)"
+    },
+    {
+      "repository": "dazzer-io/github-fresh",
+      "workflow": "engineer-review.yml",
+      "job": "engineer-review",
+      "name": "Settle engineer review",
+      "effect": "stay",
+      "reason": "the fresh public home's copy: it sets the Engineer review status with a statuses: write token, so it stays on GitHub's machine, while the move lasts (removed by m1.4-checks-trim)",
+      "decision": 36,
+      "source": "dazzer-io/github-fresh .github/workflows/engineer-review.yml:26-31 at b5f34d0 (pull request 1)"
     }
   ]
 }

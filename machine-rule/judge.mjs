@@ -42,6 +42,15 @@
 // (exit 2), and the refusal names the origin's host only, never its whole address, which may
 // carry a token. Only there may the shared scans' jobs read SCAN_RUNNER_<N>.
 //
+// THE MOVE. dazzer-io/github-fresh, a public repository, takes the name dazzer-io/.github at the swap, but its own pull
+// request merges first, so until then it is judged as the shared repository too (SHARED_HOMES),
+// under the same origin check, naming exactly dazzer-io/github-fresh. The shared flag turns on, for
+// it as for dazzer-io/.github: its two shared scans may read the scan settings and are held to the
+// scans' own rules (scan machine for read-only jobs, no secret, persist-credentials: false, a stay
+// entry for the upload and final check); a job outside the scans reads no setting so spelled and
+// calls no scan; and a write-token job stays on GitHub's standard machine whatever starts it. No
+// other repository gains it. Task m1.4-checks-trim removes github-fresh when the move finishes.
+//
 // THE LISTS. machine-rule/kept.json (the jobs kept on GitHub's computers, each with its effect,
 // reason and decision), machine-rule/secrets.json (the secrets a change check may read, per
 // repository) and machine-rule/strict.json (the repositories held to the stricter class) are
@@ -58,6 +67,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const ROOT = join(HERE, '..');
 export const ORG = 'dazzer-io';
 export const SHARED = `${ORG}/.github`;
+export const SHARED_HOMES = Object.freeze([SHARED, `${ORG}/github-fresh`]);
 export const WORKFLOW_DIR = '.github/workflows';
 
 // ================================================================ the facts the rule rests on
@@ -905,7 +915,7 @@ class Routes {
   }
 
   scanWords(names) {
-    return `${names.join(', ')}, a scan setting: the scan runner group gives a machine to the shared scans in ${SHARED} alone (${SHARED_SCANS.join(', ')}), so this job would wait for a scan machine it is never given`;
+    return `${names.join(', ')}, a scan setting: the scan runner group gives a machine to the shared scans in ${SHARED_HOMES.join(' and ')} alone (${SHARED_SCANS.join(', ')}), so this job would wait for a scan machine it is never given`;
   }
 
   // A runs-on (or a value handed to one) judged: { ok, why, how, reached: [{ name, kind }] }.
@@ -1957,7 +1967,7 @@ export async function readings({ call, lists, moving = [], only = null, producti
     if (!r.files.length) { lines.push(`NOTHING TO JUDGE ${repository}: it holds no ${WORKFLOW_DIR} folder on ${r.branch}, its default branch, so no job of it was judged (never read as clean)`); continue; }
     let result;
     try {
-      result = await judgeFiles({ repository, visibility: r.visibility, files: r.files, ...lists, moving: moving.includes(r.repo) ? true : null, shared: repository === SHARED, compare });
+      result = await judgeFiles({ repository, visibility: r.visibility, files: r.files, ...lists, moving: moving.includes(r.repo) ? true : null, shared: SHARED_HOMES.includes(repository), compare });
     } catch (e) {
       if (!(e instanceof Unread)) throw e;
       unreadLines.push(`UNREAD ${repository}: ${e.message}`);
@@ -1993,9 +2003,9 @@ export function hostOf(url) {
     return null;
   }
 }
-export function originNamesShared(url) {
+export function originNamesShared(url, repository = SHARED) {
   const g = ON_GITHUB.exec(String(url).trim());
-  return Boolean(g && g[1] === ORG && g[2] === '.github');
+  return Boolean(g && SHARED_HOMES.includes(repository) && `${g[1]}/${g[2]}` === repository);
 }
 const defaultGitRemote = (path) => execFileSync('git', ['-C', path, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 // GitHub's compare of main...<commit>, its status field, through fetch (GH_TOKEN when set).
@@ -2033,13 +2043,13 @@ export async function main(argv, { out = console.log, err = console.error, gitRe
     return 2;
   }
   let shared = false;
-  if (repository === SHARED) {
+  if (SHARED_HOMES.includes(repository)) {
     let origin = null;
     try { origin = gitRemote(folder); } catch { origin = null; }
-    if (!origin || !originNamesShared(origin)) {
+    if (!origin || !originNamesShared(origin, repository)) {
       const host = origin ? hostOf(origin) : null;
       const said = origin === null ? 'has no origin it can read' : host === null ? 'has an origin that is a local path' : host === 'github.com' ? 'has an origin on github.com naming another repository or the organisation in another case' : `has an origin on ${host}`;
-      err(`UNREAD: ${folder} is read as ${SHARED} only when its origin can be read and names exactly ${SHARED} on github.com; it ${said}, so whether its shared scans may read a scan setting is unknown.`);
+      err(`UNREAD: ${folder} is read as ${repository} only when its origin can be read and names exactly ${repository} on github.com; it ${said}, so whether its shared scans may read a scan setting is unknown.`);
       return 2;
     }
     shared = true;

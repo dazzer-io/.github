@@ -12,8 +12,17 @@ node machine-rule/judge.mjs --repository <owner>/<name> --visibility <public|pri
 Exit 0 means nothing was refused; a folder with no `.github/workflows` is said as `NOTHING TO
 JUDGE`, never as clean. Exit 1 means at least one refusal, each a line
 `.github/workflows/<file>:<line> jobs.<id>: <why>` saying what to write instead. Exit 2 means the
-answer is unknown: a list here fails its own check, a folder is read as dazzer-io/.github though
-its origin does not say so, or GitHub could not be asked about a commit.
+answer is unknown: a list here fails its own check, a folder is read as dazzer-io/.github (or
+dazzer-io/github-fresh) though its origin does not say so, or GitHub could not be asked about a commit.
+
+**While the move lasts.** dazzer-io/github-fresh is a public repository that takes the name
+dazzer-io/.github at the swap, but its own pull request has to merge first. Until then the judge
+treats it as the shared repository too, under the same origin check: its folder counts only when
+its git origin names exactly dazzer-io/github-fresh on github.com. That lets its two shared scans
+read the scan settings, and holds it to every rule below written for dazzer-io/.github: the scans'
+own rules, no setting read outside the scans, and every write-token job on GitHub's standard
+machine. kept.json names its upload, final check and engineer review as staying. No other
+repository gains this. Task m1.4-checks-trim removes the allowance when the move finishes.
 
 ## Where it runs
 

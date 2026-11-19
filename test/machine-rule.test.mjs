@@ -1292,6 +1292,48 @@ test('the command: exit 0 clean, 1 refused, 2 unread, and a folder with no workf
   });
 });
 
+// ================================================================ the move
+// dazzer-io/github-fresh, public, takes the name dazzer-io/.github at the swap, but its own pull request
+// merges first, so until m1.4-checks-trim it is judged as the shared repository too, under the same
+// origin check. Its shared scans are this repository's own, copied as they stand.
+const MOVE_FAILS = 'the fresh repository\'s shared scans are refused the scan machines';
+test('while the move lasts, dazzer-io/github-fresh is judged as the shared repository under the same origin check, and no other repository is', async () => {
+  need();
+  const names = ['codeql.yml', 'security-scan.yml', 'engineer-review.yml'];
+  const own = Object.fromEntries(names.map((n) => [n, readFileSync(join(ROOT, '.github', 'workflows', n), 'utf8')]));
+  const dir = temp('machine-rule-fresh-');
+  mkdirSync(join(dir, '.github', 'workflows'), { recursive: true });
+  for (const n of names) writeFileSync(join(dir, '.github', 'workflows', n), own[n]);
+  const fresh = (gitRemote) => run(['--repository', 'dazzer-io/github-fresh', '--visibility', 'public', dir], { gitRemote });
+  const other = (gitRemote) => run(['--repository', 'dazzer-io/example', '--visibility', 'public', dir], { gitRemote });
+  await everyCase(async (c) => {
+    for (const origin of ['https://github.com/dazzer-io/github-fresh.git', 'git@github.com:dazzer-io/github-fresh.git', 'ssh://git@github.com/dazzer-io/github-fresh']) {
+      const r = await fresh(() => origin);
+      await c(() => assert.equal(r.code, 0, `${MOVE_FAILS}: dazzer-io/github-fresh, its origin ${origin}, its scans read SCAN_RUNNER_2, judged so (exit ${r.code}):\n${r.all}`));
+    }
+    const wrong = [
+      ['no origin it can read', () => { throw new Error('no git here'); }],
+      ['an origin naming dazzer-io/.github', () => 'https://github.com/dazzer-io/.github.git'],
+      ['an origin naming dazzer-io/example', () => 'git@github.com:dazzer-io/example.git'],
+      ['an origin naming the organisation in another case', () => 'https://github.com/Dazzer-IO/github-fresh.git'],
+      ['an origin on another host', () => 'https://gitlab.example.com/dazzer-io/github-fresh.git'],
+    ];
+    for (const [why, gitRemote] of wrong) {
+      const r = await fresh(gitRemote);
+      await c(() => assert.ok(r.code === 2 && /is read as dazzer-io\/github-fresh only when its origin can be read and names exactly dazzer-io\/github-fresh on github\.com/.test(r.err), `Could not find a copy read as dazzer-io/github-fresh with ${why} left unread, exit 2, under the origin check dazzer-io/.github has (exit ${r.code}):\n${r.all}`));
+    }
+    for (const origin of ['git@github.com:dazzer-io/example.git', 'https://github.com/dazzer-io/github-fresh.git']) {
+      const r = await other(() => origin);
+      await c(() => assert.ok(r.code === 1 && /reads SCAN_RUNNER_2, a scan setting/.test(r.all), `Could not find dazzer-io/example, its origin ${origin}, refused its scans' SCAN_RUNNER_2: the allowance for ${MOVE_FAILS} reaches another repository (exit ${r.code}):\n${r.all}`));
+    }
+    const gh = fakeGitHub({ repos: { 'github-fresh': { visibility: 'public', files: own }, example: { visibility: 'public', files: own } } });
+    const read = await readingsOf(gh, { only: ['github-fresh', 'example'] });
+    const lines = [...read.lines, ...read.unread];
+    await c(() => assert.ok(!lines.some((l) => /^(?:REFUSED|UNREAD|NOTHING TO JUDGE) dazzer-io\/github-fresh\b/.test(l)), `${MOVE_FAILS} in the readings: dazzer-io/github-fresh read as no shared repository:\n${lines.join('\n')}`));
+    await c(() => assert.ok(mentions(read, 'REFUSED dazzer-io/example on main') && lines.some((l) => /dazzer-io\/example.*SCAN_RUNNER_2, a scan setting/.test(l)), `Could not find the readings refusing dazzer-io/example's scans: the allowance for ${MOVE_FAILS} reaches another repository:\n${lines.join('\n')}`));
+  });
+});
+
 // ================================================================ no bare host checked as a substring
 // GitHub's code scanner reads .includes, .indexOf, .startsWith or .endsWith on a text shaped like a bare
 // host name as a weak URL check (js/incomplete-url-substring-sanitization), and main's code-scanning

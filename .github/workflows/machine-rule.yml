@@ -7,11 +7,12 @@
 # The change is checked out of the triggering repository at the pull request's head commit or the
 # merge group's, keeping no git credential. The rule itself is never checked out: its steps are the
 # building block machine-rule/action.yml, which GitHub fetches itself as
-# dazzer-io/.github/machine-rule@main, the ref the organisation rule already runs this file from,
-# so the rule still runs once its home is private, where a checkout with the caller's token could
-# not read it. judge.mjs admits that call from dazzer-io/.github and from
-# dazzer-io/checks, the home's name after the move. The job keeps contents: read: a live trial read
-# a private repository's workflow granted nothing failing to fetch its own repository's action.
+# dazzer-io/checks/machine-rule@main, this repository under its own name since the rename, the
+# repository the organisation rule runs this file from, so the rule runs from a private home,
+# where a checkout with the caller's token could not read it. judge.mjs admits that call from
+# dazzer-io/checks and, while the move lasts, from dazzer-io/.github. The job keeps contents:
+# read: a live trial read a private repository's workflow granted nothing failing to fetch its own
+# repository's action.
 #
 # It runs on GitHub's ubuntu-latest, written as a literal label, a job of under a minute: reading
 # no setting keeps it off our machines in public repositories, where the fallback watcher does not
@@ -64,6 +65,6 @@ jobs:
           persist-credentials: false
 
       - name: Judge and lint the change's workflows
-        uses: dazzer-io/.github/machine-rule@main
+        uses: dazzer-io/checks/machine-rule@main
         with:
           change: .change

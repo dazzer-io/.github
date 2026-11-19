@@ -57,7 +57,10 @@ name nobody guessed.
 - Nothing it prints repeats a name it found: a finding is told by file, line, kind and the one-way
   hash it matched, and a path or ref name holding a private name is printed with that segment
   `[hidden]`. Every line it prints passes through that hiding at one exit point, and no message
-  repeats the `--hashes`, `--known`, `--root` or `--refs` argument or git's own error text.
+  repeats the `--hashes`, `--known`, `--root` or `--refs` argument. git's own error text is printed
+  in one place only: a ref the fetch failed to bring is named with the last line of git's error,
+  and that line passes through the same hiding. A remote that cannot be listed is said without
+  git's text.
 
 Each run records one notice titled "Leak check":
 

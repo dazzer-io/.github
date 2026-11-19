@@ -344,6 +344,9 @@ test('the README says what is read and what is not, and makes no claim the hash 
   assert.match(t, /confirm a name they already guess/, 'the README does not say a guessed name can be confirmed from the hash list');
   assert.doesNotMatch(t, /what a stranger can read/, 'the README still claims it reads what a stranger can read');
   assert.doesNotMatch(t, /keeps? (?:the )?names? (?:secret|private)/i, 'the README claims the list keeps names secret');
+  // A failed ref fetch prints git's last error line (through hide), so the README says so.
+  assert.doesNotMatch(t, /no message repeats[^.]*git's own error text/, 'the README claims no message repeats git\'s error text, but a failed ref fetch prints its last line');
+  assert.match(t, /last line of git's error, and that line passes through the same hiding/, 'the README does not say a failed ref fetch prints git\'s last error line through the hiding');
 });
 
 test('a name a zero-width space or word joiner separates is found split as well as joined', () => {

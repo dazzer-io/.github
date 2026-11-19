@@ -163,6 +163,7 @@ test('an untracked file is not read; a tracked binary holding no name is read as
 const scanBytes = (name, bytes) => scanRepo(repoOf({ [name]: bytes }));
 const utf16le = (s) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(s, 'utf16le')]);
 const utf16be = (s) => Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(s, 'utf16le').swap16()]);
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
 
 test('a private name in a file that is not UTF-8 is still refused: UTF-16 with a byte-order mark, a stray Windows-1252 byte, a NUL', () => {
   const cases = [
@@ -174,7 +175,7 @@ test('a private name in a file that is not UTF-8 is still refused: UTF-16 with a
   for (const [name, bytes, line, said, what] of cases) {
     const r = scanBytes(name, bytes);
     assert.notEqual(r.status, 0, `${NOT_REFUSED}: a private name in ${what} passed the scan: ${r.out}`);
-    const error = new RegExp(`^::error file=${name.replace(/\./g, '\\.')},line=${line},title=Leak finding::.*${said}`, 'm');
+    const error = new RegExp(`^::error file=${escapeRegExp(name)},line=${line},title=Leak finding::.*${said}`, 'm');
     assert.match(r.out, error, `${NOT_REFUSED}: no error names ${name} line ${line} (${what}): ${r.out}`);
     assertNoPlain(r.out);
   }

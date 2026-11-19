@@ -601,7 +601,7 @@ plant('a secret declared under workflow_call', (t) => t.replace('  workflow_call
 plant('the whole secrets context in an env at the top', ATOP(['env:', '  ALL: ${{ toJSON(secrets) }}']), /free of secrets in the shared scan \S+: line \d+ reads ALL: \$\{\{ toJSON\(secrets\) \}\}/);
 plant('a secret on a # line inside a | block of upload-artifact\'s input', intoWith('actions/upload-artifact', ['          compression-level: |', `            # ${SECRET}`]), /free of secrets in the shared scan \S+: line \d+ reads # \$\{\{ secrets\.SCAN_TOKEN \}\}/);
 // A setting other than SCAN_RUNNER_2.
-plant('the analysis on the change-check machines', (t) => t.replace(`runs-on: ${SCAN}`, "runs-on: ${{ vars.CHECKS_RUNNER_2 || 'ubuntu-latest' }}"), /SCAN_RUNNER_2 as the only setting it reads in the shared scan \S+: line \d+ reads runs-on: \$\{\{ vars\.CHECKS_RUNNER_2/);
+plant('the analysis on the other runner setting', (t) => t.replace(`runs-on: ${SCAN}`, "runs-on: ${{ vars.OTHER_RUNNER_2 || 'ubuntu-latest' }}"), /SCAN_RUNNER_2 as the only setting it reads in the shared scan \S+: line \d+ reads runs-on: \$\{\{ vars\.OTHER_RUNNER_2/);
 plant('another setting read in a step', (t) => t.replace(KEEP_NO_CREDENTIAL, `${KEEP_NO_CREDENTIAL}          ref: \${{ vars.SCAN_REF }}\n`), /SCAN_RUNNER_2 as the only setting it reads in the shared scan \S+: line \d+ reads ref: \$\{\{ vars\.SCAN_REF/);
 // The analysis job.
 plant('a write on the analysis job', (t) => t.replace(ANALYZE_GRANT, `${ANALYZE_GRANT}      security-events: write\n`), /read-only token on the analysis job/);

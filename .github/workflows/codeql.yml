@@ -85,8 +85,8 @@
 #     repository's admin can point its scan at any label. What keeps a repository from moving its
 #     scan onto machines that run changes' own code is the runner groups' repository lists, and
 #     nothing in this file: a label reaches only a set whose group admits the repository, so the
-#     scan stays apart only while no group admitting a gated repository offers it a change-check
-#     set's label.
+#     scan stays apart only while no group admitting a gated repository offers it the label of a
+#     set that runs changes' own code.
 #     It holds a read-only token: contents: read to check out, actions: read so CodeQL can read
 #     this run's workflow on a private repository. Read-only is not nothing: the checkout and
 #     CodeQL's actions take that token, and the runner hands every job its own runtime token, which

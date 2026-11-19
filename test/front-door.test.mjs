@@ -89,7 +89,7 @@ test('the community files are present and say what they promise: licence, securi
 // The checks that judge which machine a job runs on and that record test times are internal: they
 // live in a private repository, and nothing here holds, names or calls them. A tracked file under
 // either folder, their workflow or their tests, or a line naming one of their files, is refused.
-const INTERNAL = ['machine' + '-rule', 'test' + '-times'];
+const INTERNAL = ['mach' + 'ine-rule', 'test' + '-times'];
 const INTERNAL_FILE = new RegExp(`^(?:${INTERNAL.join('|')})/|^\\.github/workflows/(?:${INTERNAL.join('|')})\\.ya?ml$|^test/(?:fixtures/)?(?:${INTERNAL.join('|')})`);
 const INTERNAL_NAME = new RegExp(`\\b(?:${INTERNAL.join('|')})(?:/|\\.ya?ml\\b|\\.test\\.mjs\\b)`);
 const INTERNAL_FAULT = 'the fresh repository holds an internal check file';

@@ -6,10 +6,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { loadList, oneWay } from '../leak-check/hashes.mjs';
+import { matcher } from '../leak-check/scan.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const at = (f) => join(ROOT, f);
@@ -79,8 +82,9 @@ test('the community files are present and say what they promise: licence, securi
   assert.ok(!misses.length, misses.join('\n'));
 });
 
-// What no document or comment here may carry. The private repositories are the ones the machine
-// rule's own lists name, beside the two public ones, so this file names none of them itself.
+// What no document or comment here may carry. The private repositories are read through the leak
+// check's one-way list (leak-check/hashes.mjs), so this file names none of them and keeps working
+// once the machine rule's lists leave.
 const FAULTS = [
   ['a decision number', /\bdecisions? \d|\(decisions? [\d, and]+\)|\bD\d{1,3}\b/],
   ['a task or ticket id', /\br-\d+\.\d+\b|\bDZ-\d+\b/],
@@ -91,18 +95,15 @@ const FAULTS = [
   ['a private path', /(?:^|[\s(`'"])(?:~\/(?:Dev|Desktop|Documents)\b|\/Users\/|work\/[a-z])|\.claude\//],
   ['a commit id', /(?<![\w@./-])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![\w-])/],
 ];
-const PUBLIC = new Set(['.github', 'dazzer-plugin']);
-const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const privateNames = () => {
-  const names = new Set();
-  for (const f of readdirSync(at('machine-rule')).filter((x) => x.endsWith('.json'))) {
-    for (const m of readFileSync(at(join('machine-rule', f)), 'utf8').matchAll(/dazzer-io\/([A-Za-z0-9_.-]+)/g)) if (!PUBLIC.has(m[1])) names.add(m[1]);
-  }
-  const fromLists = names.size;
-  // The repositories the machine rule's ruleset leaves out are private too.
-  for (const n of JSON.parse(readFileSync(at(join('machine-rule', 'ruleset.json')), 'utf8')).conditions?.repository_name?.exclude ?? []) if (!PUBLIC.has(n)) names.add(n);
-  // A name that is also an ordinary word is matched only as an owner's name or a full one.
-  return { fromLists, entries: [...names].map((n) => [n, new RegExp(/-/.test(n) || n === 'dazzer' ? `(?<![\\w./-])${escape(n)}(?![\\w-]|\\.\\w)` : `(?<![\\w./-])${escape(n)}'|dazzer-io/${escape(n)}(?![\\w.-])`)]) };
+// The leak check's own list; while it is not written yet, the run says so and reads no private name
+// beyond the faults above, and the leak check step of the decide-tests check stops red on its absence.
+const LIST = at('leak-check/hashes.json');
+// A matcher over a one-way list's private repositories: a line gives the hashes of the private
+// names it holds, matched as the leak check matches them (beside the owner, or alone when hyphenated).
+const privateNames = (file) => {
+  const { repositories, salt } = loadList(file);
+  const match = matcher({ salt, repositories, all: repositories }, { owner: 'dazzer-io' });
+  return { size: repositories.size, match: (line) => match(line, '').map((f) => f.hash) };
 };
 // The prose of a file: all of a document or an issue form, the comments of code and workflows.
 const proseOf = (f, t) => {
@@ -112,12 +113,12 @@ const proseOf = (f, t) => {
   return t.split('\n').map((l) => { const m = marker.exec(l); return m ? l.slice(m.index) : ''; });
 };
 
-test('no document or comment carries an internal reference: a decision number, a task id, a person, a private repository, a private path, a commit id or a promise the checks do not keep', () => {
+test('no document or comment carries an internal reference: a decision number, a task id, a person, a private repository, a private path, a commit id or a promise the checks do not keep', (ctx) => {
   const files = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean).filter((f) => !f.startsWith('test/fixtures/'));
-  assert.ok(files.includes('README.md') && files.includes('machine-rule/judge.mjs'), `Could not find this repository's files as git tracks them: ${files.length} read`);
-  const { fromLists, entries: names } = privateNames();
-  assert.ok(fromLists >= 3, `Could not find the private repositories the machine rule's lists name: ${fromLists} found`);
-  const faults = [...FAULTS, ...names.map(([n, re]) => [`the private repository ${n}`, re])];
+  assert.ok(files.includes('README.md') && files.includes('leak-check/scan.mjs'), `Could not find this repository's files as git tracks them: ${files.length} read`);
+  const names = existsSync(LIST) ? privateNames(LIST) : null;
+  if (names) assert.ok(names.size >= 1, `Could not find the private repositories in leak-check/hashes.json: ${names.size} found`);
+  else ctx.diagnostic('leak-check/hashes.json is not written yet: no private repository name read here');
   const misses = [];
   let read = 0;
   for (const f of files) {
@@ -126,9 +127,29 @@ test('no document or comment carries an internal reference: a decision number, a
     proseOf(f, t).forEach((l, i) => {
       if (!l) return;
       read += 1;
-      for (const [what, re] of faults) if (re.test(l)) misses.push(`Could not find ${f}:${i + 1} free of ${what}: ${l.trim().slice(0, 160)}`);
+      for (const [what, re] of FAULTS) if (re.test(l)) misses.push(`Could not find ${f}:${i + 1} free of ${what}: ${l.trim().slice(0, 160)}`);
+      for (const h of names?.match(l) ?? []) misses.push(`Could not find ${f}:${i + 1} free of the private repository hashed ${h}`);
     });
   }
   assert.ok(read >= 1000, `Could not find the documents and comments to read: ${read} lines read`);
   assert.ok(!misses.length, `${misses.join('\n')}\n(${misses.length} lines)`);
+});
+
+// The private names are read through the one-way list alone: a list of invented names, written
+// under the system's temp folder, finds each beside its owner or alone when hyphenated, never a
+// public name or an ordinary word, and says no plain name.
+test('a private repository is found in prose through the one-way list alone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'front-door-'));
+  const file = join(dir, 'hashes.json');
+  const salt = 'invented-salt';
+  writeFileSync(file, JSON.stringify({ salt, repositories: ['quillon-harbour', 'brackwater'].map((n) => oneWay(n, salt)) }));
+  const { size, match } = privateNames(file);
+  assert.equal(size, 2, `Could not find both invented names in the list: ${size} read`);
+  const misses = [];
+  for (const [line, want] of [
+    ['// the Quillon-Harbour notes', 1], ['see dazzer-io/brackwater for more', 1], ['# brackwater alone is a word', 0],
+    ['https://github.com/dazzer-io/dazzer-plugin', 0], ['nothing private here', 0],
+  ]) if (match(line).length !== want) misses.push(`Could not find ${want} private name(s) in "${line}": ${match(line).length} found`);
+  assert.ok(!misses.length, misses.join('\n'));
+  assert.ok(match('dazzer-io/brackwater').every((h) => /^[0-9a-f]{64}$/.test(h)), 'Could not find the finding told by its hash alone');
 });

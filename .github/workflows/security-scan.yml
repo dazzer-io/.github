@@ -53,7 +53,8 @@
 # scan at any label. What keeps a repository from moving its scan onto machines that run changes'
 # own code is the runner groups' repository lists, and nothing in this file: a label reaches only
 # a set whose group admits the repository, so the scan stays apart only while no group admitting
-# a gated repository offers it a change-check set's label. CHECKS_RUNNER_2 overrides the same way.
+# a gated repository offers it the label of a set that runs changes' own code. The runner setting
+# for the set that runs changes' own code is overridden by a repository variable the same way.
 name: Security scan
 
 on:

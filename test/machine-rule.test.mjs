@@ -853,14 +853,14 @@ test('the three shared change checks are still admitted from dazzer-io/.github a
 });
 
 // The machine rule's own job calls its building block, machine-rule/action.yml, which GitHub
-// fetches itself at main: from dazzer-io/.github today and from dazzer-io/checks
-// once the repository is renamed, each admitted during the move. Any other spelling of that call
+// fetches itself at main from dazzer-io/checks, the repository's own name since the rename;
+// dazzer-io/.github stays admitted during the move. Any other spelling of that call
 // is refused: another repository, another ref, another letter case, or a folder of the change.
 test('the machine rule\'s step calling its building block is admitted at main from dazzer-io/.github and dazzer-io/checks alone', async () => {
   need();
   const text = readFileSync(join(ROOT, '.github/workflows/machine-rule.yml'), 'utf8');
-  const BLOCK = 'uses: dazzer-io/.github/machine-rule@main';
-  assert.ok(text.includes(BLOCK), `Could not find machine-rule.yml calling its building block as ${BLOCK}`);
+  const BLOCK = 'uses: dazzer-io/checks/machine-rule@main';
+  assert.ok(text.includes(BLOCK), `Could not find machine-rule.yml calling its building block as ${BLOCK}: the machine rule does not call its building block in dazzer-io/checks`);
   const as = (uses) => ({ 'machine-rule.yml': text.replace(BLOCK, `uses: ${uses}`) });
   await everyCase(async (c) => {
     for (const uses of ['dazzer-io/.github/machine-rule@main', 'dazzer-io/checks/machine-rule@main']) {
@@ -1107,7 +1107,7 @@ test('machine-rule.yml runs its building block, which runs the judge, then a pin
   const block = blockText ? J.readWorkflow(blockText) : { js: null, misread: [] };
   const bsteps = block.js?.runs?.steps ?? [];
   const runs = bsteps.map((s) => s.run ?? '').join('\n');
-  const theCall = steps.find((s) => s.uses === 'dazzer-io/.github/machine-rule@main');
+  const theCall = steps.find((s) => s.uses === 'dazzer-io/checks/machine-rule@main');
   const checks = [
     [JSON.stringify(Object.keys(js.on)) === JSON.stringify(['pull_request', 'merge_group']), 'its triggers pull_request and merge_group alone'],
     [JSON.stringify(js.permissions) === JSON.stringify({}), 'no token at its top (permissions: {})'],
@@ -1117,7 +1117,7 @@ test('machine-rule.yml runs its building block, which runs the judge, then a pin
     [steps.filter((s) => /^actions\/checkout@[0-9a-f]{40}$/.test(String(s.uses).split(' ')[0])).length === 1 && steps.filter((s) => s.uses?.startsWith('actions/checkout@')).every((s) => s.with?.['persist-credentials'] === false && s.with?.path === '.change' && !('repository' in (s.with ?? {}))), 'one checkout, pinned by commit, of the change alone, with persist-credentials: false'],
     [!text.includes('job.workflow_repository') && !text.includes('job.workflow_sha') && !text.includes('.machine-rule'), 'no checkout of its own folder (no job.workflow_repository, job.workflow_sha or .machine-rule)'],
     [text.includes('${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}'), 'the change checked out at its head commit'],
-    [theCall && JSON.stringify(theCall.with) === JSON.stringify({ change: '.change' }) && steps.indexOf(theCall) === steps.length - 1, 'its last step the building block, dazzer-io/.github/machine-rule@main, handed the change\'s folder'],
+    [theCall && JSON.stringify(theCall.with) === JSON.stringify({ change: '.change' }) && steps.indexOf(theCall) === steps.length - 1, 'its last step the building block, dazzer-io/checks/machine-rule@main, handed the change\'s folder: the machine rule does not call its building block in dazzer-io/checks'],
     [block.misread.length === 0 && block.js?.runs?.using === 'composite' && block.js?.inputs?.change?.required === true, 'machine-rule/action.yml a composite building block taking the change\'s folder'],
     [bsteps.some((s) => /^actions\/setup-node@[0-9a-f]{40}$/.test(String(s.uses))), 'Node set up by a commit-pinned action'],
     [runs.includes('cd "$GITHUB_ACTION_PATH/.."') && runs.includes('npm ci --ignore-scripts'), 'the YAML reader installed beside the block with npm ci --ignore-scripts'],
